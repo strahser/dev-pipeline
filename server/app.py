@@ -215,46 +215,197 @@ async def api_verdicts(project: str = "", limit: int = 20):
 
 @app.get("/api/plan")
 async def api_plan(project: str = ""):
-    """План проекта: задачи (активные/архив), прогресс (x/y закрыто), работающие субагенты.
-    Источник правды — файлы Tasks; работающие субагенты — из последних событий
-    (task_started без subagent_finished за последние 30 мин)."""
+    """План проекта — таблица согласованного плана: статус, начало, окончание,
+    документ на проверку, детальный отчёт. Источник правды — файлы Tasks."""
     project = project or (list_projects() or ["_test"])[0]
     try:
         cfg = load_config(project)
-        snap = _tasks_snapshot(project)
-        active = snap.get("active", [])
-        archive = snap.get("archive", [])
-        closed = [t for t in archive if t.get("status") in ("verified", "closed")]
-        total = len(active) + len(archive)
-        done = len(closed)
-
-        # Работающие субагенты: события task_started/subagent_finished
-        evs = store.recent_events(limit=200, project=project)
-        started: dict[str, str] = {}
-        finished: set[str] = set()
-        for e in evs:
-            tid = e.get("task") or ""
-            if not tid:
-                continue
-            if e["type"] == "task_started":
-                started[tid] = e["created_at"]
-            elif e["type"] == "subagent_finished":
-                finished.add(tid)
-        import datetime
-        cutoff = (datetime.datetime.now() - datetime.timedelta(minutes=30)).isoformat()
-        working = [{"task": tid, "since": ts}
-                   for tid, ts in started.items()
-                   if tid not in finished and ts >= cutoff]
-
+        rows = _plan_rows(cfg)
+        active = [r for r in rows if r["status"] in ("open", "in_progress", "done_report", "rejected")]
+        done = [r for r in rows if r["status"] in ("verified", "closed")]
+        total = len(rows)
         return {
             "project": project,
-            "total": total, "done": done,
-            "active": active, "archive": archive,
-            "working": working,
-            "verdicts": await _verdict_list(cfg),
+            "total": total, "done": len(done),
+            "rows": rows, "active": active, "archive": done,
+            "working": _working_subagents(cfg),
         }
     except ConfigError as e:
         raise HTTPException(404, f"проект не найден: {e}")
+
+
+def _plan_rows(cfg) -> list:
+    """Задачи проекта в виде строк плана-таблицы."""
+    rows = []
+    for d in ("active", "archive"):
+        folder = cfg.abs_tasks_dir(d)
+        if not folder.is_dir():
+            continue
+        for f in sorted(folder.glob("A-*.md"), key=lambda p: p.name):
+            try:
+                t = Task.from_file(f)
+            except Exception:
+                continue
+            meta = t.meta
+            report = _task_report(cfg, t.id)
+            verdict = _task_verdict(cfg, t.id)
+            rows.append({
+                "id": t.id,
+                "file": f.name,
+                "title": meta.get("title", _title_from_file(f.name, t.id)),
+                "status": t.status,
+                "priority": t.priority or "средний",
+                "начато": meta.get("дата", ""),
+                "завершено": report.get("date", "") if report else "",
+                "агент": meta.get("исполнитель", "subagent"),
+                "документ": report.get("path", "") if report else "",
+                "вердикт": verdict or "",
+                "detail": report.get("detail", "") if report else "",
+                "tests": report.get("tests", "") if report else "",
+            })
+    return rows
+
+
+def _title_from_file(name: str, tid: str) -> str:
+    rest = name[len(tid) + 1:-3] if name.startswith(tid) else name[:-3]
+    return rest.replace("_", " ") or tid
+
+
+def _task_report(cfg, tid: str) -> dict | None:
+    """Последний отчёт задачи: путь, дата, деталь, тесты."""
+    rd = cfg.abs_tasks_dir("reports")
+    if not rd.is_dir():
+        return None
+    files = sorted(rd.glob(tid + "_Отчёт_*.md"))
+    if not files:
+        return None
+    p = files[-1]
+    try:
+        txt = p.read_text(encoding="utf-8", errors="replace")
+    except Exception:
+        return None
+    # Деталь: первая строка «Что сделано» (первые пункты)
+    detail = _extract_section(txt, "Что сделано", 500)
+    tests = _extract_tests(txt)
+    # Дата отчёта из имени A-NN_Отчёт_YYYY-MM-DD.md
+    import re as _re
+    m = _re.search(r"Отчёт_(\d{4}-\d{2}-\d{2})", p.name)
+    return {
+        "path": str(p.relative_to(cfg.root)),
+        "date": m.group(1) if m else "",
+        "detail": detail or "",
+        "tests": tests,
+    }
+
+
+def _task_verdict(cfg, tid: str) -> str:
+    rd = cfg.abs_tasks_dir("reports")
+    if not rd.is_dir():
+        return ""
+    files = sorted(rd.glob(tid + "_Вердикт_*.md"))
+    if not files:
+        return ""
+    txt = files[-1].read_text(encoding="utf-8", errors="replace")
+    import re as _re
+    m = _re.search(r"\*\*(PASS|FAIL|PARTIAL|NEED_DATA)\*\*", txt)
+    return m.group(1) if m else ""
+
+
+def _extract_section(txt: str, heading: str, limit: int = 500) -> str:
+    import re as _re
+    m = _re.search(rf"##\s*{heading}\s*\n(.*?)(?=\n##\s|\Z)", txt, _re.S)
+    if not m:
+        return ""
+    body = m.group(1).strip()
+    return body[:limit] + ("…" if len(body) > limit else "")
+
+
+def _extract_tests(txt: str) -> str:
+    import re as _re
+    m = _re.search(r"(?:тест[а-я]*|Пройдено|passed)[^\n]{0,80}\d+/\d+", txt, _re.I)
+    return m.group(0).strip() if m else ""
+
+
+def _working_subagents(cfg) -> list:
+    import datetime
+    evs = store.recent_events(limit=200, project=cfg.name)
+    started: dict[str, str] = {}
+    finished: set[str] = set()
+    for e in evs:
+        tid = e.get("task") or ""
+        if not tid:
+            continue
+        if e["type"] == "task_started":
+            started[tid] = e["created_at"]
+        elif e["type"] == "subagent_finished":
+            finished.add(tid)
+    cutoff = (datetime.datetime.now() - datetime.timedelta(minutes=30)).isoformat()
+    return [{"task": tid, "since": ts} for tid, ts in started.items()
+            if tid not in finished and ts >= cutoff]
+
+
+@app.get("/api/task/{task_id}")
+async def api_task(task_id: str, project: str = ""):
+    """Детализация задачи: этапы (разбита/начато/агент/закончено/тест/проверено),
+    полный отчёт и вердикт."""
+    project = project or (list_projects() or ["_test"])[0]
+    try:
+        cfg = load_config(project)
+        for d in ("active", "archive"):
+            folder = cfg.abs_tasks_dir(d)
+            if folder.is_dir():
+                for f in folder.glob(task_id + "_*.md"):
+                    t = Task.from_file(f)
+                    meta = t.meta
+                    report = _task_report(cfg, t.id)
+                    verdict = _task_verdict(cfg, t.id)
+                    # события задачи
+                    evs = [e for e in store.recent_events(limit=500, project=project)
+                           if (e.get("task") or "") == task_id]
+                    return {
+                        "id": t.id,
+                        "file": f.name,
+                        "title": meta.get("title", _title_from_file(f.name, t.id)),
+                        "status": t.status,
+                        "priority": t.priority or "средний",
+                        "начато": meta.get("дата", ""),
+                        "агент": meta.get("исполнитель", "subagent"),
+                        "завершено": report.get("date", "") if report else "",
+                        "документ": report.get("path", "") if report else "",
+                        "вердикт": verdict,
+                        "report_text": _report_text(cfg, t.id),
+                        "verdict_text": _verdict_text(cfg, t.id),
+                        "events": evs,
+                    }
+        raise HTTPException(404, f"задача {task_id} не найдена")
+    except ConfigError as e:
+        raise HTTPException(404, f"проект не найден: {e}")
+
+
+def _report_text(cfg, tid: str) -> str:
+    rd = cfg.abs_tasks_dir("reports")
+    if not rd.is_dir():
+        return ""
+    files = sorted(rd.glob(tid + "_Отчёт_*.md"))
+    if not files:
+        return ""
+    try:
+        return files[-1].read_text(encoding="utf-8", errors="replace")
+    except Exception:
+        return ""
+
+
+def _verdict_text(cfg, tid: str) -> str:
+    rd = cfg.abs_tasks_dir("reports")
+    if not rd.is_dir():
+        return ""
+    files = sorted(rd.glob(tid + "_Вердикт_*.md"))
+    if not files:
+        return ""
+    try:
+        return files[-1].read_text(encoding="utf-8", errors="replace")
+    except Exception:
+        return ""
 
 
 async def _verdict_list(cfg) -> list:

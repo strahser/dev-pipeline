@@ -11,7 +11,7 @@ html,body { height:100%; }
 body { margin:0; font:14px/1.55 system-ui,Segoe UI,sans-serif; background:var(--bg); color:var(--text); }
 header { display:flex; align-items:center; gap:16px; padding:10px 20px; background:#12141c; border-bottom:1px solid var(--border); }
 header h1 { font-size:16px; margin:0; }
-header .status { font-size:12px; color:var(--muted); }
+header .status { font-size:12px; color:var(--muted); margin-left:auto; }
 nav { display:flex; gap:6px; padding:10px 20px; border-bottom:1px solid var(--border); background:#14161f; }
 nav button { background:var(--panel); color:var(--text); border:1px solid var(--border); border-radius:8px; padding:7px 14px; cursor:pointer; font-size:13px; }
 nav button:hover { border-color:var(--accent); }
@@ -19,25 +19,21 @@ nav button.active { background:var(--accent); color:#0b0f17; border-color:var(--
 main { padding:20px 28px; overflow:auto; height:calc(100vh - 96px); }
 .card { background:var(--panel); border:1px solid var(--border); border-radius:10px; padding:16px; margin-bottom:16px; }
 .card h3 { margin:0 0 10px; font-size:14px; }
-.grid { display:grid; grid-template-columns:repeat(auto-fill,minmax(300px,1fr)); gap:12px; }
-table { width:100%; border-collapse:collapse; font-size:12.5px; }
-th,td { text-align:left; padding:6px 8px; border-bottom:1px solid var(--border); vertical-align:top; }
-th { color:var(--muted); font-weight:600; }
+table { width:100%; border-collapse:collapse; font-size:13px; }
+th,td { text-align:left; padding:7px 9px; border-bottom:1px solid var(--border); vertical-align:top; }
+th { color:var(--muted); font-weight:600; white-space:nowrap; }
+tr.clickable { cursor:pointer; }
+tr.clickable:hover { background:var(--panel2); }
 code, pre { font-family:Consolas,monospace; }
-pre { background:var(--code); border:1px solid var(--border); border-radius:8px; padding:12px; overflow:auto; font-size:12.5px; }
+pre { background:var(--code); border:1px solid var(--border); border-radius:8px; padding:12px; overflow:auto; font-size:12.5px; max-height:500px; }
 .badge { display:inline-block; padding:1px 8px; border-radius:999px; font-size:11px; }
 .badge.ok { background:#123b26; color:var(--green); }
 .badge.warn { background:#3b3312; color:var(--yellow); }
 .badge.err { background:#3b1212; color:var(--red); }
 .badge.info { background:#12263b; color:var(--accent); }
 .muted { color:var(--muted); }
-.ledger { font-size:12.5px; }
-.ledger .ev { padding:6px 8px; border-bottom:1px solid var(--border); display:flex; gap:10px; align-items:baseline; }
-.ledger .ev .t { color:var(--accent); font-weight:600; white-space:nowrap; }
-.ledger .ev .msg { word-break:break-word; }
-.ledger .ev .time { color:var(--muted); white-space:nowrap; margin-left:auto; font-size:11px; }
-.agent-online { color:var(--green); } .agent-offline { color:var(--red); }
 .empty { color:var(--muted); padding:20px; text-align:center; }
+.back { margin-bottom:12px; }
 </style>
 </head>
 <body>
@@ -47,219 +43,143 @@ pre { background:var(--code); border:1px solid var(--border); border-radius:8px;
   <span class="status" id="status">…</span>
 </header>
 <nav>
-  <button data-tab="activity" class="active">Что происходит</button>
-  <button data-tab="tasks">Задачи</button>
-  <button data-tab="agents">Агенты</button>
-  <button data-tab="ledger">Лента событий</button>
-  <button data-tab="inbox">Inbox</button>
+  <button data-tab="plan" class="active">План</button>
+  <button data-tab="task" id="taskTabBtn" style="display:none">Задача</button>
 </nav>
 <main id="content"><div class="empty">Загрузка…</div></main>
 <script>
 const $ = (id) => document.getElementById(id);
-const state = { tab: 'activity', lastEventId: 0 };
+const state = { tab: 'plan', currentTask: null };
 let activeProject = '';
-let projectsList = [];
+
+function esc(s){ return String(s??'').replace(/[&<>"']/g, c=>({'&':'&amp;','<':'&lt;','>':'&gt;','"':'&quot;',"'":'&#39;'}[c])); }
+async function get(path){ const r = await fetch(path); if(!r.ok) throw new Error(r.status); return r.json(); }
+
+const STATUS_COLOR = { 'open':'warn', 'in_progress':'info', 'done_report':'info', 'verified':'ok', 'rejected':'err', 'closed':'ok' };
+function badge(s){ const c = STATUS_COLOR[s] || 'info'; return '<span class="badge '+c+'">'+esc(s)+'</span>'; }
+
+/* ---------- Вкладка 1: ПЛАН (таблица) ---------- */
+async function renderPlan(){
+  let plan;
+  try { plan = await get('/api/plan?project='+encodeURIComponent(activeProject)); }
+  catch(e){ $('content').innerHTML = '<div class="empty">ошибка: '+esc(String(e))+'</div>'; return; }
+
+  const rows = plan.rows || [];
+  const total = plan.total || 0, done = plan.done || 0;
+  const pct = total ? Math.round(100*done/total) : 0;
+
+  let html = '';
+
+  // Заголовок: проект + прогресс
+  html += '<div class="card"><h3>План проекта: '+esc(plan.project)+'</h3>'+
+    '<div class="muted" style="margin-bottom:8px">Закрыто '+done+' из '+total+' задач ('+pct+'%).</div>'+
+    '<div style="height:12px;background:var(--panel2);border-radius:6px;overflow:hidden">'+
+    '<div style="height:100%;width:'+pct+'%;background:var(--green);border-radius:6px"></div></div></div>';
+
+  // Таблица плана
+  html += '<div class="card"><table><thead><tr>'+
+    '<th>ID</th><th>Задача</th><th>Статус</th><th>Приоритет</th><th>Начато</th><th>Завершено</th>'+
+    '<th>Агент</th><th>Вердикт</th><th>Документ на проверку</th></tr></thead><tbody>';
+  for (const r of rows){
+    const doc = r['документ'] ? r['документ'].split('\\').pop() : '—';
+    html += '<tr class="clickable" onclick="openTask(\''+esc(r.id)+'\')">'+
+      '<td>'+esc(r.id)+'</td>'+
+      '<td>'+esc(r.title)+'</td>'+
+      '<td>'+badge(r.status)+'</td>'+
+      '<td>'+esc(r.priority)+'</td>'+
+      '<td>'+esc(r['начато']||'')+'</td>'+
+      '<td>'+esc(r['завершено']||'')+'</td>'+
+      '<td>'+esc(r['агент']||'')+'</td>'+
+      '<td>'+(r['вердикт']?badge(r['вердикт']):'—')+'</td>'+
+      '<td class="muted">'+esc(doc)+'</td></tr>';
+    if (r.detail){
+      html += '<tr class="detail-row" onclick="openTask(\''+esc(r.id)+'\')"><td></td>'+
+        '<td colspan="8"><div class="muted">'+esc(r.detail)+'</div>'+
+        (r.tests?'<div class="muted">Тесты: '+esc(r.tests)+'</div>':'')+'</td></tr>';
+    }
+  }
+  html += '</tbody></table></div>';
+
+  $('content').innerHTML = html;
+}
+
+/* ---------- Вкладка 2: ЗАДАЧА (детализация) ---------- */
+async function openTask(id){
+  state.currentTask = id;
+  state.tab = 'task';
+  document.querySelectorAll('nav button').forEach(b=>b.classList.toggle('active', b.dataset.tab==='task'));
+  $('taskTabBtn').style.display = '';
+  await renderTask(id);
+}
+
+async function renderTask(id){
+  let t;
+  try { t = await get('/api/task/'+id+'?project='+encodeURIComponent(activeProject)); }
+  catch(e){ $('content').innerHTML = '<div class="empty">ошибка: '+esc(String(e))+'</div>'; return; }
+
+  // Этапы: разбита → начато → агент → закончено → тест → проверено
+  const steps = [
+    ['Разбита', t['начато']||'—', 'info'],
+    ['Агент', t['агент']||'—', 'info'],
+    ['Закончено', t['завершено']||'—', t.status==='done_report'||t.status==='verified'?'ok':'warn'],
+    ['Проверено', t['вердикт']||'—', t['вердикт']==='PASS'?'ok':(t['вердикт']?'err':'warn')],
+  ];
+
+  let html = '<button class="back" onclick="showPlan()">← К плану</button>';
+
+  html += '<div class="card"><h3>'+esc(t.id)+': '+esc(t.title)+'</h3>'+
+    '<div class="muted">Статус: '+badge(t.status)+' · Приоритет: '+esc(t.priority)+' · Документ: '+esc(t['документ']||'—')+'</div></div>';
+
+  // Этапы
+  html += '<div class="card"><h3>Этапы</h3><table><tr><th>Этап</th><th>Дата/значение</th><th>Статус</th></tr>';
+  for (const [name, val, tone] of steps){
+    html += '<tr><td>'+esc(name)+'</td><td>'+esc(val)+'</td><td>'+badge(tone)+'</td></tr>';
+  }
+  html += '</table></div>';
+
+  // Отчёт
+  if (t.report_text){
+    html += '<div class="card"><h3>Отчёт исполнителя</h3><pre>'+esc(t.report_text)+'</pre></div>';
+  }
+  // Вердикт
+  if (t.verdict_text){
+    html += '<div class="card"><h3>Вердикт контролёра</h3><pre>'+esc(t.verdict_text)+'</pre></div>';
+  }
+  // События
+  if (t.events && t.events.length){
+    html += '<div class="card"><h3>События задачи</h3><table><tr><th>Событие</th><th>Время</th></tr>';
+    for (const e of t.events) html += '<tr><td>'+esc(e.type)+'</td><td class="muted">'+esc(e.created_at)+'</td></tr>';
+    html += '</table></div>';
+  }
+
+  $('content').innerHTML = html;
+}
+
+function showPlan(){
+  state.tab = 'plan';
+  $('taskTabBtn').style.display = 'none';
+  document.querySelectorAll('nav button').forEach(b=>b.classList.toggle('active', b.dataset.tab==='plan'));
+  renderPlan();
+}
 
 async function setProject(name){
   activeProject = name || '';
   $('projectSelect').value = name;
-  if (state.tab==='activity') await renderActivity();
-  else if (state.tab==='tasks') await renderTasks();
-}
-
-function esc(s){ return String(s??'').replace(/[&<>"']/g, c=>({'&':'&amp;','<':'&lt;','>':'&gt;','"':'&quot;',"'":'&#39;'}[c])); }
-async function get(path){ const r = await fetch(path); return r.json(); }
-
-const STATUS_COLOR = { 'open':'warn', 'in_progress':'info', 'done_report':'info', 'verified':'ok', 'rejected':'err', 'closed':'ok' };
-function badge(s){ const c = STATUS_COLOR[s] || 'info'; return '<span class="badge '+c+'">'+esc(s)+'</span>'; }
-function agentBadge(a){ return a.status === 'online'
-  ? '<span class="agent-online">● online</span>'
-  : '<span class="agent-offline">○ offline</span>'; }
-
-async function renderTasks(){
-  const t = await get('/api/tasks?project='+encodeURIComponent(activeProject));
-  const sections = [
-    ['Входящие (не оформлены)', t.inbox, 'info'],
-    ['Активные (в работе)', t.active, 'warn'],
-    ['Архив (закрыты)', t.archive, 'ok'],
-  ];
-  let html = '';
-  for (const [label, items, tone] of sections){
-    html += '<div class="card"><h3>'+esc(label)+' <span class="muted">('+items.length+')</span></h3>';
-    if (!items.length) { html += '<div class="empty">пусто</div>'; }
-    else {
-      html += '<table><tr><th>Задача</th><th>Статус</th><th>Приоритет</th></tr>';
-      for (const it of items){
-        html += '<tr><td>'+esc(it.file)+'</td><td>'+badge(it.status)+'</td><td>'+esc(it.priority)+'</td></tr>';
-      }
-      html += '</table>';
-    }
-    html += '</div>';
-  }
-  const v = await get('/api/verdicts?project='+encodeURIComponent(activeProject));
-  html += '<div class="card"><h3>Последние вердикты</h3>' + (v.length ? '<table><tr><th>Файл</th></tr>' + v.map(x=>'<tr><td>'+esc(x)+'</td></tr>').join('') + '</table>' : '<div class="empty">нет</div>') + '</div>';
-  $('content').innerHTML = html;
-}
-
-async function renderAgents(){
-  const s = await get('/api/stats');
-  let html = '<div class="card"><h3>Агенты ('+s.agents.length+')</h3>';
-  if (!s.agents.length) html += '<div class="empty">агенты не подключились</div>';
-  else {
-    html += '<table><tr><th>Имя</th><th>Статус</th><th>Last heartbeat</th></tr>';
-    for (const a of s.agents){
-      html += '<tr><td>'+esc(a.name)+'</td><td>'+agentBadge(a)+'</td><td>'+esc(a.last_seen)+'</td></tr>';
-    }
-    html += '</table>';
-  }
-  html += '</div>';
-  html += '<div class="card"><h3>БД</h3><pre>'+esc(JSON.stringify(s.db,null,2))+'</pre></div>';
-  html += '<div class="card"><h3>Подписчики SSE</h3><div>'+s.subscribers+'</div></div>';
-  $('content').innerHTML = html;
-}
-
-function renderLedger(events){
-  const html = '<div class="card"><h3>Лента событий (SSE, live)</h3><div class="ledger">' +
-    events.map(ev =>
-      '<div class="ev"><span class="t">'+esc(ev.type)+'</span>'+
-      '<span class="muted">'+esc(ev.from)+'→'+esc(ev.to)+'</span>'+
-      (ev.task ? '<span class="muted">'+esc(ev.task)+'</span>' : '')+
-      '<span class="msg">'+esc(JSON.stringify(ev.payload||{}))+'</span>'+
-      '<span class="time">'+esc(ev.created_at)+'</span></div>').join('') +
-    '</div></div>';
-  $('content').innerHTML = html;
-}
-
-async function renderInbox(){
-  const m = await get('/api/inbox');
-  let html = '<div class="card"><h3>Сообщения агентам</h3>';
-  if (!m.length) html += '<div class="empty">сообщений нет</div>';
-  else {
-    html += '<table><tr><th>from</th><th>to</th><th>текст</th><th>статус</th></tr>';
-    for (const x of m) html += '<tr><td>'+esc(x.from)+'</td><td>'+esc(x.to)+'</td><td>'+esc(x.text)+'</td><td>'+badge(x.delivery)+'</td></tr>';
-    html += '</table>';
-  }
-  html += '</div>';
-  $('content').innerHTML = html;
-}
-
-async function renderActivity(){
-  // Что происходит: план+прогресс, работающие субагенты, человеческая лента, документы
-  let act=[], plan={}, docs=[], st={};
-  try { plan = await get('/api/plan?project='+encodeURIComponent(activeProject)); } catch(_){}
-  try { [act, docs, st] = await Promise.all([get('/api/activity'), get('/api/documents?project='+encodeURIComponent(activeProject)), get('/api/stats')]); } catch(_){}
-
-  const active = plan.active || [];
-  const working = plan.working || [];
-  const agents = (st.agents || []);
-  let html = '';
-
-  // 1. План и прогресс (общий план, согласованный в начале)
-  const total = plan.total || 0;
-  const done = plan.done || 0;
-  const pct = total ? Math.round(100*done/total) : 0;
-  html += '<div class="card"><h3>План и прогресс</h3>';
-  html += '<div class="muted" style="margin-bottom:8px">Проект: '+esc(plan.project||'')+'. Закрыто '+done+' из '+total+' задач ('+pct+'%).</div>';
-  html += '<div style="height:12px;background:var(--panel2);border-radius:6px;overflow:hidden;margin-bottom:10px">'+
-          '<div style="height:100%;width:'+pct+'%;background:var(--green);border-radius:6px"></div></div>';
-  if (!active.length) html += '<div class="empty">Активных задач нет.</div>';
-  else {
-    html += '<table><tr><th>Задача</th><th>Статус</th></tr>';
-    for (const t of active) html += '<tr><td>'+esc(t.file)+'</td><td>'+badge(t.status)+'</td></tr>';
-    html += '</table>';
-  }
-  html += '</div>';
-
-  // 2. Кто сейчас работает (агенты + субагенты)
-  html += '<div class="card"><h3>Кто сейчас работает</h3>';
-  const alive = agents.filter(a=>a.status==='online');
-  if (!alive.length && !working.length) html += '<div class="empty">Никто не работает (субагенты запускаются по команде менеджера).</div>';
-  else {
-    let rows = alive.map(a=>['Агент '+esc(a.name), 'online', esc(a.last_seen)]);
-    for (const w of working) rows.push(['Субагент над задачей '+esc(w.task), 'in_progress', esc(w.since)]);
-    html += '<table><tr><th>Кто</th><th>Статус</th><th>С</th></tr>' +
-      rows.map(r=>'<tr><td>'+r[0]+'</td><td>'+badge(r[1])+'</td><td>'+r[2]+'</td></tr>').join('') + '</table>';
-  }
-  html += '</div>';
-
-  // 3. Человеческая лента (ключевые события)
-  html += '<div class="card"><h3>Ключевые события</h3>';
-  if (!act.length) html += '<div class="empty">Событий пока нет.</div>';
-  else {
-    html += '<div class="ledger">' + act.map(e =>
-      '<div class="ev"><span class="t">'+esc(e.type)+'</span>'+
-      '<span class="msg">'+esc(e.detail||'')+'</span>'+
-      '<span class="muted">'+esc(e.from)+'</span>'+
-      '<span class="time">'+esc(e.created_at)+'</span></div>').join('') + '</div>';
-  }
-  html += '</div>';
-
-  // 4. Документы на проверку
-  html += '<div class="card"><h3>Документы на проверку</h3>';
-  if (!docs.length) html += '<div class="empty">Нет DXF/отчётов. Сгенерируйте: dump_suggestions --dxf</div>';
-  else {
-    html += '<table><tr><th>Тип</th><th>Файл</th><th>Путь</th><th>Размер</th></tr>';
-    for (const d of docs) html += '<tr><td>'+badge(d.kind==='dxf'?'info':'ok').replace('info','info').replace('ok','ok')+' '+esc(d.kind)+'</td><td>'+esc(d.name)+'</td><td class="muted">'+esc(d.path)+'</td><td>'+Math.round(d.size/1024)+' КБ</td></tr>';
-    html += '</table>';
-  }
-  html += '</div>';
-
-  // 5. Как вмешаться
-  html += '<div class="card"><h3>Как вмешаться</h3>'+
-    '<div class="muted">Если агент делает глупость (застрял, крутится, портит код): '+
-    'остановите субагента (Ctrl+C в терминале менеджера), переведите задачу в rejected '+
-    'или напишите замечание в файл задачи. Отчёт менеджера: python -m agents.agent_manager report --project <имя>.</div></div>';
-
-  $('content').innerHTML = html;
-}
-
-async function loadTab(tab){
-  state.tab = tab;
-  document.querySelectorAll('nav button').forEach(b=>b.classList.toggle('active', b.dataset.tab===tab));
-  try {
-    if (tab==='activity') await renderActivity();
-    else if (tab==='tasks') await renderTasks();
-    else if (tab==='agents') await renderAgents();
-    else if (tab==='ledger') await renderLedger(await get('/api/ledger'));
-    else if (tab==='inbox') await renderInbox();
-  } catch(e){ $('content').innerHTML = '<div class="empty">ошибка: '+esc(String(e))+'</div>'; }
-}
-
-document.querySelectorAll('nav button').forEach(b=>b.addEventListener('click', ()=>loadTab(b.dataset.tab)));
-
-// SSE live-лента для вкладки «Лента»
-let ledgerEvents = [];
-async function connectLedger(){
-  try {
-    const es = new EventSource('/events/stream?agent=feed');
-    es.onmessage = (ev) => {
-      try { const e = JSON.parse(ev.data); ledgerEvents.unshift(e); if (ledgerEvents.length>200) ledgerEvents.pop(); } catch(_) {}
-    };
-    es.onopen = () => { $('status').textContent = 'SSE: подключено'; };
-    es.onerror = () => { $('status').textContent = 'SSE: переподключение…'; };
-  } catch(_) {}
+  if (state.tab==='plan') renderPlan();
+  else renderTask(state.currentTask);
 }
 
 async function boot(){
   try {
-    // список проектов в селектор
-    try {
-      const r = await fetch('/api/projects');
-      projectsList = await r.json();
-      const sel = $('projectSelect');
-      sel.innerHTML = projectsList.map(p=>'<option value="'+esc(p)+'">'+esc(p)+'</option>').join('');
-      sel.addEventListener('change', ()=> setProject(sel.value));
-      activeProject = projectsList[0] || '';
-    } catch(_) {}
-    const s = await get('/api/stats');
-    $('status').textContent = 'БД: '+s.db.events+' событий · '+s.db.agents+' агентов';
-    ledgerEvents = await get('/api/ledger');
-    const es = new EventSource('/events/stream?agent=feed');
-    es.onmessage = (ev) => { try { const e = JSON.parse(ev.data); ledgerEvents.unshift(e); if (ledgerEvents.length>200) ledgerEvents.pop(); if (state.tab==='ledger') renderLedger(ledgerEvents); else if (state.tab==='activity') renderActivity(); } catch(_) {} };
-    es.onerror = () => {};
-  } catch(e){ $('status').textContent = 'сервер недоступен'; }
-  loadTab('activity');
-  setInterval(()=>{ if (state.tab==='activity') renderActivity(); else if (state.tab==='tasks') renderTasks(); else if (state.tab==='agents') renderAgents(); else if (state.tab==='inbox') renderInbox(); }, 10000);
+    const r = await fetch('/api/projects');
+    const projects = await r.json();
+    const sel = $('projectSelect');
+    sel.innerHTML = projects.map(p=>'<option value="'+esc(p)+'">'+esc(p)+'</option>').join('');
+    sel.addEventListener('change', ()=> setProject(sel.value));
+    activeProject = projects[0] || '';
+  } catch(_){}
+  renderPlan();
+  setInterval(()=>{ if (state.tab==='plan') renderPlan(); else if (state.tab==='task' && state.currentTask) renderTask(state.currentTask); }, 15000);
 }
 boot();
 </script>
