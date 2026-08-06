@@ -45,6 +45,39 @@ def now_iso() -> str:
     return datetime.now().isoformat(timespec="seconds")
 
 
+_HUMAN = {
+    "task_started": "Субагент взялся за задачу",
+    "subagent_finished": "Субагент закончил задачу",
+    "task_assigned": "Задача назначена",
+    "report_done": "Исполнитель сдал отчёт",
+    "verdict": "Контролёр вынес вердикт",
+    "agent_offline": "Агент перестал отвечать",
+    "browser_done": "Облачный ИИ ответил",
+    "message": "Сообщение",
+}
+
+
+def _human_event(etype: str, task: str, payload: dict) -> str:
+    base = _HUMAN.get(etype, etype)
+    parts = []
+    if task:
+        parts.append(f"задача {task}")
+    if etype == "subagent_finished":
+        rc = payload.get("rc")
+        ok = payload.get("report")
+        if ok:
+            parts.append("— отчёт готов")
+        elif rc is not None:
+            parts.append(f"— rc={rc}, отчёта нет (проверь)")
+    elif etype == "agent_offline":
+        parts.append(f"— {payload.get('agent', '?')}")
+    elif etype == "verdict":
+        pass
+    if parts:
+        base += " " + " ".join(parts)
+    return base
+
+
 class Store:
     def __init__(self, db_path: str | Path):
         self.db_path = str(db_path)
@@ -109,6 +142,22 @@ class Store:
             rows = self._conn.execute(
                 "SELECT * FROM events ORDER BY id DESC LIMIT ?", (limit,)).fetchall()
         return [self._row_to_event(r) for r in rows]
+
+    def activity(self, limit: int = 50, project: str = "") -> list[dict]:
+        """Человекочитаемая сводка активности: последние события с типом/задачей/отправителем.
+        Для панели «что происходит»."""
+        evs = self.recent_events(limit=limit, project=project)
+        out = []
+        for e in evs:
+            label = e.get("type", "")
+            task = e.get("task") or ""
+            payload = e.get("payload") or {}
+            out.append({
+                "id": e["id"], "type": label, "from": e["from"], "to": e["to"],
+                "task": task, "created_at": e["created_at"],
+                "detail": _human_event(label, task, payload),
+            })
+        return out
 
     # --- сообщения ---------------------------------------------------------
 

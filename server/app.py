@@ -218,6 +218,17 @@ async def api_ledger(limit: int = 200, project: str = ""):
     return store.recent_events(limit=min(limit, 500), project=project)
 
 
+@app.get("/api/activity")
+async def api_activity(limit: int = 50, project: str = ""):
+    """Человекочитаемая лента «что происходит» для панели."""
+    return store.activity(limit=min(limit, 200), project=project)
+
+
+@app.get("/api/projects")
+async def api_projects():
+    return list_projects()
+
+
 @app.get("/api/inbox")
 async def api_inbox(limit: int = 200):
     msgs = []
