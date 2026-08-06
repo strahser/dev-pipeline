@@ -5,9 +5,11 @@
   python -X utf8 agents/dump_suggestions.py --project meptaggingsolution --out <path.json>
   python -X utf8 agents/dump_suggestions.py --project meptaggingsolution --verify
   python -X utf8 agents/dump_suggestions.py --project meptaggingsolution --summary
+  python -X utf8 agents/dump_suggestions.py --project meptaggingsolution --dxf --out Tasks\Эксперт\View1.dxf
 
 Что делает:
-  1. Запускает CoreConsoleRunner --dump <fixtureDir> <out.json> (реальный прогон Core).
+  1. Запускает CoreConsoleRunner --dump <fixtureDir> <out.json> (реальный прогон Core),
+     либо --dxf для DXF-визуализации (комнаты, элементы, марки, сдвиги — оценка прогресса).
   2. --summary: по комнатам считает элементы внутри (по locationCurvePoints/центру BBox)
      и марки, которые в них попали.
   3. --verify: порт CollisionVerifier (марка-марка, лидер-лидер, лидер-марка) на Python.
@@ -204,14 +206,18 @@ def cmd_dump(args) -> int:
             print(f"CoreConsoleRunner не собран: {exe}. Выполни: dotnet build CoreConsoleRunner/CoreConsoleRunner.csproj")
             return 1
         fixture = cfg.root / args.fixture
-        cmd = [str(exe), "--dump", str(fixture), str(out)]
+        mode = "--dxf" if args.dxf else "--dump"
+        cmd = [str(exe), mode, str(fixture), str(out)]
         print("RUN:", " ".join(cmd))
         r = subprocess.run(cmd, capture_output=True, text=True, encoding="utf-8", errors="replace", timeout=120)
         print((r.stdout or "").strip()[-500:])
         print((r.stderr or "").strip()[-500:])
         if r.returncode != 0 or not out.exists():
-            print("ДАМП НЕ УДАЛСЯ")
+            print(f"{mode} НЕ УДАЛСЯ")
             return 1
+    if args.dxf:
+        print(f"\nDXF: {out}")
+        return 0
     dump = _load_dump(out)
     if args.summary:
         snapshot = _load_snapshot(cfg)
@@ -246,6 +252,8 @@ def main(argv=None):
     ap.add_argument("--out", default=DEFAULT_OUT)
     ap.add_argument("--summary", action="store_true")
     ap.add_argument("--verify", action="store_true")
+    ap.add_argument("--dxf", action="store_true",
+                    help="сгенерировать DXF-визуализацию (комнаты/элементы/марки/сдвиги) вместо JSON-дампа")
     ap.add_argument("--no-run", action="store_true",
                     help="не пересобирать дамп, а проверить уже сохранённый файл")
     args = ap.parse_args(argv)
