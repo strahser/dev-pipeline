@@ -1,0 +1,178 @@
+<!doctype html>
+<html lang="ru">
+<head>
+<meta charset="utf-8">
+<meta name="viewport" content="width=device-width, initial-scale=1">
+<title>dev-pipeline · Панель конвейера</title>
+<style>
+:root { --bg:#0f1117; --panel:#171a23; --panel2:#1d2130; --border:#2a2f42; --text:#e6e8ef; --muted:#9aa2b5; --accent:#6ea8ff; --green:#4ade80; --yellow:#facc15; --red:#f87171; --code:#0b0e14; }
+* { box-sizing:border-box; }
+html,body { height:100%; }
+body { margin:0; font:14px/1.55 system-ui,Segoe UI,sans-serif; background:var(--bg); color:var(--text); }
+header { display:flex; align-items:center; gap:16px; padding:10px 20px; background:#12141c; border-bottom:1px solid var(--border); }
+header h1 { font-size:16px; margin:0; }
+header .status { font-size:12px; color:var(--muted); }
+nav { display:flex; gap:6px; padding:10px 20px; border-bottom:1px solid var(--border); background:#14161f; }
+nav button { background:var(--panel); color:var(--text); border:1px solid var(--border); border-radius:8px; padding:7px 14px; cursor:pointer; font-size:13px; }
+nav button:hover { border-color:var(--accent); }
+nav button.active { background:var(--accent); color:#0b0f17; border-color:var(--accent); font-weight:600; }
+main { padding:20px 28px; overflow:auto; height:calc(100vh - 96px); }
+.card { background:var(--panel); border:1px solid var(--border); border-radius:10px; padding:16px; margin-bottom:16px; }
+.card h3 { margin:0 0 10px; font-size:14px; }
+.grid { display:grid; grid-template-columns:repeat(auto-fill,minmax(300px,1fr)); gap:12px; }
+table { width:100%; border-collapse:collapse; font-size:12.5px; }
+th,td { text-align:left; padding:6px 8px; border-bottom:1px solid var(--border); vertical-align:top; }
+th { color:var(--muted); font-weight:600; }
+code, pre { font-family:Consolas,monospace; }
+pre { background:var(--code); border:1px solid var(--border); border-radius:8px; padding:12px; overflow:auto; font-size:12.5px; }
+.badge { display:inline-block; padding:1px 8px; border-radius:999px; font-size:11px; }
+.badge.ok { background:#123b26; color:var(--green); }
+.badge.warn { background:#3b3312; color:var(--yellow); }
+.badge.err { background:#3b1212; color:var(--red); }
+.badge.info { background:#12263b; color:var(--accent); }
+.muted { color:var(--muted); }
+.ledger { font-size:12.5px; }
+.ledger .ev { padding:6px 8px; border-bottom:1px solid var(--border); display:flex; gap:10px; align-items:baseline; }
+.ledger .ev .t { color:var(--accent); font-weight:600; white-space:nowrap; }
+.ledger .ev .msg { word-break:break-word; }
+.ledger .ev .time { color:var(--muted); white-space:nowrap; margin-left:auto; font-size:11px; }
+.agent-online { color:var(--green); } .agent-offline { color:var(--red); }
+.empty { color:var(--muted); padding:20px; text-align:center; }
+</style>
+</head>
+<body>
+<header>
+  <h1>dev-pipeline · Панель конвейера</h1>
+  <span class="status" id="status">…</span>
+</header>
+<nav>
+  <button data-tab="tasks" class="active">Задачи</button>
+  <button data-tab="agents">Агенты</button>
+  <button data-tab="ledger">Лента событий</button>
+  <button data-tab="inbox">Inbox</button>
+</nav>
+<main id="content"><div class="empty">Загрузка…</div></main>
+<script>
+const $ = (id) => document.getElementById(id);
+const state = { tab: 'tasks', lastEventId: 0 };
+
+function esc(s){ return String(s??'').replace(/[&<>"']/g, c=>({'&':'&amp;','<':'&lt;','>':'&gt;','"':'&quot;',"'":'&#39;'}[c])); }
+async function get(path){ const r = await fetch(path); return r.json(); }
+
+const STATUS_COLOR = { 'open':'warn', 'in_progress':'info', 'done_report':'info', 'verified':'ok', 'rejected':'err', 'closed':'ok' };
+function badge(s){ const c = STATUS_COLOR[s] || 'info'; return '<span class="badge '+c+'">'+esc(s)+'</span>'; }
+function agentBadge(a){ return a.status === 'online'
+  ? '<span class="agent-online">● online</span>'
+  : '<span class="agent-offline">○ offline</span>'; }
+
+async function renderTasks(){
+  const t = await get('/api/tasks');
+  const sections = [
+    ['Входящие (не оформлены)', t.inbox, 'info'],
+    ['Активные (в работе)', t.active, 'warn'],
+    ['Архив (закрыты)', t.archive, 'ok'],
+  ];
+  let html = '';
+  for (const [label, items, tone] of sections){
+    html += '<div class="card"><h3>'+esc(label)+' <span class="muted">('+items.length+')</span></h3>';
+    if (!items.length) { html += '<div class="empty">пусто</div>'; }
+    else {
+      html += '<table><tr><th>Задача</th><th>Статус</th><th>Приоритет</th></tr>';
+      for (const it of items){
+        html += '<tr><td>'+esc(it.file)+'</td><td>'+badge(it.status)+'</td><td>'+esc(it.priority)+'</td></tr>';
+      }
+      html += '</table>';
+    }
+    html += '</div>';
+  }
+  const v = await get('/api/verdicts');
+  html += '<div class="card"><h3>Последние вердикты</h3>' + (v.length ? '<table><tr><th>Файл</th></tr>' + v.map(x=>'<tr><td>'+esc(x)+'</td></tr>').join('') + '</table>' : '<div class="empty">нет</div>') + '</div>';
+  $('content').innerHTML = html;
+}
+
+async function renderAgents(){
+  const s = await get('/api/stats');
+  let html = '<div class="card"><h3>Агенты ('+s.agents.length+')</h3>';
+  if (!s.agents.length) html += '<div class="empty">агенты не подключились</div>';
+  else {
+    html += '<table><tr><th>Имя</th><th>Статус</th><th>Last heartbeat</th></tr>';
+    for (const a of s.agents){
+      html += '<tr><td>'+esc(a.name)+'</td><td>'+agentBadge(a)+'</td><td>'+esc(a.last_seen)+'</td></tr>';
+    }
+    html += '</table>';
+  }
+  html += '</div>';
+  html += '<div class="card"><h3>БД</h3><pre>'+esc(JSON.stringify(s.db,null,2))+'</pre></div>';
+  html += '<div class="card"><h3>Подписчики SSE</h3><div>'+s.subscribers+'</div></div>';
+  $('content').innerHTML = html;
+}
+
+function renderLedger(events){
+  const html = '<div class="card"><h3>Лента событий (SSE, live)</h3><div class="ledger">' +
+    events.map(ev =>
+      '<div class="ev"><span class="t">'+esc(ev.type)+'</span>'+
+      '<span class="muted">'+esc(ev.from)+'→'+esc(ev.to)+'</span>'+
+      (ev.task ? '<span class="muted">'+esc(ev.task)+'</span>' : '')+
+      '<span class="msg">'+esc(JSON.stringify(ev.payload||{}))+'</span>'+
+      '<span class="time">'+esc(ev.created_at)+'</span></div>').join('') +
+    '</div></div>';
+  $('content').innerHTML = html;
+}
+
+async function renderInbox(){
+  const m = await get('/api/inbox');
+  let html = '<div class="card"><h3>Сообщения агентам</h3>';
+  if (!m.length) html += '<div class="empty">сообщений нет</div>';
+  else {
+    html += '<table><tr><th>from</th><th>to</th><th>текст</th><th>статус</th></tr>';
+    for (const x of m) html += '<tr><td>'+esc(x.from)+'</td><td>'+esc(x.to)+'</td><td>'+esc(x.text)+'</td><td>'+badge(x.delivery)+'</td></tr>';
+    html += '</table>';
+  }
+  html += '</div>';
+  $('content').innerHTML = html;
+}
+
+async function loadTab(tab){
+  state.tab = tab;
+  document.querySelectorAll('nav button').forEach(b=>b.classList.toggle('active', b.dataset.tab===tab));
+  try {
+    if (tab==='tasks') await renderTasks();
+    else if (tab==='agents') await renderAgents();
+    else if (tab==='ledger') await renderLedger(await get('/api/ledger'));
+    else if (tab==='inbox') await renderInbox();
+  } catch(e){ $('content').innerHTML = '<div class="empty">ошибка: '+esc(String(e))+'</div>'; }
+}
+
+document.querySelectorAll('nav button').forEach(b=>b.addEventListener('click', ()=>loadTab(b.dataset.tab)));
+
+// SSE live-лента для вкладки «Лента»
+let ledgerEvents = [];
+async function connectLedger(){
+  try {
+    const es = new EventSource('/events/stream?agent=feed');
+    es.onmessage = (ev) => {
+      try { const e = JSON.parse(ev.data); ledgerEvents.unshift(e); if (ledgerEvents.length>200) ledgerEvents.pop(); } catch(_) {}
+    };
+    es.onopen = () => { $('status').textContent = 'SSE: подключено'; };
+    es.onerror = () => { $('status').textContent = 'SSE: переподключение…'; };
+  } catch(_) {}
+}
+
+async function boot(){
+  try {
+    const s = await get('/api/stats');
+    $('status').textContent = 'БД: '+s.db.events+' событий · '+s.db.agents+' агентов';
+    // подгрузка истории ленты
+    ledgerEvents = await get('/api/ledger');
+    // подписка на live
+    const es = new EventSource('/events/stream?agent=feed');
+    es.onmessage = (ev) => { try { const e = JSON.parse(ev.data); ledgerEvents.unshift(e); if (ledgerEvents.length>200) ledgerEvents.pop(); if (state.tab==='ledger') renderLedger(ledgerEvents); } catch(_) {} };
+    es.onerror = () => {};
+  } catch(e){ $('status').textContent = 'сервер недоступен'; }
+  loadTab('tasks');
+  setInterval(()=>{ if (state.tab==='tasks') renderTasks(); else if (state.tab==='agents') renderAgents(); else if (state.tab==='inbox') renderInbox(); }, 10000);
+}
+boot();
+</script>
+</body>
+</html>

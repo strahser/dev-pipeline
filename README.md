@@ -36,7 +36,8 @@ dev-pipeline\
 
 - [x] Шаг 1: каркас, общий пакет `pipeline/`
 - [x] Шаг 2: конфиг HeatLossRevit2, перенос проверок в `pipeline/checks.py`
-- [ ] Шаг 3: сервер (SSE/сообщения/heartbeat) + dashboard
-- [ ] Шаг 4: клиенты агентов (замена сторожей)
-- [ ] Шаг 5: скилы, документация
-- [ ] Шаг 6: пилот на тестовой задаче
+- [x] Шаг 3: сервер (FastAPI + SQLite + SSE, `/events`, `/messages`, `/heartbeat`, dashboard)
+- [x] Шаг 4: клиенты агентов (`agents/`): agent_watch, executor_client, browser_client
+- [x] Шаг 5: скилы (pipeline-executor/-controller/-reviewer/-browser-bridge), docs
+- [x] Полный unit-тест: `python -X utf8 tests/run_all.py` (35 тестов: framework, CLI, server, client)
+- [ ] Пилот на тестовой задаче через сервер
