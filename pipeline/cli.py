@@ -21,7 +21,7 @@ from pathlib import Path
 
 from . import checks, templates
 from .config import ConfigError, check_env, load_config, list_projects
-from .models import Task, parse_tests_vstest
+from .models import Task, parse_tests_dotnet, parse_tests_vstest
 
 
 def slug(title: str) -> str:
@@ -159,12 +159,17 @@ def cmd_verify(cfg, args):
     b_status = "PASS" if b_rc == 0 else "FAIL"
     tail = " ".join(l for l in b_out.splitlines() if "error" in l.lower())[-300:] \
         or (b_out.splitlines()[-1] if b_out.splitlines() else "")
-    result.append((f"сборка sln ({cfg.configuration}/{cfg.platform}): EXIT {b_rc}",
+    build_label = "сборка" if cfg.msbuild.lower() == "dotnet" else \
+        f"сборка sln ({cfg.configuration}/{cfg.platform})"
+    result.append((f"{build_label}: EXIT {b_rc}",
                    b_status + (" " + tail if b_status == "FAIL" else "")))
 
     if b_rc == 0:
         t_rc, t_out = checks.run_tests(cfg)
-        passed, total, failed = parse_tests_vstest(t_out)
+        if cfg.test_runner == "dotnet":
+            passed, total, failed = parse_tests_dotnet(t_out)
+        else:
+            passed, total, failed = parse_tests_vstest(t_out)
         tail = " ".join(l.strip() for l in t_out.splitlines() if l.strip())[-250:]
         if failed is None and passed is None:
             t_status = "ОШИБКА ПАРСИНГА"

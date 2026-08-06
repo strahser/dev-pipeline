@@ -79,6 +79,10 @@ class ProjectConfig:
 
     # Короткие помощники для команд сборки/тестов
     def msbuild_cmd(self) -> list[str]:
+        if self.msbuild.lower() == "dotnet":
+            args = ["dotnet", "build", str(self.root / self.sln)]
+            args += self.build_extra
+            return args
         args = [self.msbuild, str(self.root / self.sln), "/t:Restore,Build",
                 f"/p:Configuration={self.configuration}",
                 f"/p:Platform={self.platform}"]
@@ -88,6 +92,10 @@ class ProjectConfig:
     def test_cmd(self) -> list[str]:
         if self.test_runner == "vstest":
             return [self.vstest, str(self.root / self.test_dll)]
+        if self.test_runner == "dotnet":
+            args = ["dotnet", "test", str(self.root / self.test_dll)]
+            args += self.build_extra
+            return args
         raise ConfigError(f"Неизвестный test_runner: {self.test_runner}")
 
 
@@ -162,11 +170,12 @@ def check_env() -> None:
             print(f"  {name}: ОШИБКА {e}")
             continue
         problems = []
-        for label, path in [("msbuild", cfg.msbuild), ("vstest", cfg.vstest)]:
-            if path and not os.path.exists(path):
-                problems.append(f"{label} не найден: {path}")
+        if cfg.msbuild.lower() != "dotnet" and cfg.msbuild and not os.path.exists(cfg.msbuild):
+            problems.append(f"msbuild не найден: {cfg.msbuild}")
+        if cfg.vstest and not os.path.exists(cfg.vstest):
+            problems.append(f"vstest не найден: {cfg.vstest}")
         if cfg.sln and not (cfg.root / cfg.sln).exists():
-            problems.append(f"sln не найден: {cfg.root / cfg.sln}")
+            problems.append(f"sln/проект не найден: {cfg.root / cfg.sln}")
         if problems:
             print(f"  {name}: " + "; ".join(problems))
         else:

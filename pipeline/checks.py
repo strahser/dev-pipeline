@@ -72,6 +72,8 @@ def build_sln(cfg: ProjectConfig):
 def run_tests(cfg: ProjectConfig):
     if cfg.test_runner == "vstest":
         return sh(cfg.test_cmd(), timeout=1200)
+    if cfg.test_runner == "dotnet":
+        return sh(cfg.test_cmd(), timeout=1800)
     return (-1, f"Нет обработчика test_runner={cfg.test_runner}")
 
 

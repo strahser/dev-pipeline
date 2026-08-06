@@ -106,3 +106,20 @@ def parse_tests_vstest(out: str) -> tuple:
     total = last_num(r"Всего тестов", r"Total tests", r"Total", r"Всего", r"Итого")
     failed = last_num(r"Не пройдено", r"Failed", r"Неуспешно")
     return passed, total, failed
+
+
+def parse_tests_dotnet(out: str) -> tuple:
+    """Парсинг `dotnet test` (NUnit/xUnit):
+    'не пройдено 7, пройдено 8, пропущено 0, всего 15' -> (8, 15, 7).
+    Возвращает (passed, total, failed)."""
+    def last_num(*patterns):
+        for p in patterns:
+            ms = re.findall(rf"{p}\s*:?\s*(\d+)", out)
+            if ms:
+                return int(ms[-1])
+        return None
+
+    passed = last_num(r"[Пп]ройдено", r"Passed")
+    total = last_num(r"[Вв]сего", r"Total", r"Total tests")
+    failed = last_num(r"[Нн]е пройдено", r"Failed", r"[Нн]еуспешно")
+    return passed, total, failed

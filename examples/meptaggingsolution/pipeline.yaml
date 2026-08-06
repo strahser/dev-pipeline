@@ -1,0 +1,71 @@
+# Конфигурация конвейера для проекта MepTaggingSolution (Revit-плагин, C# .NET 8 / net48).
+# Быстрые проверки — через Core.Tests (net48, NUnit, без Revit SDK).
+# Базовое состояние на 2026-08-06: Core.Tests 15 тестов, 8 PASS / 7 FAIL (коллизии реальные).
+
+project:
+  name: MepTaggingSolution
+  root: E:\ПлагиныРевит\MepTaggingSolution
+  branch: feature/tagging-extension-tests
+
+tasks:
+  inbox: Tasks\Входящие
+  active: Tasks\Активные
+  reports: Tasks\Отчёты
+  archive: Tasks\Архив
+  protocol: Tasks\00_Протокол_агентов.md
+  status: Tasks\Статус_конвейера.md
+  conveyor: Tasks\Конвейер
+  notif: Tasks\Конвейер\Уведомления
+
+build:
+  # Быстрая сборка без Revit (MSB4062/Revit SDK в MepTagging.Tests проблемный — см. REFACTORING_PLAN.md P7)
+  msbuild: dotnet
+  sln: Core.Tests/Core.Tests.csproj
+  configuration: Debug
+  platform: Any CPU
+  extra_args:
+    - --nologo
+    - -v
+    - q
+
+tests:
+  runner: dotnet
+  vstest: ""
+  dll: Core.Tests/Core.Tests.csproj
+  baseline_passed: 8
+  baseline_total: 15
+
+# Декларативные проверки задач (для пилота на MepTaggingSolution)
+checks:
+  - id: A-01
+    label: 'Core не ссылается на Revit (using Autodesk.Revit в Core = 0)'
+    kind: grep_dir
+    dir: Core
+    pattern: using\s+Autodesk\.Revit
+    expect: 0
+
+  - id: A-02
+    label: 'Модели не ссылаются на Revit (Models чисто)'
+    kind: grep_dir
+    dir: Models
+    pattern: using\s+Autodesk\.Revit
+    expect: 0
+
+  - id: A-03
+    label: 'Core.Tests не содержит заглушек NotImplementedException'
+    kind: grep_dir
+    dir: Core.Tests
+    pattern: NotImplementedException
+    expect: 0
+
+layer_rules:
+  - label: Core без Autodesk.Revit (guard-слой)
+    pattern: using\s+Autodesk\.Revit
+    expect: 0
+    dirs: [Core, CoreCBR, Models]
+  - label: Core.Tests без Revit SDK
+    pattern: Nice3point\.Revit
+    expect: 0
+    dirs: [Core.Tests]
+
+audit_dirs: [Core.Tests]

@@ -17,6 +17,7 @@ MODULES = [
     "test_cli_smoke",
     "test_server",
     "test_client",
+    "test_agents",
 ]
 
 
