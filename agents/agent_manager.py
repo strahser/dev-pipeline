@@ -48,6 +48,16 @@ def _publish(cfg, client, type_: str, task_id: str, payload: dict | None = None)
         client.notify(type_, to="feed", task=task_id, payload=payload or {})
     except Exception:
         pass
+
+
+def _hb(client, name: str):
+    """Отметить агента online на сервере (heartbeat) — чтобы панель показывала «работает»."""
+    if client is None:
+        return
+    try:
+        client._request("POST", "/heartbeat", body={"agent": name}, timeout=3.0)
+    except Exception:
+        pass
 SUBPROMPT = """Выполни задачу из файла: {task_file}
 
 ПОРЯДОК РАБОТЫ (строго):
@@ -175,6 +185,7 @@ def run_subagent(cfg, task_id: str, report_path: Path, log_path: Path,
     if t.status == "open":
         t.set_status("in_progress")
         _publish(cfg, client, "task_started", task_id, {"file": task_file.name})
+    _hb(client, f"subagent-{task_id}")
 
     skill_line = (f"Загрузи скилл '{skill}' (E:\\ПлагиныРевит\\dev-pipeline\\skills\\{skill}\\SKILL.md),\n"
                   if skill else "") + ""

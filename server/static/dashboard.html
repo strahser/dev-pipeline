@@ -144,26 +144,25 @@ async function renderInbox(){
 }
 
 async function renderActivity(){
-  // Что происходит: человеческая лента + агенты + активные задачи
-  const [act, st, tasks] = await Promise.all([get('/api/activity'), get('/api/stats'), get('/api/tasks?project='+encodeURIComponent(activeProject))]);
-  const agents = st.agents || [];
-  const active = (tasks.active||[]).filter(t=>t.status==='open'||t.status==='in_progress'||t.status==='done_report'||t.status==='rejected');
+  // Что происходит: план+прогресс, работающие субагенты, человеческая лента, документы
+  let act=[], plan={}, docs=[], st={};
+  try { plan = await get('/api/plan?project='+encodeURIComponent(activeProject)); } catch(_){}
+  try { [act, docs, st] = await Promise.all([get('/api/activity'), get('/api/documents?project='+encodeURIComponent(activeProject)), get('/api/stats')]); } catch(_){}
 
+  const active = plan.active || [];
+  const working = plan.working || [];
+  const agents = (st.agents || []);
   let html = '';
 
-  // 1. Агенты (кто работает)
-  html += '<div class="card"><h3>Кто сейчас работает</h3>';
-  if (!agents.length) html += '<div class="empty">Агенты не подключились (сервер или агенты не запущены).</div>';
-  else {
-    html += '<table><tr><th>Агент</th><th>Статус</th><th>Последний сигнал</th></tr>';
-    for (const a of agents) html += '<tr><td>'+esc(a.name)+'</td><td>'+agentBadge(a)+'</td><td>'+esc(a.last_seen)+'</td></tr>';
-    html += '</table>';
-  }
-  html += '</div>';
-
-  // 2. Активные задачи (цели)
-  html += '<div class="card"><h3>Цели в работе</h3>';
-  if (!active.length) html += '<div class="empty">Активных задач нет — можно запустить миссию.</div>';
+  // 1. План и прогресс (общий план, согласованный в начале)
+  const total = plan.total || 0;
+  const done = plan.done || 0;
+  const pct = total ? Math.round(100*done/total) : 0;
+  html += '<div class="card"><h3>План и прогресс</h3>';
+  html += '<div class="muted" style="margin-bottom:8px">Проект: '+esc(plan.project||'')+'. Закрыто '+done+' из '+total+' задач ('+pct+'%).</div>';
+  html += '<div style="height:12px;background:var(--panel2);border-radius:6px;overflow:hidden;margin-bottom:10px">'+
+          '<div style="height:100%;width:'+pct+'%;background:var(--green);border-radius:6px"></div></div>';
+  if (!active.length) html += '<div class="empty">Активных задач нет.</div>';
   else {
     html += '<table><tr><th>Задача</th><th>Статус</th></tr>';
     for (const t of active) html += '<tr><td>'+esc(t.file)+'</td><td>'+badge(t.status)+'</td></tr>';
@@ -171,8 +170,20 @@ async function renderActivity(){
   }
   html += '</div>';
 
-  // 3. Человеческая лента (последние события)
-  html += '<div class="card"><h3>Что происходит (последние события)</h3>';
+  // 2. Кто сейчас работает (агенты + субагенты)
+  html += '<div class="card"><h3>Кто сейчас работает</h3>';
+  const alive = agents.filter(a=>a.status==='online');
+  if (!alive.length && !working.length) html += '<div class="empty">Никто не работает (субагенты запускаются по команде менеджера).</div>';
+  else {
+    let rows = alive.map(a=>['Агент '+esc(a.name), 'online', esc(a.last_seen)]);
+    for (const w of working) rows.push(['Субагент над задачей '+esc(w.task), 'in_progress', esc(w.since)]);
+    html += '<table><tr><th>Кто</th><th>Статус</th><th>С</th></tr>' +
+      rows.map(r=>'<tr><td>'+r[0]+'</td><td>'+badge(r[1])+'</td><td>'+r[2]+'</td></tr>').join('') + '</table>';
+  }
+  html += '</div>';
+
+  // 3. Человеческая лента (ключевые события)
+  html += '<div class="card"><h3>Ключевые события</h3>';
   if (!act.length) html += '<div class="empty">Событий пока нет.</div>';
   else {
     html += '<div class="ledger">' + act.map(e =>
@@ -183,8 +194,19 @@ async function renderActivity(){
   }
   html += '</div>';
 
+  // 4. Документы на проверку
+  html += '<div class="card"><h3>Документы на проверку</h3>';
+  if (!docs.length) html += '<div class="empty">Нет DXF/отчётов. Сгенерируйте: dump_suggestions --dxf</div>';
+  else {
+    html += '<table><tr><th>Тип</th><th>Файл</th><th>Путь</th><th>Размер</th></tr>';
+    for (const d of docs) html += '<tr><td>'+badge(d.kind==='dxf'?'info':'ok').replace('info','info').replace('ok','ok')+' '+esc(d.kind)+'</td><td>'+esc(d.name)+'</td><td class="muted">'+esc(d.path)+'</td><td>'+Math.round(d.size/1024)+' КБ</td></tr>';
+    html += '</table>';
+  }
+  html += '</div>';
+
+  // 5. Как вмешаться
   html += '<div class="card"><h3>Как вмешаться</h3>'+
-    '<div class="muted">Если агент делает глупость (застрял, крутится на месте, портит код): '+
+    '<div class="muted">Если агент делает глупость (застрял, крутится, портит код): '+
     'остановите субагента (Ctrl+C в терминале менеджера), переведите задачу в rejected '+
     'или напишите замечание в файл задачи. Отчёт менеджера: python -m agents.agent_manager report --project <имя>.</div></div>';
 

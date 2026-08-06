@@ -213,6 +213,81 @@ async def api_verdicts(project: str = "", limit: int = 20):
         raise HTTPException(404, f"проект не найден: {e}")
 
 
+@app.get("/api/plan")
+async def api_plan(project: str = ""):
+    """План проекта: задачи (активные/архив), прогресс (x/y закрыто), работающие субагенты.
+    Источник правды — файлы Tasks; работающие субагенты — из последних событий
+    (task_started без subagent_finished за последние 30 мин)."""
+    project = project or (list_projects() or ["_test"])[0]
+    try:
+        cfg = load_config(project)
+        snap = _tasks_snapshot(project)
+        active = snap.get("active", [])
+        archive = snap.get("archive", [])
+        closed = [t for t in archive if t.get("status") in ("verified", "closed")]
+        total = len(active) + len(archive)
+        done = len(closed)
+
+        # Работающие субагенты: события task_started/subagent_finished
+        evs = store.recent_events(limit=200, project=project)
+        started: dict[str, str] = {}
+        finished: set[str] = set()
+        for e in evs:
+            tid = e.get("task") or ""
+            if not tid:
+                continue
+            if e["type"] == "task_started":
+                started[tid] = e["created_at"]
+            elif e["type"] == "subagent_finished":
+                finished.add(tid)
+        import datetime
+        cutoff = (datetime.datetime.now() - datetime.timedelta(minutes=30)).isoformat()
+        working = [{"task": tid, "since": ts}
+                   for tid, ts in started.items()
+                   if tid not in finished and ts >= cutoff]
+
+        return {
+            "project": project,
+            "total": total, "done": done,
+            "active": active, "archive": archive,
+            "working": working,
+            "verdicts": await _verdict_list(cfg),
+        }
+    except ConfigError as e:
+        raise HTTPException(404, f"проект не найден: {e}")
+
+
+async def _verdict_list(cfg) -> list:
+    rd = cfg.abs_tasks_dir("reports")
+    if not rd.is_dir():
+        return []
+    return sorted((p.name for p in rd.glob("*_Вердикт_*")), reverse=True)[:20]
+
+
+@app.get("/api/documents")
+async def api_documents(project: str = ""):
+    """Документы на проверку: DXF-отчёты (Эксперт) и последние отчёты/вердикты."""
+    project = project or (list_projects() or ["_test"])[0]
+    try:
+        cfg = load_config(project)
+        docs = []
+        # DXF в папке Эксперт
+        exp = cfg.root / "Tasks" / "Эксперт"
+        if exp.is_dir():
+            for f in sorted(exp.glob("*.dxf"), key=lambda p: -p.stat().st_mtime):
+                docs.append({"kind": "dxf", "name": f.name, "path": str(f.relative_to(cfg.root)),
+                             "size": f.stat().st_size})
+        # Последние отчёты
+        rd = cfg.abs_tasks_dir("reports")
+        if rd.is_dir():
+            for f in sorted(rd.glob("*_Отчёт_*.md"), key=lambda p: -p.stat().st_mtime)[:10]:
+                docs.append({"kind": "report", "name": f.name, "path": str(f.relative_to(cfg.root)),
+                             "size": f.stat().st_size})
+        return docs
+    except ConfigError as e:
+        raise HTTPException(404, f"проект не найден: {e}")
+
+
 @app.get("/api/ledger")
 async def api_ledger(limit: int = 200, project: str = ""):
     return store.recent_events(limit=min(limit, 500), project=project)
