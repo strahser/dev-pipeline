@@ -36,24 +36,33 @@ from pipeline.cli import cmd_dispatch            # noqa: E402
 import argparse as _ap                           # noqa: E402
 
 OPENCODE = r"C:\Users\Strakhov\AppData\Roaming\npm\opencode.cmd"
-SUBPROMPT = """Ты — субагент-исполнитель конвейера dev-pipeline. Твоя задача уже выдана:
-файл задачи (обязателен к прочтению, НЕ ищи другие задачи и НЕ жди новых): {task_file}
-Протокол (обязателен): {protocol}
-Правила проекта (контролёр): {controller_prompt}
-Инструкция исполнителя: {executor_instr}
-Требования:
-1. НЕ мониторь Tasks\\Активные и не ищи «открытые задачи». Работай ТОЛЬКО с файлом {task_file}.
-2. Прочитай файл задачи целиком (контекст, требования, границы).
-3. Выполни требования. Доказательства — реальные выводы: сборка EXIT 0,
-   тесты (dotnet test / vstest N/M), grep-выводы, пути файлов, коммиты agent/{task_id}.
-4. Отчёт ПО-РУССКИ в {report} по шаблону протокола
-   (секции: «Что было не так», «Что сделано», «Доказательства»,
-   «Числа до/после», «Открытые вопросы», «Как пересобрать/проверить»).
-5. После отчёта: в шапке задачи замени 'статус: in_progress' на 'статус: done_report'.
-6. Коммит: git commit -m "agent/{task_id}: отчёт исполнителя".
-7. Не имитируй действия; при невозможности — честно blocked/NEED_DATA в отчёте.
-8. Не создавай субагентов, не меняй чужие файлы, не закрывай задачу сам.
-9. СДЕЛАЙ РАБОТУ ДО КОНЦА: создай отчётный файл {report} и только потом завершайся.
+DEFAULT_MODEL = "opencode/deepseek-v4-flash-free"  # экономия: free-модель по умолчанию
+SERVER_URL = "http://127.0.0.1:8787"
+
+
+def _publish(cfg, client, type_: str, task_id: str, payload: dict | None = None):
+    """Опубликовать событие в сервер координации (опционально; молча при недоступности)."""
+    if client is None:
+        return
+    try:
+        client.notify(type_, to="feed", task=task_id, payload=payload or {})
+    except Exception:
+        pass
+SUBPROMPT = """Выполни задачу из файла: {task_file}
+
+ПОРЯДОК РАБОТЫ (строго):
+1. Прочитай {task_file} (контекст, требования, границы).
+2. СРАЗУ применяй изменения в проекте: edit/write файлов. Не пиши план, не описывай намерения — редактируй.
+3. После правок запусти сборку: dotnet build Core.Tests/Core.Tests.csproj --nologo -v q  (cwd = корень проекта). Убедись EXIT 0.
+4. Запусти тесты: dotnet test Core.Tests/Core.Tests.csproj --nologo -v q. Убедись, что не хуже базы (8/15).
+5. Создай отчёт ПО-РУССКИ в {report}: секции «Что было не так», «Что сделано» (пути файлов),
+   «Доказательства» (выводы сборки/тестов), «Числа до/после», «Открытые вопросы», «Как пересобрать/проверить».
+6. В шапке задачи {task_file} замени 'статус: in_progress' на 'статус: done_report'.
+7. Коммит: git add -A; git commit -m "agent/{task_id}: отчёт исполнителя".
+
+Правила: не выдумывай выводы (сборка/тесты — реальные); не трогай файлы вне задачи;
+не создавай субагентов; не закрывай задачу. Отчётный файл {report} — ОБЯЗАТЕЛЕН.
+Если что-то не получается — пиши честно blocked/NEED_DATA в отчёте, но сначала сделай максимум изменений.
 """
 
 
@@ -147,10 +156,11 @@ def subagent_env(cfg):
 
 
 def run_subagent(cfg, task_id: str, report_path: Path, log_path: Path,
-                 model: str = "", agent: str = "", skill: str = "") -> int:
+                 model: str = "", agent: str = "", skill: str = "", client=None) -> int:
     """Запустить субагента (opencode run) в отдельной сессии. Возвращает rc.
     model — провайдер/модель (напр. opencode/deepseek-v4-flash-free);
-    agent — роль opencode (--agent); skill — скилл, который субагент обязан загрузить."""
+    agent — роль opencode (--agent); skill — скилл, который субагент обязан загрузить;
+    client — Client сервера (опционально) для публикации событий."""
     task_file = None
     for f in glob.glob(str(cfg.abs_tasks_dir("active") / (task_id + "_*.md"))):
         task_file = Path(f)
@@ -164,6 +174,7 @@ def run_subagent(cfg, task_id: str, report_path: Path, log_path: Path,
     t = Task.from_file(task_file)
     if t.status == "open":
         t.set_status("in_progress")
+        _publish(cfg, client, "task_started", task_id, {"file": task_file.name})
 
     skill_line = (f"Загрузи скилл '{skill}' (E:\\ПлагиныРевит\\dev-pipeline\\skills\\{skill}\\SKILL.md),\n"
                   if skill else "") + ""
@@ -265,9 +276,17 @@ def _run_batch(cfg, ids, args):
     reports_dir = cfg.abs_tasks_dir("reports")
     logs_dir = cfg.root / "Tasks" / "Конвейер" / "logs"
     results = {}
-    model = getattr(args, "model", "")
+    model = getattr(args, "model", "") or DEFAULT_MODEL
     agent = getattr(args, "agent", "")
     skill = getattr(args, "skill", "")
+    # Публикация событий в сервер (опционально): позволяет панели показывать ход задач.
+    client = None
+    try:
+        from pipeline.client import Client
+        client = Client("agent-manager", project=cfg.name, base_url=SERVER_URL,
+                        notif_dir=str(cfg.resolve(cfg.notif)))
+    except Exception:
+        client = None
 
     if args.demo:
         for tid in ids:
@@ -281,9 +300,11 @@ def _run_batch(cfg, ids, args):
         for tid in ids:
             report = reports_dir / f"{tid}_Отчёт_{now()}.md"
             log = logs_dir / f"{tid}_run.log"
-            rc = run_subagent(cfg, tid, report, log, model=model, agent=agent, skill=skill)
+            rc = run_subagent(cfg, tid, report, log, model=model, agent=agent, skill=skill, client=client)
             results[tid] = rc
             ok = _ensure_report(cfg, tid)
+            _publish(cfg, client, "subagent_finished", tid,
+                     {"rc": rc, "report": ok})
             print(f"  [manager] {tid}: rc={rc}, отчёт={'есть' if ok else 'НЕТ'}")
     else:
         # parallel: запускаем все разом, ждём по очереди
@@ -291,8 +312,11 @@ def _run_batch(cfg, ids, args):
         def _one(tid):
             report = reports_dir / f"{tid}_Отчёт_{now()}.md"
             log = logs_dir / f"{tid}_run.log"
-            rc = run_subagent(cfg, tid, report, log, model=model, agent=agent, skill=skill)
-            return tid, rc, _ensure_report(cfg, tid)
+            rc = run_subagent(cfg, tid, report, log, model=model, agent=agent, skill=skill, client=client)
+            ok = _ensure_report(cfg, tid)
+            _publish(cfg, client, "subagent_finished", tid,
+                     {"rc": rc, "report": ok})
+            return tid, rc, ok
         with ThreadPoolExecutor(max_workers=max(1, args.parallel)) as ex:
             for tid, rc, ok in ex.map(_one, ids):
                 results[tid] = rc
@@ -345,6 +369,52 @@ def _ensure_report(cfg, tid: str) -> bool:
     return True
 
 
+def cmd_report(args):
+    """Отчёт менеджера: сводка по целям проекта (задачи по статусам, вердикты,
+    рекомендации). Используется для контроля целей проекта по отчёту менеджера."""
+    from pipeline.models import Task
+    cfg = load_config(args.project)
+    lines = [f"# ОТЧЁТ МЕНЕДЖЕРА: {cfg.name} — {now()}", ""]
+    for key, label in [("inbox", "Входящие"), ("active", "Активные"),
+                       ("archive", "Архив"), ("reports", "Отчёты")]:
+        d = cfg.abs_tasks_dir(key)
+        files = sorted(os.listdir(d)) if d.is_dir() else []
+        a = [f for f in files if f.startswith("A-")]
+        lines.append(f"## {label}: {len(a)}")
+        for f in a:
+            if key in ("inbox", "reports"):
+                lines.append(f"- {f}")
+                continue
+            try:
+                meta = Task.parse_frontmatter((d / f).read_text(encoding="utf-8"))
+                lines.append(f"- {f} [статус: {meta.get('статус', '?')}]")
+            except Exception:
+                lines.append(f"- {f}")
+        lines.append("")
+    # Вердикты и статусы
+    reports_dir = cfg.abs_tasks_dir("reports")
+    verdicts = sorted(glob.glob(str(reports_dir / "*_Вердикт_*")), reverse=True)
+    lines.append(f"## Вердикты: {len(verdicts)}")
+    for f in verdicts[:10]:
+        lines.append(f"- {os.path.basename(f)}")
+    lines.append("")
+    # Рекомендации
+    active = cfg.abs_tasks_dir("active")
+    open_tasks = [f for f in os.listdir(active) if f.startswith("A-")] if active.is_dir() else []
+    lines.append("## Рекомендации")
+    if not open_tasks:
+        lines.append("- Нет активных задач. Можно запустить новую миссию.")
+    else:
+        lines.append(f"- Активных задач: {len(open_tasks)}. Запусти субагентов: "
+                     f"python -m agents.agent_manager task --project {cfg.name} --task A-XX --sequential")
+    text = "\n".join(lines)
+    out = cfg.resolve(cfg.status).with_name("Отчёт_менеджера.md") \
+        if Path(cfg.status).name == "Статус_конвейера.md" else cfg.resolve(cfg.status)
+    Path(out).write_text(text, encoding="utf-8")
+    print(text)
+    return 0
+
+
 def main(argv=None):
     ap = argparse.ArgumentParser(prog="agents.agent_manager")
     sub = ap.add_subparsers(dest="cmd")
@@ -372,6 +442,10 @@ def main(argv=None):
     p.add_argument("--agent", default="")
     p.add_argument("--skill", default="")
     p.set_defaults(handler=cmd_task)
+
+    p = sub.add_parser("report")
+    p.add_argument("--project", default="meptaggingsolution")
+    p.set_defaults(handler=cmd_report)
 
     args = ap.parse_args(argv)
     if not getattr(args, "cmd", None):

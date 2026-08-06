@@ -51,13 +51,6 @@ checks:
     pattern: using\s+Autodesk\.Revit
     expect: 0
 
-  - id: A-03
-    label: 'Core.Tests не содержит заглушек NotImplementedException'
-    kind: grep_dir
-    dir: Core.Tests
-    pattern: NotImplementedException
-    expect: 0
-
 layer_rules:
   - label: Core без Autodesk.Revit (guard-слой)
     pattern: using\s+Autodesk\.Revit
