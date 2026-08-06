@@ -108,7 +108,10 @@ def test_audit(cfg: ProjectConfig) -> tuple:
                 for pat, name in trivial:
                     if re.search(pat, txt, re.I):
                         issues.append(f"{rel}: {name}")
-                if "NotImplementedException" in txt:
+                # NotImplementedException — проблема только в файлах-тестах
+                # (с атрибутами [Test]/[TestCase]). В инфраструктуре харнесса
+                # (Infra/) это может быть мёртвый метод-сериализатор — не заглушка теста.
+                if "NotImplementedException" in txt and ("[Test" in txt or "[TestCase" in txt):
                     issues.append(f"{rel}: NotImplementedException")
     ok = len(issues) == 0
     return ok, (f"файлов {nfiles}, заглушек 0" if ok else "; ".join(issues[:5]))

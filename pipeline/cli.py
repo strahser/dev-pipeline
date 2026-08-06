@@ -175,11 +175,22 @@ def cmd_verify(cfg, args):
             t_status = "ОШИБКА ПАРСИНГА"
             t_summary = tail
         else:
-            ok = (t_rc == 0 and failed == 0) or (passed is not None and total is not None and passed == total)
-            t_status = "PASS" if ok else "FAIL"
-            t_summary = f"rc={t_rc}, passed={passed}, total={total}, failed={failed}"
-            if not ok:
-                t_summary += " | " + tail
+            # Сравнение с базовым состоянием: не хуже baseline = PASS (задача не про тесты)
+            base_p = cfg.baseline_passed
+            base_t = cfg.baseline_total
+            if base_p is not None and base_t is not None and passed is not None and total is not None:
+                ok = (passed >= base_p and total == base_t)
+                t_status = "PASS" if ok else "FAIL"
+                t_summary = (f"rc={t_rc}, passed={passed}, total={total}, failed={failed}"
+                             f" (база {base_p}/{base_t})")
+                if not ok:
+                    t_summary += " | " + tail
+            else:
+                ok = (t_rc == 0 and failed == 0) or (passed is not None and total is not None and passed == total)
+                t_status = "PASS" if ok else "FAIL"
+                t_summary = f"rc={t_rc}, passed={passed}, total={total}, failed={failed}"
+                if not ok:
+                    t_summary += " | " + tail
         result.append((f"тесты: {t_summary}", t_status))
     else:
         result.append(("тесты (сборка не прошла)", "SKIP"))

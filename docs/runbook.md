@@ -48,6 +48,30 @@ python -X utf8 tests/test_client.py -v      # client: ACK/recovery/фолбэк
 python -X utf8 tests/run_all.py             # весь набор
 ```
 
+## 4.1. Агент-менеджер (запуск субагентов)
+
+```powershell
+# Миссия → подзадачи A-NN → субагенты (parallel)
+python -X utf8 agents/agent_manager.py mission --project <p> --mission <ТЗ.md> --split 3 ^
+    --model opencode/deepseek-v4-flash-free --skill pipeline-executor
+
+# Одна задача реальным субагентом
+python -X utf8 agents/agent_manager.py task --project <p> --task A-05 ^
+    --model opencode/deepseek-v4-flash-free
+
+# Демо-цикл без реального opencode (проверка механики)
+python -X utf8 agents/agent_manager.py mission --project <p> --mission <ТЗ.md> --demo
+```
+
+**Уроки пилота (MepTaggingSolution, 2026-08-06):**
+- `opencode run` субагентам нужен `--auto` (иначе останавливаются на запросе записи файла).
+- Неинтерактивный субагент может **не дописать отчёт** после успешной работы → менеджер
+  авто-генерирует отчёт (`_ensure_report`), если задача была взята (in_progress).
+- Промпт субагента должен ЯВНО запрещать поиск «открытых задач» (иначе скилл-исполнитель
+  конфликтует: менеджер уже перевёл задачу в in_progress).
+- verify сравнивает тесты с `baseline_passed/baseline_total` из pipeline.yaml:
+  не хуже базы = PASS (задача не про тесты), а не «0 фейлов».
+
 ## 5. Типовые сценарии
 
 ### Полный цикл задачи через сервер
