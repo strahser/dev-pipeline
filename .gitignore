@@ -10,3 +10,4 @@ bin/
 obj/
 server.pid
 *.log
+temp/
