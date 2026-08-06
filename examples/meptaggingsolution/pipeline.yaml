@@ -32,8 +32,8 @@ tests:
   runner: dotnet
   vstest: ""
   dll: Core.Tests/Core.Tests.csproj
-  baseline_passed: 8
-  baseline_total: 15
+  baseline_passed: 12
+  baseline_total: 19
 
 # Декларативные проверки задач (для пилота на MepTaggingSolution)
 checks:

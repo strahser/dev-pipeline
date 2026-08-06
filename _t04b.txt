@@ -1,0 +1,95 @@
+﻿╨в╨╡╤Б╤В╨╛╨▓╤Л╨╣ ╨╖╨░╨┐╤Г╤Б╨║ ╨┤╨╗╤П E:\╨Я╨╗╨░╨│╨╕╨╜╤Л╨а╨╡╨▓╨╕╤В\MepTaggingSolution\Core.Tests\bin\Debug\net48\Core.Tests.dll (.NETFramework,Version=v4.8)
+╨Ю╨▒╤Й╨╡╨╡ ╨║╨╛╨╗╨╕╤З╨╡╤Б╤В╨▓╨╛ ╤В╨╡╤Б╤В╨╛╨▓╤Л╤Е ╤Д╨░╨╣╨╗╨╛╨▓ (1), ╤Б╨╛╨╛╤В╨▓╨╡╤В╤Б╤В╨▓╤Г╤О╤Й╨╕╤Е ╤Г╨║╨░╨╖╨░╨╜╨╜╨╛╨╝╤Г ╤И╨░╨▒╨╗╨╛╨╜╤Г.
+  ╨Э╨╡ ╨┐╤А╨╛╨╣╨┤╨╡╨╜ Baseline_Run_Produces_Suggestions_Without_Collisions("E:\\╨Я╨╗╨░╨│╨╕╨╜╤Л╨а╨╡╨▓╨╕╤В\\MepTaggingSolution\\Core.Tests\\bin\\Debug\\net48\\Fixtures\\View1") [851 ms]
+  ╨б╨╛╨╛╨▒╤Й╨╡╨╜╨╕╨╡ ╨╛╨▒ ╨╛╤И╨╕╨▒╨║╨╡:
+     ╨Э╨░╤А╤Г╤И╨╡╨╜╨╕╤П ╨┐╨╡╤А╨╡╤Б╨╡╤З╨╡╨╜╨╕╨╣:
+(38, 21, Leader-Tag: ╨╗╨╕╨┤╨╡╤А 25091541 ╨┐╨╡╤А╨╡╤Б╨╡╨║╨░╨╡╤В ╨╝╨░╤А╨║╤Г 24962351 [[3,19,55,07] тАУ [7,13,56,71]])
+  Expected: False
+  But was:  True
+
+  ╨в╤А╨░╤Б╤Б╨╕╤А╨╛╨▓╨║╨░ ╤Б╤В╨╡╨║╨░:
+     ╨▓ Core.Tests.CoreCollisionTests.Baseline_Run_Produces_Suggestions_Without_Collisions(String fixtureDir) ╨▓ E:\╨Я╨╗╨░╨│╨╕╨╜╤Л╨а╨╡╨▓╨╕╤В\MepTaggingSolution\Core.Tests\CoreCollisionTests.cs:╤Б╤В╤А╨╛╨║╨░ 57
+
+1)    ╨▓ Core.Tests.CoreCollisionTests.Baseline_Run_Produces_Suggestions_Without_Collisions(String fixtureDir) ╨▓ E:\╨Я╨╗╨░╨│╨╕╨╜╤Л╨а╨╡╨▓╨╕╤В\MepTaggingSolution\Core.Tests\CoreCollisionTests.cs:╤Б╤В╤А╨╛╨║╨░ 57
+
+
+  ╨Э╨╡ ╨┐╤А╨╛╨╣╨┤╨╡╨╜ No_LeaderTag_Intersections("E:\\╨Я╨╗╨░╨│╨╕╨╜╤Л╨а╨╡╨▓╨╕╤В\\MepTaggingSolution\\Core.Tests\\bin\\Debug\\net48\\Fixtures\\View1") [208 ms]
+  ╨б╨╛╨╛╨▒╤Й╨╡╨╜╨╕╨╡ ╨╛╨▒ ╨╛╤И╨╕╨▒╨║╨╡:
+     [View1] ╨╗╨╕╨┤╨╡╤А-╨╝╨░╤А╨║╨░:
+(38, 21, Leader-Tag: ╨╗╨╕╨┤╨╡╤А 25091541 ╨┐╨╡╤А╨╡╤Б╨╡╨║╨░╨╡╤В ╨╝╨░╤А╨║╤Г 24962351 [[3,19,55,07] тАУ [7,13,56,71]])
+  Expected: False
+  But was:  True
+
+  ╨в╤А╨░╤Б╤Б╨╕╤А╨╛╨▓╨║╨░ ╤Б╤В╨╡╨║╨░:
+     ╨▓ Core.Tests.CoreCollisionTests.No_LeaderTag_Intersections(String fixtureDir) ╨▓ E:\╨Я╨╗╨░╨│╨╕╨╜╤Л╨а╨╡╨▓╨╕╤В\MepTaggingSolution\Core.Tests\CoreCollisionTests.cs:╤Б╤В╤А╨╛╨║╨░ 150
+
+1)    ╨▓ Core.Tests.CoreCollisionTests.No_LeaderTag_Intersections(String fixtureDir) ╨▓ E:\╨Я╨╗╨░╨│╨╕╨╜╤Л╨а╨╡╨▓╨╕╤В\MepTaggingSolution\Core.Tests\CoreCollisionTests.cs:╤Б╤В╤А╨╛╨║╨░ 150
+
+
+  ╨Э╨╡ ╨┐╤А╨╛╨╣╨┤╨╡╨╜ View1 / default [203 ms]
+  ╨б╨╛╨╛╨▒╤Й╨╡╨╜╨╕╨╡ ╨╛╨▒ ╨╛╤И╨╕╨▒╨║╨╡:
+     [View1] ╨║╨╛╨╝╨▒╨╛ 'default': ╨╜╨░╤А╤Г╤И╨╡╨╜╨╕╤П ╨┐╨╡╤А╨╡╤Б╨╡╤З╨╡╨╜╨╕╨╣:
+(38, 21, Leader-Tag: ╨╗╨╕╨┤╨╡╤А 25091541 ╨┐╨╡╤А╨╡╤Б╨╡╨║╨░╨╡╤В ╨╝╨░╤А╨║╤Г 24962351 [[3,19,55,07] тАУ [7,13,56,71]])
+  Expected: False
+  But was:  True
+
+  ╨в╤А╨░╤Б╤Б╨╕╤А╨╛╨▓╨║╨░ ╤Б╤В╨╡╨║╨░:
+     ╨▓ Core.Tests.CoreCollisionTests.Strategy_Combination_Has_No_Collisions(String fixtureDir, String comboName, Action`1 mutate) ╨▓ E:\╨Я╨╗╨░╨│╨╕╨╜╤Л╨а╨╡╨▓╨╕╤В\MepTaggingSolution\Core.Tests\CoreCollisionTests.cs:╤Б╤В╤А╨╛╨║╨░ 118
+
+1)    ╨▓ Core.Tests.CoreCollisionTests.Strategy_Combination_Has_No_Collisions(String fixtureDir, String comboName, Action`1 mutate) ╨▓ E:\╨Я╨╗╨░╨│╨╕╨╜╤Л╨а╨╡╨▓╨╕╤В\MepTaggingSolution\Core.Tests\CoreCollisionTests.cs:╤Б╤В╤А╨╛╨║╨░ 118
+
+
+  ╨Э╨╡ ╨┐╤А╨╛╨╣╨┤╨╡╨╜ View1 / cbr_off [128 ms]
+  ╨б╨╛╨╛╨▒╤Й╨╡╨╜╨╕╨╡ ╨╛╨▒ ╨╛╤И╨╕╨▒╨║╨╡:
+     [View1] ╨║╨╛╨╝╨▒╨╛ 'cbr_off': ╨╜╨░╤А╤Г╤И╨╡╨╜╨╕╤П ╨┐╨╡╤А╨╡╤Б╨╡╤З╨╡╨╜╨╕╨╣:
+(38, 21, Leader-Tag: ╨╗╨╕╨┤╨╡╤А 25091541 ╨┐╨╡╤А╨╡╤Б╨╡╨║╨░╨╡╤В ╨╝╨░╤А╨║╤Г 24962351 [[3,19,55,07] тАУ [7,13,56,71]])
+  Expected: False
+  But was:  True
+
+  ╨в╤А╨░╤Б╤Б╨╕╤А╨╛╨▓╨║╨░ ╤Б╤В╨╡╨║╨░:
+     ╨▓ Core.Tests.CoreCollisionTests.Strategy_Combination_Has_No_Collisions(String fixtureDir, String comboName, Action`1 mutate) ╨▓ E:\╨Я╨╗╨░╨│╨╕╨╜╤Л╨а╨╡╨▓╨╕╤В\MepTaggingSolution\Core.Tests\CoreCollisionTests.cs:╤Б╤В╤А╨╛╨║╨░ 118
+
+1)    ╨▓ Core.Tests.CoreCollisionTests.Strategy_Combination_Has_No_Collisions(String fixtureDir, String comboName, Action`1 mutate) ╨▓ E:\╨Я╨╗╨░╨│╨╕╨╜╤Л╨а╨╡╨▓╨╕╤В\MepTaggingSolution\Core.Tests\CoreCollisionTests.cs:╤Б╤В╤А╨╛╨║╨░ 118
+
+
+  ╨Э╨╡ ╨┐╤А╨╛╨╣╨┤╨╡╨╜ View1 / cbr_only [168 ms]
+  ╨б╨╛╨╛╨▒╤Й╨╡╨╜╨╕╨╡ ╨╛╨▒ ╨╛╤И╨╕╨▒╨║╨╡:
+     [View1] ╨║╨╛╨╝╨▒╨╛ 'cbr_only': ╨╜╨░╤А╤Г╤И╨╡╨╜╨╕╤П ╨┐╨╡╤А╨╡╤Б╨╡╤З╨╡╨╜╨╕╨╣:
+(20, 21, Leader-Leader: 24964427->Models.Point2D ╨╕ 24964410->Models.Point2D); (21, 24, Leader-Leader: 24964410->Models.Point2D ╨╕ 24965220->Models.Point2D); (21, 19, Leader-Tag: ╨╗╨╕╨┤╨╡╤А 24964410 ╨┐╨╡╤А╨╡╤Б╨╡╨║╨░╨╡╤В ╨╝╨░╤А╨║╤Г 24965139 [[59,72,23,11] тАУ [63,66,24,75]]); (22, 20, Leader-Tag: ╨╗╨╕╨┤╨╡╤А 24965697 ╨┐╨╡╤А╨╡╤Б╨╡╨║╨░╨╡╤В ╨╝╨░╤А╨║╤Г 24964427 [[65,22,38,08] тАУ [69,15,39,72]]); (24, 19, Leader-Tag: ╨╗╨╕╨┤╨╡╤А 24965220 ╨┐╨╡╤А╨╡╤Б╨╡╨║╨░╨╡╤В ╨╝╨░╤А╨║╤Г 24965139 [[59,72,23,11] тАУ [63,66,24,75]])
+  Expected: False
+  But was:  True
+
+  ╨в╤А╨░╤Б╤Б╨╕╤А╨╛╨▓╨║╨░ ╤Б╤В╨╡╨║╨░:
+     ╨▓ Core.Tests.CoreCollisionTests.Strategy_Combination_Has_No_Collisions(String fixtureDir, String comboName, Action`1 mutate) ╨▓ E:\╨Я╨╗╨░╨│╨╕╨╜╤Л╨а╨╡╨▓╨╕╤В\MepTaggingSolution\Core.Tests\CoreCollisionTests.cs:╤Б╤В╤А╨╛╨║╨░ 118
+
+1)    ╨▓ Core.Tests.CoreCollisionTests.Strategy_Combination_Has_No_Collisions(String fixtureDir, String comboName, Action`1 mutate) ╨▓ E:\╨Я╨╗╨░╨│╨╕╨╜╤Л╨а╨╡╨▓╨╕╤В\MepTaggingSolution\Core.Tests\CoreCollisionTests.cs:╤Б╤В╤А╨╛╨║╨░ 118
+
+
+  ╨Э╨╡ ╨┐╤А╨╛╨╣╨┤╨╡╨╜ View1 / gradient_descent [5 s]
+  ╨б╨╛╨╛╨▒╤Й╨╡╨╜╨╕╨╡ ╨╛╨▒ ╨╛╤И╨╕╨▒╨║╨╡:
+     [View1] ╨║╨╛╨╝╨▒╨╛ 'gradient_descent': ╨╜╨░╤А╤Г╤И╨╡╨╜╨╕╤П ╨┐╨╡╤А╨╡╤Б╨╡╤З╨╡╨╜╨╕╨╣:
+(27, 28, Tag-Tag overlap: ╨╝╨░╤А╨║╨░ 24965286 [[46,91,24,41] тАУ [50,84,26,05]] ╨╕ 24965330 [[50,45,24,14] тАУ [54,39,25,78]]); (38, 21, Leader-Tag: ╨╗╨╕╨┤╨╡╤А 25091541 ╨┐╨╡╤А╨╡╤Б╨╡╨║╨░╨╡╤В ╨╝╨░╤А╨║╤Г 24962351 [[3,23,55,07] тАУ [7,17,56,71]])
+  Expected: False
+  But was:  True
+
+  ╨в╤А╨░╤Б╤Б╨╕╤А╨╛╨▓╨║╨░ ╤Б╤В╨╡╨║╨░:
+     ╨▓ Core.Tests.CoreCollisionTests.Strategy_Combination_Has_No_Collisions(String fixtureDir, String comboName, Action`1 mutate) ╨▓ E:\╨Я╨╗╨░╨│╨╕╨╜╤Л╨а╨╡╨▓╨╕╤В\MepTaggingSolution\Core.Tests\CoreCollisionTests.cs:╤Б╤В╤А╨╛╨║╨░ 118
+
+1)    ╨▓ Core.Tests.CoreCollisionTests.Strategy_Combination_Has_No_Collisions(String fixtureDir, String comboName, Action`1 mutate) ╨▓ E:\╨Я╨╗╨░╨│╨╕╨╜╤Л╨а╨╡╨▓╨╕╤В\MepTaggingSolution\Core.Tests\CoreCollisionTests.cs:╤Б╤В╤А╨╛╨║╨░ 118
+
+
+  ╨Э╨╡ ╨┐╤А╨╛╨╣╨┤╨╡╨╜ View1 / all_aggressive [2 s]
+  ╨б╨╛╨╛╨▒╤Й╨╡╨╜╨╕╨╡ ╨╛╨▒ ╨╛╤И╨╕╨▒╨║╨╡:
+     [View1] ╨║╨╛╨╝╨▒╨╛ 'all_aggressive': ╨╜╨░╤А╤Г╤И╨╡╨╜╨╕╤П ╨┐╨╡╤А╨╡╤Б╨╡╤З╨╡╨╜╨╕╨╣:
+(11, 12, Tag-Tag overlap: ╨╝╨░╤А╨║╨░ 24961555 [[-33,94,64,15] тАУ [-30,00,65,79]] ╨╕ 24961644 [[-33,65,65,63] тАУ [-29,71,67,27]]); (17, 18, Tag-Tag overlap: ╨╝╨░╤А╨║╨░ 25090361 [[3,00,65,33] тАУ [6,93,66,97]] ╨╕ 25090385 [[5,92,64,31] тАУ [9,86,65,96]])
+  Expected: False
+  But was:  True
+
+  ╨в╤А╨░╤Б╤Б╨╕╤А╨╛╨▓╨║╨░ ╤Б╤В╨╡╨║╨░:
+     ╨▓ Core.Tests.CoreCollisionTests.Strategy_Combination_Has_No_Collisions(String fixtureDir, String comboName, Action`1 mutate) ╨▓ E:\╨Я╨╗╨░╨│╨╕╨╜╤Л╨а╨╡╨▓╨╕╤В\MepTaggingSolution\Core.Tests\CoreCollisionTests.cs:╤Б╤В╤А╨╛╨║╨░ 118
+
+1)    ╨▓ Core.Tests.CoreCollisionTests.Strategy_Combination_Has_No_Collisions(String fixtureDir, String comboName, Action`1 mutate) ╨▓ E:\╨Я╨╗╨░╨│╨╕╨╜╤Л╨а╨╡╨▓╨╕╤В\MepTaggingSolution\Core.Tests\CoreCollisionTests.cs:╤Б╤В╤А╨╛╨║╨░ 118
+
+
+
+╨Э╨╡ ╨┐╤А╨╛╨╣╨┤╨╡╨╜!: ╨╜╨╡ ╨┐╤А╨╛╨╣╨┤╨╡╨╜╨╛     7, ╨┐╤А╨╛╨╣╨┤╨╡╨╜╨╛    12, ╨┐╤А╨╛╨┐╤Г╤Й╨╡╨╜╨╛     0, ╨▓╤Б╨╡╨│╨╛    19, ╨┤╨╗╨╕╤В╨╡╨╗╤М╨╜╨╛╤Б╤В╤М 11 s. - Core.Tests.dll (net48)
