@@ -1,0 +1,173 @@
+# -*- coding: utf-8 -*-
+"""Загрузка конфигурации проекта (pipeline.yaml) для dev-pipeline.
+
+Схема конфига (см. examples\\heatlossrevit2\\pipeline.yaml):
+    project: { name, root, branch }
+    tasks:   { inbox, active, reports, archive, protocol, status, conveyor }
+    build:   { msbuild, sln, configuration, platform, extra_args }
+    tests:   { runner, vstest, dll, baseline_passed, baseline_total }
+    checks:  список проверок (см. pipeline.checks)
+    layer_rules: список grep-правил слоёв
+"""
+from __future__ import annotations
+
+import os
+from dataclasses import dataclass, field
+from pathlib import Path
+from typing import Any
+
+import yaml
+
+EXAMPLES_DIR = Path(__file__).resolve().parent.parent / "examples"
+
+
+class ConfigError(Exception):
+    pass
+
+
+@dataclass
+class ProjectConfig:
+    name: str
+    root: Path
+    branch: str = ""
+
+    # Папки Tasks (относительно root)
+    inbox: str = "Tasks\\Входящие"
+    active: str = "Tasks\\Активные"
+    reports: str = "Tasks\\Отчёты"
+    archive: str = "Tasks\\Архив"
+    protocol: str = "Tasks\\00_Протокол_агентов.md"
+    status: str = "Tasks\\Статус_конвейера.md"
+    conveyor: str = "Tasks\\Конвейер"
+    notif: str = "Tasks\\Конвейер\\Уведомления"
+
+    # Сборка
+    msbuild: str = ""
+    sln: str = ""
+    configuration: str = "Debug"
+    platform: str = "Any CPU"
+    build_extra: list = field(default_factory=list)
+
+    # Тесты
+    test_runner: str = "vstest"
+    vstest: str = ""
+    test_dll: str = ""
+    baseline_passed: int | None = None
+    baseline_total: int | None = None
+
+    # Проверки и правила слоёв (декларативно)
+    checks: list = field(default_factory=list)
+    layer_rules: list = field(default_factory=list)
+    audit_dirs: list = field(default_factory=lambda: ["Test", "Core.Tests"])
+
+    # Служебные настройки
+    skip_dirs: list = field(default_factory=lambda: [
+        "bin", "obj", ".git", ".idea", ".opencode", "packages",
+        "TestResults", "__pycache__", "Архив",
+    ])
+
+    @property
+    def path(self, key: str) -> Path:
+        """Абсолютный путь к папке/файлу Tasks."""
+        return self.root / getattr(self, key)
+
+    def resolve(self, rel: str) -> Path:
+        return self.root / rel
+
+    def abs_tasks_dir(self, folder_key: str) -> Path:
+        return self.resolve(getattr(self, folder_key))
+
+    # Короткие помощники для команд сборки/тестов
+    def msbuild_cmd(self) -> list[str]:
+        args = [self.msbuild, str(self.root / self.sln), "/t:Restore,Build",
+                f"/p:Configuration={self.configuration}",
+                f"/p:Platform={self.platform}"]
+        args += self.build_extra
+        return args
+
+    def test_cmd(self) -> list[str]:
+        if self.test_runner == "vstest":
+            return [self.vstest, str(self.root / self.test_dll)]
+        raise ConfigError(f"Неизвестный test_runner: {self.test_runner}")
+
+
+def _require(d: dict, key: str, where: str):
+    if key not in d:
+        raise ConfigError(f"В pipeline.yaml отсутствует секция/поле '{key}' ({where})")
+    return d[key]
+
+
+def load_config(project_name: str) -> ProjectConfig:
+    """Загрузить examples/<project>/pipeline.yaml."""
+    cfg_path = EXAMPLES_DIR / project_name / "pipeline.yaml"
+    if not cfg_path.exists():
+        raise ConfigError(
+            f"Конфиг не найден: {cfg_path}. "
+            f"Доступные проекты: {[p.name for p in EXAMPLES_DIR.iterdir() if p.is_dir()]}")
+    raw = yaml.safe_load(cfg_path.read_text(encoding="utf-8"))
+
+    p = _require(raw, "project", "project")
+    t = raw.get("tasks", {})
+    b = raw.get("build", {})
+    te = raw.get("tests", {})
+    c = raw.get("checks", [])
+    lr = raw.get("layer_rules", [])
+    ad = raw.get("audit_dirs", ["Test", "Core.Tests"])
+
+    root = Path(_require(p, "root", "project.root")).resolve()
+    if not root.exists():
+        raise ConfigError(f"project.root не существует: {root}")
+
+    return ProjectConfig(
+        name=project_name,
+        root=root,
+        branch=p.get("branch", ""),
+        inbox=t.get("inbox", "Tasks\\Входящие"),
+        active=t.get("active", "Tasks\\Активные"),
+        reports=t.get("reports", "Tasks\\Отчёты"),
+        archive=t.get("archive", "Tasks\\Архив"),
+        protocol=t.get("protocol", "Tasks\\00_Протокол_агентов.md"),
+        status=t.get("status", "Tasks\\Статус_конвейера.md"),
+        conveyor=t.get("conveyor", "Tasks\\Конвейер"),
+        notif=t.get("notif", "Tasks\\Конвейер\\Уведомления"),
+        msbuild=_require(b, "msbuild", "build"),
+        sln=_require(b, "sln", "build"),
+        configuration=b.get("configuration", "Debug"),
+        platform=b.get("platform", "Any CPU"),
+        build_extra=b.get("extra_args", []),
+        test_runner=te.get("runner", "vstest"),
+        vstest=te.get("vstest", ""),
+        test_dll=te.get("dll", ""),
+        baseline_passed=te.get("baseline_passed"),
+        baseline_total=te.get("baseline_total"),
+        checks=c,
+        layer_rules=lr,
+        audit_dirs=ad,
+    )
+
+
+def list_projects() -> list[str]:
+    if not EXAMPLES_DIR.exists():
+        return []
+    return sorted(p.name for p in EXAMPLES_DIR.iterdir()
+                  if p.is_dir() and (p / "pipeline.yaml").exists())
+
+
+def check_env() -> None:
+    """Проверить существование путей сборки/тестов из всех конфигов (для diagnostics)."""
+    for name in list_projects():
+        try:
+            cfg = load_config(name)
+        except ConfigError as e:
+            print(f"  {name}: ОШИБКА {e}")
+            continue
+        problems = []
+        for label, path in [("msbuild", cfg.msbuild), ("vstest", cfg.vstest)]:
+            if path and not os.path.exists(path):
+                problems.append(f"{label} не найден: {path}")
+        if cfg.sln and not (cfg.root / cfg.sln).exists():
+            problems.append(f"sln не найден: {cfg.root / cfg.sln}")
+        if problems:
+            print(f"  {name}: " + "; ".join(problems))
+        else:
+            print(f"  {name}: ок")

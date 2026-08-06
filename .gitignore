@@ -1,0 +1,9 @@
+.idea/
+.opencode/
+__pycache__/
+*.pyc
+*.db
+logs/
+TestResults/
+bin/
+obj/

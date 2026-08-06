@@ -1,0 +1,127 @@
+﻿# Конфигурация конвейера для проекта HeatLossRevit2 (Revit-плагин, C# net48).
+# Схема: см. pipeline/config.py. Пути перенесены из Tasks\Конвейер\pipeline.py.
+
+project:
+  name: HeatLossRevit2
+  root: E:\ПлагиныРевит\HeatLossRevit2
+  branch: refactoring/architecture-cleanup
+
+tasks:
+  inbox: Tasks\Входящие
+  active: Tasks\Активные
+  reports: Tasks\Отчёты
+  archive: Tasks\Архив
+  protocol: Tasks\00_Протокол_агентов.md
+  status: Tasks\Статус_конвейера.md
+  conveyor: Tasks\Конвейер
+  notif: Tasks\Конвейер\Уведомления
+
+build:
+  msbuild: C:\Program Files\Microsoft Visual Studio\18\Community\MSBuild\Current\Bin\MSBuild.exe
+  sln: HeatLossRevit.sln
+  configuration: Debug
+  platform: Any CPU
+  extra_args:
+    - /p:DeployAddin=false
+
+tests:
+  runner: vstest
+  vstest: C:\Program Files\Microsoft Visual Studio\18\Community\Common7\IDE\CommonExtensions\Microsoft\TestWindow\vstest.console.exe
+  dll: Test\bin\Debug\Tests.dll
+  baseline_passed: 109
+  baseline_total: 109
+
+# Декларативные проверки задач (порты verify_checks из pipeline.py)
+checks:
+  - id: A-01
+    label: NETSDK1005 отсутствует в логе сборки
+    kind: build_grep
+    pattern: NETSDK1005
+    expect: 0
+
+  - id: A-02
+    label: ResultToParameterAdapter/MapSpaceResults удалён
+    kind: grep_dir
+    dir: MainAppHeatLoss\Adapters
+    pattern: MapSpaceResults|ResultToParameterAdapter|SnapshotToDirectShapeAdapter
+    expect: 0
+
+  - id: A-03
+    label: HeatLossRevit.UIResources существует
+    kind: dir_exists
+    dir: HeatLossRevit.UIResources
+
+  - id: A-04
+    label: MainAppHeatLoss.ProjectSettings создан, старый удалён
+    kind: dir_exists_and_not
+    dir: MainAppHeatLoss.ProjectSettings
+    not_dir: MainAppHeatLoss\ProjectSettings
+
+  - id: A-05
+    label: MainAppHeatLoss.Projects создан, старый удалён
+    kind: dir_exists_and_not
+    dir: MainAppHeatLoss.Projects
+    not_dir: MainAppHeatLoss\Projects
+
+  - id: A-06
+    label: "Gsop: класс GsopCalculator определён только в Core"
+    kind: class_location
+    class: GsopCalculator
+    dirs: [Core]
+
+  - id: A-07
+    label: В MainApp нет EPPlus/DocX экспорта отчётов
+    kind: grep_dir
+    dir: MainAppHeatLoss
+    pattern: OfficeOpenXml|Xceed\.Document\.NET|Xceed\.Words\.NET
+    expect: 0
+
+  - id: A-08
+    label: RevitServices не ссылается на MainAppHeatLoss
+    kind: grep_dir
+    dir: RevitServices
+    pattern: using\s+MainAppHeatLoss
+    expect: 0
+
+  - id: A-09
+    label: 'DI разнесён по модулям (Core\DependencyInjection есть)'
+    kind: dir_exists
+    dir: Core\DependencyInjection
+
+  - id: A-09
+    label: Корневой ServiceCollectionExtensions тонкий (<200 строк)
+    kind: file_small
+    file: MainAppHeatLoss\AppData\DependencyInjection\ServiceCollectionExtensions.cs
+    max_lines: 200
+
+# Правила слоёв (архитектурные границы из 00_Контролёр_промпт\ControlerPromptv1.txt).
+# Применяются на каждой verify дополнительно к проверкам задачи.
+# Для запрета циклических ссылок используется структурная проверка csproj ProjectReference
+# (namespace-grep не подходит: Projects/ProjectSettings законно используют свой namespace).
+layer_rules:
+  - label: Core/HeatLossExport не используют Autodesk
+    pattern: using\s+Autodesk
+    expect: 0
+    dirs: [Core, HeatLossExport]
+  - label: RevitServices не ссылается на MainAppHeatLoss
+    pattern: using\s+MainAppHeatLoss
+    expect: 0
+    dirs: [RevitServices]
+  - label: MainAppHeatLoss.Projects не ссылается на MainAppHeatLoss (цикл)
+    kind: csproj_no_ref
+    dir: MainAppHeatLoss.Projects
+    forbidden: MainAppHeatLoss.csproj
+  - label: MainAppHeatLoss.ProjectSettings не ссылается на MainAppHeatLoss (цикл)
+    kind: csproj_no_ref
+    dir: MainAppHeatLoss.ProjectSettings
+    forbidden: MainAppHeatLoss.csproj
+  - label: ProjectSettings не ссылается на Projects (цикл)
+    kind: csproj_no_ref
+    dir: MainAppHeatLoss.ProjectSettings
+    forbidden: MainAppHeatLoss.Projects.csproj
+  - label: Core/HeatLossExport не используют RevitServices
+    pattern: using\s+RevitServices
+    expect: 0
+    dirs: [Core, HeatLossExport]
+
+audit_dirs: [Test, Core.Tests]
