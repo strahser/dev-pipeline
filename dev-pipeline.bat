@@ -1,43 +1,93 @@
 @echo off
+chcp 65001 >nul
 cd /d "%~dp0"
 title dev-pipeline : conveyor
+set "PIPELINE=e:\ПлагиныРевит\dev-pipeline"
 
 :MENU
 cls
-echo ============================================
-echo   dev-pipeline : conveyor for projects
-echo ============================================
-echo   1. Start server + dashboard (http://127.0.0.1:8787)
-echo   2. Run subagent on task (run_task.bat A-NN)
-echo   3. Manager report (project goals)
-echo   4. DXF visualization (MepTagging)
-echo   5. Full unit test
-echo   6. CLI: status / verify / dispatch
+echo ============================================================
+echo   dev-pipeline : конвейер проектов (одна кнопка)
+echo ============================================================
+echo   1. Server + dashboard (http://127.0.0.1:8787)
+echo   2. Миссия менеджера HeatLossRevit2 (все агенты)
+echo   3. Задача HeatLossRevit2 через qwen-worker
+echo   4. Задача HeatLossRevit2 полноценным агентом
+echo   5. TDL: status / validate / verify / dispatch
+echo   6. Отчёт менеджера (HeatLossRevit2)
+echo   7. Полные тесты dev-pipeline
 echo   0. Exit
-echo ============================================
-set /p CHOICE="Choose: "
+echo ============================================================
+set /p CHOICE="Выбор: "
 
-if "%CHOICE%"=="1" call start_server.bat
-if "%CHOICE%"=="2" (
-  set /p "T=Task (A-NN): "
-  set /p "PR=Project [meptaggingsolution]: "
-  if "%PR%"=="" set "PR=meptaggingsolution"
-  call run_task.bat %T% %PR%
-)
-if "%CHOICE%"=="3" (
-  set /p "PR=Project [meptaggingsolution]: "
-  if "%PR%"=="" set "PR=meptaggingsolution"
-  call manager_report.bat %PR%
-)
-if "%CHOICE%"=="4" call dxf_report.bat
-if "%CHOICE%"=="5" call run_tests.bat
-if "%CHOICE%"=="6" (
-  echo.
-  echo   python -m pipeline.cli status ^<project^>
-  echo   python -m pipeline.cli verify ^<project^> ^<A-NN^>
-  echo   python -m pipeline.cli dispatch ^<project^> ^<file^> --title ...
-  echo.
-  pause
-)
+if "%CHOICE%"=="1" goto server
+if "%CHOICE%"=="2" goto mission
+if "%CHOICE%"=="3" goto taskqwen
+if "%CHOICE%"=="4" goto taskfull
+if "%CHOICE%"=="5" goto tdl
+if "%CHOICE%"=="6" goto report
+if "%CHOICE%"=="7" goto tests
 if "%CHOICE%"=="0" exit /b 0
+goto MENU
+
+:server
+echo  Запуск сервера... (Ctrl+C для остановки)
+python -X utf8 -m server --port 8787
+pause
+goto MENU
+
+:mission
+set /p "SPLIT=Подзадач (split, по умолч. 1): "
+if "%SPLIT%"=="" set "SPLIT=1"
+set /p "WORKER=Режим (qwen / full / empty): "
+if "%WORKER%"=="" set "WORKER=qwen"
+if "%WORKER%"=="qwen" (
+  python -X utf8 agents/agent_manager.py mission --project heatlossrevit2 --mission "e:\ПлагиныРевит\HeatLossRevit2\Tasks\00_Референсы\МИССИЯ_менеджера_HeatLossRevit2.md" --split %SPLIT% --title "HeatLossRevit2_миссия" --worker qwen --sequential
+) else if "%WORKER%"=="full" (
+  python -X utf8 agents/agent_manager.py mission --project heatlossrevit2 --mission "e:\ПлагиныРевит\HeatLossRevit2\Tasks\00_Референсы\МИССИЯ_менеджера_HeatLossRevit2.md" --split %SPLIT% --title "HeatLossRevit2_миссия" --model opencode-go/qwen3.8-max --sequential
+) else (
+  python -X utf8 agents/agent_manager.py mission --project heatlossrevit2 --mission "e:\ПлагиныРевит\HeatLossRevit2\Tasks\00_Референсы\МИССИЯ_менеджера_HeatLossRevit2.md" --split %SPLIT% --title "HeatLossRevit2_миссия" --sequential
+)
+echo  Exit code: %ERRORLEVEL%
+pause
+goto MENU
+
+:taskqwen
+set /p "TASK=Задача (A-NN): "
+if "%TASK%"=="" goto MENU
+python -X utf8 agents/agent_manager.py task --project heatlossrevit2 --task %TASK% --worker qwen --sequential
+echo  Exit code: %ERRORLEVEL%
+pause
+goto MENU
+
+:taskfull
+set /p "TASK=Задача (A-NN): "
+if "%TASK%"=="" goto MENU
+python -X utf8 agents/agent_manager.py task --project heatlossrevit2 --task %TASK% --model opencode-go/qwen3.8-max --sequential
+echo  Exit code: %ERRORLEVEL%
+pause
+goto MENU
+
+:tdl
+echo.
+echo   python -m pipeline.cli tdl-status heatlossrevit2
+echo   python -m pipeline.cli tdl-validate heatlossrevit2
+echo   python -m pipeline.cli tdl-verify heatlossrevit2 ^<A-NN^>
+echo   python -m pipeline.cli tdl-dispatch heatlossrevit2 ^<файл^> --title ...
+echo.
+python -X utf8 -m pipeline.cli tdl-status heatlossrevit2
+echo.
+pause
+goto MENU
+
+:report
+python -X utf8 agents/agent_manager.py report --project heatlossrevit2
+echo.
+pause
+goto MENU
+
+:tests
+python -X utf8 tests/run_all.py
+echo  Exit code: %ERRORLEVEL%
+pause
 goto MENU
