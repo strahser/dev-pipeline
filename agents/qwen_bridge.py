@@ -37,8 +37,11 @@ def _build_question(task_file: str | None, context_files: list[str], prompt: str
     if task_file:
         p = Path(task_file)
         if p.exists():
-            parts.append("### ЗАДАЧА (выполни)\n" +
-                         p.read_text(encoding="utf-8", errors="replace"))
+            if p.name.endswith(".task.json"):
+                parts.append(_task_json_human(p))
+            else:
+                parts.append("### ЗАДАЧА (выполни)\n" +
+                             p.read_text(encoding="utf-8", errors="replace"))
     for cf in context_files:
         p = Path(cf)
         if p.exists():
@@ -58,6 +61,36 @@ def _build_question(task_file: str | None, context_files: list[str], prompt: str
 4. В конце — маркер: END OF RESPONSE.
 """)
     return "\n\n".join(parts)
+
+
+def _task_json_human(p: Path) -> str:
+    """Превратить TDL .task.json в человекочитаемую постановку для Qwen."""
+    import json
+    try:
+        t = json.loads(p.read_text(encoding="utf-8"))
+    except Exception:
+        return (f"### ЗАДАЧА {p.stem} (JSON)\n"
+                + p.read_text(encoding="utf-8", errors="replace"))
+    lines = [f"### ЗАДАЧА {t.get('task_id', p.stem)} (TDL)", ""]
+    for label, key in [("Наименование", "name"), ("Цель", "goal"),
+                       ("Описание", "description"), ("Статус", "status"),
+                       ("Workflow", "workflow_state"), ("Модуль", "module"),
+                       ("Класс", "class_name"), ("Слой", "layer")]:
+        v = t.get(key)
+        if v:
+            lines.append(f"- {label}: {v}")
+    crit = t.get("acceptance_criteria")
+    if crit:
+        lines += ["", "## Критерии приёмки"]
+        for c in crit:
+            lines.append(f"- {c}")
+    ver = t.get("verification") or {}
+    cmds = ver.get("commands")
+    if cmds:
+        lines += ["", "## Команды проверки"]
+        for c in cmds:
+            lines.append(f"- {c}")
+    return "\n".join(lines)
 
 
 def _run_localassitent(question: str, out: str, input_file: Path, answers_file: Path) -> tuple[str, str]:
@@ -89,30 +122,42 @@ def _strip_question_prefix(response: str) -> str:
     return m.group(1).strip() if m else response
 
 
-def _apply_files(response_text: str, root: Path) -> list[str]:
-    """Применить файлы из ответа: блоки ```FILE: путь ... ``` -> на диск."""
+def _apply_files(response_text: str, root: Path, force: bool = True) -> list[dict]:
+    """Применить файлы из ответа: блоки ```FILE: путь ... ``` -> на диск.
+    Возвращает [{rel, action}] где action in {written, skipped_exists, skipped_empty}."""
     body = _strip_question_prefix(response_text)
     applied = []
     pattern = re.compile(r"```FILE:\s*([^\s`]+)\s*\n(.*?)```", re.S)
     for m in pattern.finditer(body):
         rel = m.group(1).strip().strip('"').strip("'")
         content = m.group(2).strip("\n")
+        if not content:
+            applied.append({"rel": rel, "action": "skipped_empty"})
+            continue
         target = root / rel
+        if target.exists() and not force:
+            applied.append({"rel": rel, "action": "skipped_exists"})
+            continue
         target.parent.mkdir(parents=True, exist_ok=True)
         target.write_text(content, encoding="utf-8")
-        applied.append(rel)
+        applied.append({"rel": rel, "action": "written"})
     return applied
+
+
+def _is_complete(response: str) -> bool:
+    return "END OF RESPONSE" in response or "```FILE:" in response
 
 
 def main() -> int:
     ap = argparse.ArgumentParser()
-    ap.add_argument("--task", help="путь к файлу задачи (TDL/legacy)")
+    ap.add_argument("--task", help="путь к файлу задачи (TDL .task.json или legacy)")
     ap.add_argument("--context", action="append", default=[], help="файлы контекста")
     ap.add_argument("--prompt", default="", help="прямая инструкция")
     ap.add_argument("--out", required=True, help="куда сохранить ответ Qwen")
     ap.add_argument("--apply", action="store_true", help="применить FILE:-блоки на диск")
     ap.add_argument("--dir", default=".", help="корень проекта для --apply")
-    ap.add_argument("--retries", type=int, default=3, help="повторных попыток (если ответ без FILE)")
+    ap.add_argument("--force", action="store_true", help="перезаписывать существующие файлы")
+    ap.add_argument("--retries", type=int, default=3, help="повторных попыток, если ответ без FILE/неполный")
     args = ap.parse_args()
 
     question = _build_question(args.task, args.context, args.prompt)
@@ -121,20 +166,41 @@ def main() -> int:
     input_file = work / "qwen_questions.txt"
     answers_file = work / "qwen_answers.md"
 
-    print(f"[qwen-bridge] отправка в Qwen через LocalAssitent (сценарий text) ...", flush=True)
-    log, response = _run_localassitent(question, args.out, input_file, answers_file)
-    print(log[-500:], flush=True)
-    print(f"[qwen-bridge] ответ: {len(response)} символов -> {args.out}")
+    response = ""
+    log = ""
+    for attempt in range(1, max(1, args.retries + 1)):
+        if attempt > 1:
+            print(f"[qwen-bridge] повторная попытка {attempt}/{args.retries}: уточняю запрос...", flush=True)
+            # уточнение: требуем вернуть файлы блоками
+            question = ("Ответь ТОЛЬКО блоками ```FILE: <путь>\\n<содержимое>\\n```. "
+                        "Ничего лишнего. Это повторный запрос после неполного ответа.\n\n" + question)
+        print(f"[qwen-bridge] отправка в Qwen через LocalAssitent (сценарий text, попытка {attempt}) ...", flush=True)
+        log, response = _run_localassitent(question, args.out, input_file, answers_file)
+        print(log[-400:], flush=True)
+        print(f"[qwen-bridge] ответ: {len(response)} символов")
+        if args.apply and _apply_files(response, Path(args.dir), force=args.force):
+            break
+        if _is_complete(response):
+            break
+        # нет FILE-блоков и неполный — повторим
+        if attempt >= args.retries:
+            break
+
+    print(f"[qwen-bridge] итог сохранён: {args.out}")
 
     if args.apply:
         root = Path(args.dir)
-        applied = _apply_files(response, root)
-        if applied:
-            print(f"[qwen-bridge] применено файлов: {len(applied)}")
-            for a in applied:
-                print(f"   + {a}")
-        else:
-            print("[qwen-bridge] FILE:-блоков нет (проверь ответ; повтори при необходимости)")
+        applied = _apply_files(response, root, force=args.force)
+        written = [a for a in applied if a["action"] == "written"]
+        skipped = [a for a in applied if a["action"] != "written"]
+        print(f"[qwen-bridge] применено файлов: {len(written)}"
+              + (f" (+{len(skipped)} пропущено)" if skipped else ""))
+        for a in written:
+            print(f"   + {a['rel']}")
+        for a in skipped:
+            print(f"   ~ {a['rel']} ({a['action']})")
+        if not applied:
+            print("[qwen-bridge] FILE:-блоков нет. Проверь ответ, возможно нужна повторная отправка.")
     return 0
 
 
