@@ -60,6 +60,22 @@ class TestDispatchChunk(unittest.TestCase):
         self.assertIn(f"id: {tid}", content)
         self.assertIn("статус: open", content)
 
+    def test_dispatch_creates_tdl_task(self):
+        """dispatch_chunk создаёт TDL JSON-задачу (wbs, goal), если tdl_enabled."""
+        tmp = Path(tempfile.mkdtemp(prefix="am_tdl_"))
+        for sub in ("Tasks/Активные", "Tasks/Отчёты", "Tasks/Архив", "Tasks/Конвейер"):
+            (tmp / sub).mkdir(parents=True)
+        from pipeline.config import ProjectConfig
+        cfg = ProjectConfig(name="_test", root=tmp, msbuild="dotnet",
+                            sln="X.csproj", test_runner="dotnet")
+        tid = am.dispatch_chunk(cfg, "Сделать X с доказательством", 1, 2, "Миссия")
+        from pipeline.tdl import store as tdl_store
+        t = tdl_store.load_task(cfg, tid)
+        self.assertIsNotNone(t, "JSON-задача должна создаться")
+        self.assertEqual(t["wbs_code"], "1.01")
+        self.assertIn("Сделать X", t["goal"])
+        self.assertTrue(t["verification"]["commands"], "должны быть команды проверки")
+
 
 class TestDumpVerify(unittest.TestCase):
     """Порт CollisionVerifier: известные случаи пересечений."""

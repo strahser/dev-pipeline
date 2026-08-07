@@ -77,6 +77,8 @@ def _hb(client, name: str):
 SUBPROMPT = """Выполни задачу из файла: {task_file}
 
 ПОРЯДОК РАБОТЫ (строго):
+0. Если есть TDL-задача Tasks\\JSON\\Active\\{task_id}.task.json — прочитай её ПЕРВОЙ
+   (goal, acceptance_criteria, verification.commands) — это источник истины.
 1. Прочитай {task_file} (контекст, требования, границы).
 2. СРАЗУ применяй изменения в проекте: edit/write файлов. Не пиши план, не описывай намерения — редактируй.
 3. После правок запусти сборку: dotnet build Core.Tests/Core.Tests.csproj --nologo -v q  (cwd = корень проекта). Убедись EXIT 0.
@@ -84,8 +86,11 @@ SUBPROMPT = """Выполни задачу из файла: {task_file}
    (baseline в pipeline.yaml проекта; до правок обычно 8/15 — укажи фактическое в отчёте).
 5. Создай отчёт ПО-РУССКИ в {report}: секции «Что было не так», «Что сделано» (пути файлов),
    «Доказательства» (выводы сборки/тестов), «Числа до/после», «Открытые вопросы», «Как пересобрать/проверить».
-6. В шапке задачи {task_file} замени 'статус: in_progress' на 'статус: done_report'.
-7. Коммит: git add -A; git commit -m "agent/{task_id}: отчёт исполнителя".
+6. Если есть TDL-задача — создай также JSON-отчёт:
+   python -X utf8 -m pipeline.cli tdl-report {project} {task_id} --from-md {report}
+   (команда tdl-report в dev-pipeline; {project} = имя проекта, {task_id} = id задачи)
+7. В шапке задачи {task_file} замени 'статус: in_progress' на 'статус: done_report'.
+8. Коммит: git add -A; git commit -m "agent/{task_id}: отчёт исполнителя".
 
 Правила:
 - Временные файлы (логи тестов и т.п.) пиши В ПРОЕКТ (папка Tasks\\Конвейер\\logs\\), НЕ в %TEMP% —
@@ -136,7 +141,8 @@ def split_mission(text: str, n: int) -> list[str]:
 
 
 def dispatch_chunk(cfg, chunk: str, idx: int, total: int, title: str) -> str:
-    """Создать задачу A-NN в Активные из куска миссии. Возвращает id."""
+    """Создать задачу A-NN в Активные из куска миссии. Возвращает id.
+    Если TDL включён — дополнительно создаёт JSON-задачу (wbs 1.idx, goal, criteria)."""
     tid = next_task_id(cfg)
     task_file = f"{tid}_{slug(title)}.md"
     dst = cfg.abs_tasks_dir("active") / task_file
@@ -174,8 +180,38 @@ id: {tid}
 - (задача выдана {now()})
 """
     dst.write_text(content, encoding="utf-8")
+
+    # TDL JSON-задача (источник истины, если включено)
+    if getattr(cfg, "tdl_enabled", True):
+        try:
+            from pipeline.tdl._tpl import make_task
+            from pipeline.tdl import store as tdl_store
+            wbs = f"1.{idx:02d}"
+            t = make_task(
+                task_id=tid, project=cfg.name, name=f"{title} (часть {idx}/{total})",
+                wbs=wbs, priority="высокий", goal=body,
+                acceptance=[body[:2000]],
+                commands=_tdl_commands(cfg),
+                source=f"миссия {title} (часть {idx}/{total})",
+            )
+            tdl_store.save_task(cfg, t)
+            tdl_store.rebuild_index(cfg)
+        except Exception as e:
+            print(f"  [manager] TDL-задача {tid} не создана: {e}")
+
     print(f"  [manager] задача {tid}: {task_file}")
     return tid
+
+
+def _tdl_commands(cfg) -> list:
+    """Команды проверки из конфига проекта (build + test)."""
+    cmds = []
+    if cfg.msbuild.lower() == "dotnet" and cfg.sln:
+        cmds.append(f"dotnet build {cfg.sln} --nologo -v q")
+        cmds.append(f"dotnet test {cfg.sln} --nologo -v q")
+    elif cfg.msbuild:
+        cmds.append(f"\"{cfg.msbuild}\" {cfg.root / cfg.sln} /t:Build /p:Configuration={cfg.configuration} /p:Platform=\"{cfg.platform}\"")
+    return cmds
 
 
 def subagent_env(cfg):
@@ -222,6 +258,7 @@ def run_subagent(cfg, task_id: str, report_path: Path, log_path: Path,
         executor_instr=str(cfg.root / "Tasks" / "Конвейер" / "ИНСТРУКЦИЯ_исполнителю.md"),
         report=report_path,
         task_id=task_id,
+        project=cfg.name,
     )
     if worker == "qwen":
         qwen_skill = "pipeline-qwen-worker"
@@ -425,6 +462,16 @@ def _ensure_report(cfg, tid: str) -> bool:
         "## Открытые вопросы\nПроверить изменения вручную (git status/diff), запустить verify.\n\n"
         "## Как пересобрать/проверить\npython -m pipeline.cli verify <project> %s" % (tid, tid),
         encoding="utf-8")
+    # TDL JSON-отчёт (источник истины)
+    if getattr(cfg, "tdl_enabled", True):
+        try:
+            from pipeline.tdl import cli as tdl_cli
+            from pipeline.tdl import store as tdl_store
+            if tdl_store.load_task(cfg, tid):
+                tdl_cli.tdl_report(cfg, _ap.Namespace(
+                    task=tid, final=False, from_md=str(report)))
+        except Exception as e:
+            print(f"  [manager] TDL-отчёт {tid} не создан: {e}")
     return True
 
 
