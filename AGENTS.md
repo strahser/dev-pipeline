@@ -21,9 +21,20 @@
 - Статус проекта: `python -m pipeline.cli status <project>`
 - Диспатч: `python -m pipeline.cli dispatch <project> <файл> [--title ...] [--priority ...]`
 - Верификация: `python -m pipeline.cli verify <project> <A-NN>`
+- TDL: `python -m pipeline.cli tdl-status|tdl-tree|tdl-plan|tdl-verify <project> [A-NN]`
+- Длительности: `python -m pipeline.cli tdl-verify` ставит `duration_sec`; оценки — `estimate_sec`
+  в spec при `tdl-plan` (число ≤24 = часы; строки «2ч 30м», «3.5h», «45м», «1д»)
+- API длительностей: `GET /api/tdl/durations?project=<p>` (план vs факт, summary-суммирование)
+- Планировщик миссии (LLM-декомпозиция 1-го уровня): `python -m agents.agent_manager mission --project <p> --mission <файл> --plan` — пишет spec в `Tasks\Конвейер\планы\` и вызывает tdl-plan; фолбэк на `split_mission`
+- Анти-зависание: сервер — `PIPELINE_WATCH_INTERVAL`/`PIPELINE_WATCH_MAX_AGE`;
+  сторож — `python -m agents.agent_watch --project <p> [--stall-timeout N]` (env `TASK_STALL_TIMEOUT_SEC`, default 10800)
 
 ## Правила
 
 - Не коммитить: `.idea\`, `.opencode\`, `bin\obj`, `TestResults\`, `__pycache__\`, `*.db`, логи.
 - Коммиты: `pipeline: ...` (каркас), `project/<имя>: ...` (конфиги примеров).
 - Новый проект = новый `examples\<project>\pipeline.yaml` + проверка `list`/`status`.
+- Пути проекта: `project.root` — строка ИЛИ список кандидатов (первый существующий выбирается
+  автоматически), либо переменная `DEV_PIPELINE_PROJECTS_DIR` (базовая папка проектов на ПК).
+- Скиллы агентов: `pipeline-planner` (декомпозиция миссии), `pipeline-executor`, `pipeline-controller`
+  (включая реакцию на `task_stalled`), `pipeline-reviewer`, `pipeline-browser-bridge`, `pipeline-qwen-worker`.

@@ -18,7 +18,8 @@ description: Роль «Агент-2 — сотрудник-исполнител
 ## Роли файлов
 | Папка | Что |
 |---|---|
-| `Tasks\Активные\A-NN_*.md` | твои задачи: статус open → твоя работа; in_progress — взял |
+| `Tasks\JSON\Active\A-NN.task.json` | TDL-задача — источник истины (goal, acceptance_criteria, verification.commands, dates.estimate_sec) |
+| `Tasks\Активные\A-NN_*.md` | рабочий Markdown-зеркало: статус open → твоя работа; in_progress — взял |
 | `Tasks\Отчёты\A-NN_Отчёт_<дата>.md` | твои ответы |
 | `Tasks\Отчёты\A-NN_Вердикт_контролёра_<дата>.md` | проверка (пишет контролёр) |
 | `Tasks\Архив\` | закрытые задачи (только контролёр переносит) |
@@ -26,15 +27,18 @@ description: Роль «Агент-2 — сотрудник-исполнител
 
 ## Жизненный цикл задачи
 1. Взял задачу: `статус: open` → `in_progress`, в «Ход работы» — дата/план,
-   коммит `agent/A-NN: взял задачу`.
+   коммит `agent/A-NN: взял задачу`. Если есть TDL-задача — `tdl-start <project> A-NN`
+   (зафиксирует `dates.start`).
 2. Выполни требования задачи; доказательства — лог сборки/тестов/grep, пути, коммиты.
 3. Отчёт в `Tasks\Отчёты\A-NN_Отчёт_<дата>.md` по шаблону, `статус: done_report`.
-4. Уведоми контролёра: событие `report_done` (сервер) или файл `A-NN_done_*.txt`
+   В отчёте укажи фактическое время работы (в задаче есть `dates.estimate_sec` — план).
+4. Если есть TDL-задача — создай JSON-отчёт: `tdl-report <project> A-NN --from-md <отчёт>`.
+5. Уведоми контролёра: событие `report_done` (сервер) или файл `A-NN_done_*.txt`
    в `Уведомления\` (фолбэк) + коммит `agent/A-NN: отчёт исполнителя`.
-5. НЕ закрывай задачу сам (Архив/verified) — это делает контролёр после вердикта.
+6. НЕ закрывай задачу сам (Архив/verified) — это делает контролёр после вердикта.
 
 ## Шаблон отчёта (обязательные секции)
-1. `# ОТЧЁТ: <A-NN> — <кратко>` + дата + статус (done/partial/blocked).
+1. `# ОТЧЁТ: <A-NN> — <кратко>` + дата + статус (done/partial/blocked) + факт-время (план vs факт).
 2. **Что было не так** (факты с цифрами) / **Что сделано** (пункты с путями и коммитами).
 3. **Доказательства**: EXIT 0 сборки, vstest N/M, grep-выводы (0 вхождений запрещённых ссылок), diff.
 4. **Числа до/после** (если менялись).
@@ -52,6 +56,8 @@ description: Роль «Агент-2 — сотрудник-исполнител
 ```powershell
 python -m pipeline.cli status <project>          # сводка
 python -m pipeline.cli verify <project> A-NN     # (делает контролёр)
+python -m pipeline.cli tdl-start <project> A-NN              # взял задачу (start)
+python -m pipeline.cli tdl-report <project> A-NN --from-md <отчёт>  # JSON-отчёт
 python -m agents.executor_client --project <project>   # SSE-исполнитель (Агент-2)
 python -m agents.executor_client --project <project> --polling-only  # фолбэк на файлы
 ```
