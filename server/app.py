@@ -1066,6 +1066,86 @@ async def api_inbox(limit: int = 200):
     return msgs[:limit]
 
 
+# --- Чат: агенты, диалоги, статусы --------------------------------------
+
+KNOWN_AGENTS = [
+    {"name": "controller", "role": "Агент-1 контролёр"},
+    {"name": "executor", "role": "Агент-2 исполнитель"},
+    {"name": "agent-manager", "role": "Менеджер (оркестратор)"},
+    {"name": "agent_watch", "role": "Сторож контролёра"},
+    {"name": "browser", "role": "Агент-3 браузерный мост"},
+]
+
+
+@app.get("/api/chat/agents")
+async def chat_agents():
+    """Агенты для чата: онлайн-статус, сон, текущая задача (по последним событиям)."""
+    import datetime as _dt
+    agents = store.agents()
+    by_name = {a["name"]: a for a in agents}
+    # известные роли, ещё не объявлявшие heartbeat
+    for k in KNOWN_AGENTS:
+        if k["name"] not in by_name:
+            by_name[k["name"]] = {"name": k["name"], "last_seen": None, "status": "offline"}
+
+    evs = store.recent_events(limit=400)
+    started: dict[str, str] = {}
+    finished: set[tuple] = set()
+    for e in evs:
+        src = e.get("from") or ""
+        if not src:
+            continue
+        if e["type"] == "task_started":
+            started[src] = e.get("task", "")
+        elif e["type"] == "subagent_finished":
+            finished.add((src, e.get("task", "")))
+    now = _dt.datetime.now()
+    out = []
+    for name, a in by_name.items():
+        age = None
+        last = a.get("last_seen")
+        if last:
+            try:
+                t = _parse_iso_dt(last)
+                if t:
+                    age = max(0, int((now - t).total_seconds()))
+            except ValueError:
+                pass
+        task = started.get(name, "")
+        if task and (name, task) in finished:
+            task = ""
+        role = next((k["role"] for k in KNOWN_AGENTS if k["name"] == name), "субагент")
+        sleeping = bool(a["status"] == "offline" or (age is not None and age > 90))
+        out.append({
+            "name": name,
+            "role": role,
+            "status": a["status"],
+            "last_seen": last,
+            "heartbeat_age_sec": age,
+            "sleeping": sleeping,
+            "current_task": task,
+        })
+    out.sort(key=lambda x: (x["status"] != "online", x["name"]))
+    return out
+
+
+@app.get("/api/chat/history")
+async def chat_history(agent: str, limit: int = 200):
+    """Диалог dashboard <-> агент (сообщения в обе стороны)."""
+    return store.dialog_messages(agent, limit=min(limit, 500))
+
+
+@app.post("/api/chat/command")
+async def chat_command(body: MessageIn):
+    """Команда из чата агенту: сохраняется в очередь + публикуется в его SSE-канал."""
+    msg = store.add_message(body.from_, body.to, body.text)
+    hub.publish({"id": msg["id"], "type": "message", "from": msg["from"],
+                 "to": msg["to"], "text": msg["text"],
+                 "created_at": msg["created_at"], "delivery": msg["delivery"],
+                 "payload": {"chat": True}})
+    return msg
+
+
 @app.get("/")
 async def index():
     from fastapi.responses import FileResponse

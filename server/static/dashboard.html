@@ -148,12 +148,50 @@ pre.json { background:var(--code); border:1px solid var(--border); border-radius
 .go-track { height:10px; background:var(--panel2); border:1px solid var(--border); border-radius:6px; overflow:hidden; }
 .go-fill { height:100%; background:linear-gradient(90deg, var(--orange), var(--yellow)); border-radius:6px; }
 .go-fill.high { background:linear-gradient(90deg, #dc2626, var(--red)); }
+
+/* --- Чат (боковая панель) --- */
+.chat-panel { position:fixed; top:0; right:0; width:400px; height:100vh; background:var(--panel);
+  border-left:1px solid var(--border); box-shadow:-8px 0 24px rgba(0,0,0,.35); z-index:60;
+  display:flex; flex-direction:column; transform:translateX(105%); transition:transform .18s ease; }
+.chat-panel.show { transform:translateX(0); }
+.chat-panel header { display:flex; align-items:center; gap:10px; padding:10px 14px;
+  border-bottom:1px solid var(--border); }
+.chat-panel header h3 { margin:0; font-size:15px; flex:1; }
+.chat-panel .close { background:var(--panel2); color:var(--text); border:1px solid var(--border);
+  border-radius:6px; cursor:pointer; padding:4px 10px; }
+.chat-agents { border-bottom:1px solid var(--border); max-height:34vh; overflow:auto; }
+.chat-agent { display:flex; align-items:center; gap:8px; padding:7px 14px; cursor:pointer;
+  border-bottom:1px solid var(--border); }
+.chat-agent:hover { background:var(--panel2); }
+.chat-agent.active { background:var(--panel2); box-shadow:inset 3px 0 0 var(--accent); }
+.chat-agent .ic { font-size:15px; width:18px; text-align:center; }
+.chat-agent .nm { font-weight:600; font-size:13px; }
+.chat-agent .rl { color:var(--muted); font-size:11px; }
+.chat-agent .tk { font-size:11px; color:var(--accent); overflow:hidden; text-overflow:ellipsis; white-space:nowrap; max-width:190px; }
+.chat-agent .hb { margin-left:auto; color:var(--muted); font-size:10.5px; font-family:Consolas,monospace; }
+.chat-dialog { flex:1; overflow:auto; padding:10px 14px; display:flex; flex-direction:column; gap:6px; }
+.chat-msg { max-width:85%; padding:6px 10px; border-radius:10px; font-size:12.5px; white-space:pre-wrap;
+  word-break:break-word; }
+.chat-msg.me { align-self:flex-end; background:var(--accent); color:#fff; border-bottom-right-radius:2px; }
+.chat-msg.them { align-self:flex-start; background:var(--panel2); border:1px solid var(--border); border-bottom-left-radius:2px; }
+.chat-msg .ts { display:block; font-size:10px; opacity:.65; margin-top:2px; }
+.chat-empty { color:var(--muted); font-size:12px; text-align:center; margin-top:30px; }
+.chat-input { border-top:1px solid var(--border); padding:10px 12px; display:flex; gap:8px; }
+.chat-input textarea { flex:1; background:var(--panel2); color:var(--text); border:1px solid var(--border);
+  border-radius:8px; padding:8px 10px; font-size:12.5px; resize:none; height:52px; font-family:inherit; }
+.chat-input button { background:var(--accent); color:#fff; border:none; border-radius:8px;
+  padding:0 16px; font-size:13px; cursor:pointer; }
+.chat-actions { display:flex; gap:6px; padding:0 12px 8px; }
+.chat-actions button { flex:1; background:var(--panel2); color:var(--text); border:1px solid var(--border);
+  border-radius:6px; padding:5px 8px; font-size:11.5px; cursor:pointer; }
+.chat-actions button:hover { border-color:var(--accent); }
 </style>
 </head>
 <body>
 <header>
   <h1>dev-pipeline · Панель конвейера</h1>
   <select id="projectSelect" style="background:var(--panel);color:var(--text);border:1px solid var(--border);border-radius:8px;padding:6px 10px;font-size:13px;"></select>
+  <button onclick="openChat()" title="Чат с агентами" style="background:var(--panel);color:var(--text);border:1px solid var(--border);border-radius:8px;padding:6px 12px;font-size:13px;cursor:pointer;">💬 Чат</button>
   <span class="status" id="status">…</span>
 </header>
 <main id="content">
@@ -187,6 +225,24 @@ pre.json { background:var(--code); border:1px solid var(--border); border-radius
       <button class="close" onclick="closeDurations()">✕ Закрыть</button>
     </header>
     <div id="durationsBody"><div class="empty">Загрузка…</div></div>
+  </div>
+</div>
+
+<div class="chat-panel" id="chatPanel">
+  <header>
+    <h3>💬 Чат агентов</h3>
+    <button class="close" onclick="closeChat()">✕</button>
+  </header>
+  <div class="chat-agents" id="chatAgents"><div class="chat-empty">Загрузка…</div></div>
+  <div class="chat-dialog" id="chatDialog"><div class="chat-empty">Выберите агента слева</div></div>
+  <div class="chat-actions">
+    <button onclick="chatPing()">🫀 Проверить</button>
+    <button onclick="chatAskReport()">📄 Запросить отчёт</button>
+    <button onclick="chatClear()">🧹 Очистить</button>
+  </div>
+  <div class="chat-input">
+    <textarea id="chatText" placeholder="Команда агенту… (Enter — отправить)" onkeydown="if(event.key==='Enter'&&!event.shiftKey){event.preventDefault();sendChatMessage();}"></textarea>
+    <button onclick="sendChatMessage()">➤</button>
   </div>
 </div>
 
@@ -798,6 +854,121 @@ async function boot(){
   // Автообновление без сброса фильтров/пагинации (SPA: clear+rows.add)
   setInterval(()=>{ if (!currentTaskId) refreshData(); }, 20000);
 }
+/* --- Чат агентов --- */
+let chatOpen = false;
+let chatAgent = '';
+let chatAgentsList = [];
+
+function openChat(){
+  chatOpen = true;
+  $('chatPanel').classList.add('show');
+  loadChatAgents();
+  subscribeChatFeed();
+}
+function closeChat(){
+  chatOpen = false;
+  $('chatPanel').classList.remove('show');
+}
+function chatStatusIcon(a){
+  if (a.sleeping) return '<span class="ic" title="спит/недоступен">⛔</span>';
+  if (a.status === 'offline') return '<span class="ic" title="offline">🔴</span>';
+  if (a.current_task) return '<span class="ic" title="работает">🟢</span>';
+  return '<span class="ic" title="online, свободен">🟡</span>';
+}
+function chatHba(a){
+  const s = a.heartbeat_age_sec;
+  if (s === null || s === undefined) return '—';
+  if (s > 90) return '⚠ '+fmtDuration(s);
+  return fmtDuration(s);
+}
+async function loadChatAgents(){
+  if (!chatOpen) return;
+  let list;
+  try { list = await get('/api/chat/agents'); }
+  catch(e){ return; }
+  chatAgentsList = list;
+  $('chatAgents').innerHTML = list.map(a=>
+    '<div class="chat-agent'+(a.name===chatAgent?' active':'')+'" onclick="selectChatAgent(\''+esc(a.name)+'\')">'+
+      chatStatusIcon(a)+
+      '<div style="flex:1;min-width:0">'+
+        '<div class="nm">'+esc(a.name)+' <span class="rl">· '+esc(a.role)+'</span></div>'+
+        (a.current_task ? '<div class="tk">задача: '+esc(a.current_task)+'</div>' : '')+
+      '</div>'+
+      '<span class="hb">'+chatHba(a)+'</span>'+
+    '</div>').join('') || '<div class="chat-empty">Агентов нет</div>';
+}
+function selectChatAgent(name){
+  chatAgent = name;
+  loadChatAgents();
+  $('chatDialog').innerHTML = '<div class="chat-empty">Загрузка…</div>';
+  loadChatHistory();
+}
+async function loadChatHistory(){
+  if (!chatAgent) return;
+  let msgs;
+  try { msgs = await get('/api/chat/history?agent='+encodeURIComponent(chatAgent)); }
+  catch(e){ return; }
+  const el = $('chatDialog');
+  if (!msgs.length){ el.innerHTML = '<div class="chat-empty">Сообщений нет — напишите команду ниже</div>'; return; }
+  el.innerHTML = msgs.map(m=>{
+    const me = m.from === 'dashboard';
+    return '<div class="chat-msg '+(me?'me':'them')+'">'+esc(m.text)+
+      '<span class="ts">'+esc(m.from)+' → '+esc(m.to)+' · '+esc(String(m.created_at).slice(11,19))+' · '+(m.delivery||'')+'</span></div>';
+  }).join('');
+  el.scrollTop = el.scrollHeight;
+}
+function appendChatMsg(m){
+  if (!chatAgent || (m.from !== chatAgent && m.to !== chatAgent && m.from !== 'dashboard' && m.to !== 'dashboard')) return;
+  if (m.from !== chatAgent && m.to !== chatAgent) return;
+  const el = $('chatDialog');
+  const wasBottom = el.scrollHeight - el.scrollTop - el.clientHeight < 40;
+  const me = m.from === 'dashboard';
+  el.insertAdjacentHTML('beforeend',
+    '<div class="chat-msg '+(me?'me':'them')+'">'+esc(m.text)+
+    '<span class="ts">'+esc(m.from)+' → '+esc(m.to)+' · '+esc(String(m.created_at||'').slice(11,19))+'</span></div>');
+  if (wasBottom) el.scrollTop = el.scrollHeight;
+}
+async function sendChatMessage(){
+  const text = $('chatText').value.trim();
+  if (!text || !chatAgent) return;
+  $('chatText').value = '';
+  let msg;
+  try {
+    msg = await (await fetch('/api/chat/command', {
+      method:'POST', headers:{'Content-Type':'application/json'},
+      body: JSON.stringify({from:'dashboard', to:chatAgent, text:text})
+    })).json();
+  } catch(e){ return; }
+  appendChatMsg(msg);
+}
+function chatPing(){
+  if (!chatAgent) return;
+  const a = chatAgentsList.find(x=>x.name===chatAgent);
+  sendChatMessage('ping — проверка связи (ваш heartbeat: '+(a?chatHba(a):'?')+')');
+}
+function chatAskReport(){
+  if (!chatAgent) return;
+  const a = chatAgentsList.find(x=>x.name===chatAgent);
+  sendChatMessage(a && a.current_task
+    ? 'отчёт по задаче '+a.current_task+' — пришли сводку (что сделано, доказательства, статус)'
+    : 'отчёт — пришли сводку текущего состояния и последних действий');
+}
+function chatClear(){ $('chatDialog').innerHTML = '<div class="chat-empty">Диалог очищен (история на сервере сохранена)</div>'; }
+
+function subscribeChatFeed(){
+  if (window._chatFeed) return;
+  const src = new EventSource('/events/stream?agent=feed&last_event_id=0');
+  window._chatFeed = src;
+  src.onmessage = (e)=>{
+    let ev;
+    try { ev = JSON.parse(e.data); } catch(_){ return; }
+    if (ev.type === 'message') appendChatMsg(ev);
+    else if (['task_started','subagent_finished','agent_offline','agent_online','task_stalled']
+             .includes(ev.type)) loadChatAgents();
+  };
+  src.onerror = ()=>{ /* переподключение EventSource автоматическое */ };
+}
+
 boot();
 </script>
 </body>

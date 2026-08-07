@@ -193,8 +193,29 @@ def sse_loop(cfg, client, watch_dispatch):
         elif etype == "agent_offline":
             print(f"[watch] зомби-агент: {ev.get('payload', {})}")
         elif etype == "message":
-            # сообщение адресовано контролёру — выводим
-            print(f"[watch] сообщение: {ev.get('text', '')}")
+            # команда из чата dashboard -> ответ статусом
+            text = (ev.get("text") or "").strip()
+            src = ev.get("from") or "dashboard"
+            print(f"[watch] команда от {src}: {text[:120]}")
+            reply = f"[watch] принято: {text[:200]}"
+            low = text.lower()
+            if "статус" in low or "отчёт" in low or "ping" in low:
+                try:
+                    from pipeline.tdl import store as tdl_store
+                    idx = tdl_store.load_index(cfg) or {"tasks": []}
+                    tasks = idx.get("tasks", [])
+                    done = sum(1 for t in tasks if t.get("status") == "done")
+                    inprog = [t.get("task_id") for t in tasks
+                              if t.get("workflow_state") == "in_progress"]
+                    stalled = [t.get("task_id") for t in tasks
+                               if t.get("workflow_state") == "in_progress"
+                               and any(h.get("action") == "stalled" for h in (tdl_store.load_task(cfg, t.get("task_id", "")) or {}).get("history", []))]
+                    reply += (f"\nСтатус {cfg.name}: всего={len(tasks)}, done={done}, "
+                              f"в работе={inprog or '—'}, зависшие(stalled)={stalled or '—'}")
+                except Exception as e:
+                    reply += f"\n(статистика недоступна: {e})"
+            client.send_message(src, reply)
+            client.ack(ev.get("id")) if ev.get("id") else None
         client.ack(ev.get("id")) if ev.get("id") else None
 
     client.heartbeat()

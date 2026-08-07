@@ -80,6 +80,29 @@ def take_task(cfg, task_id: str):
     return t
 
 
+def _current_tdl_task(cfg) -> str:
+    """Кратко: какая TDL-задача сейчас в работе (workflow_state=in_progress)."""
+    if not getattr(cfg, "tdl_enabled", True):
+        return ""
+    try:
+        from pipeline.tdl import store as tdl_store
+        ad = tdl_store.active_dir(cfg)
+        if not ad.is_dir():
+            return ""
+        import json
+        cur = []
+        for f in sorted(ad.glob("*.task.json")):
+            try:
+                t = json.loads(f.read_text(encoding="utf-8"))
+            except Exception:
+                continue
+            if t.get("workflow_state") == "in_progress":
+                cur.append(f"{t.get('task_id')} {t.get('name', '')[:40]}")
+        return "; ".join(cur) if cur else "нет задач в работе"
+    except Exception:
+        return ""
+
+
 def _tdl_report_if_needed(cfg, task_id: str, md_report: Path):
     """Создать TDL JSON-отчёт из Markdown-отчёта (если TDL-задача есть)."""
     if not getattr(cfg, "tdl_enabled", True):
@@ -140,6 +163,17 @@ def sse_loop(cfg, client):
                 client.ack(ev.get("id"))  # всё равно подтвердим доставку
                 return
             handle_task(cfg, client, t, via_event=True, ack_id=ev.get("id"))
+        elif etype == "message":
+            # команда из чата dashboard -> ответим статусом
+            text = (ev.get("text") or "").strip()
+            src = ev.get("from") or "dashboard"
+            print(f"[executor] команда от {src}: {text[:120]}")
+            reply = f"[executor] принято: {text[:200]}"
+            cur = _current_tdl_task(cfg)
+            if cur:
+                reply += f"\nСейчас: {cur}"
+            client.send_message(src, reply)
+            client.ack(ev.get("id")) if ev.get("id") else None
 
     # heartbeat в фоне
     client.heartbeat()

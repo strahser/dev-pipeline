@@ -188,6 +188,15 @@ class Store:
         self._conn.commit()
         return cur.rowcount > 0
 
+    def dialog_messages(self, agent: str, limit: int = 200) -> list[dict]:
+        """Все сообщения диалога с агентом (в обе стороны), новые последними."""
+        rows = self._conn.execute(
+            "SELECT * FROM messages WHERE from_=? OR \"to\"=? ORDER BY id DESC LIMIT ?",
+            (agent, agent, limit)).fetchall()
+        msgs = [{"id": r["id"], "from": r["from_"], "to": r["to"], "text": r["text"],
+                 "created_at": r["created_at"], "delivery": r["delivery"]} for r in rows]
+        return list(reversed(msgs))
+
     # --- агенты / heartbeat --------------------------------------------------
 
     def heartbeat(self, name: str) -> None:

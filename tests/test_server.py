@@ -145,6 +145,35 @@ class TestAppAPI(unittest.TestCase):
         self.assertEqual(r.status_code, 200)
         self.assertIn("db", r.json())
 
+    def test_chat_command_and_history(self):
+        r = self.client.post("/api/chat/command", json={
+            "from": "dashboard", "to": "executor", "text": "статус?"})
+        self.assertEqual(r.status_code, 200)
+        self.assertEqual(r.json()["delivery"], "queued")
+        hist = self.client.get("/api/chat/history", params={"agent": "executor"})
+        self.assertEqual(len(hist.json()), 1)
+        self.assertEqual(hist.json()[0]["from"], "dashboard")
+
+    def test_chat_command_published_to_agent_channel(self):
+        # сообщение должно попасть в inbox агента (как и POST /messages)
+        self.client.post("/api/chat/command", json={
+            "from": "dashboard", "to": "executor", "text": "отчёт по A-12"})
+        inbox = self.client.get("/messages", params={"agent": "executor"})
+        self.assertEqual(len(inbox.json()), 1)
+        self.assertEqual(inbox.json()[0]["text"], "отчёт по A-12")
+
+    def test_chat_agents_known_and_heartbeat(self):
+        self.client.post("/heartbeat", json={"agent": "executor"})
+        r = self.client.get("/api/chat/agents")
+        self.assertEqual(r.status_code, 200)
+        names = {a["name"] for a in r.json()}
+        self.assertIn("executor", names)
+        self.assertIn("controller", names)  # известная роль без heartbeat
+        ex = next(a for a in r.json() if a["name"] == "executor")
+        self.assertEqual(ex["status"], "online")
+        self.assertFalse(ex["sleeping"])
+        self.assertIn("heartbeat_age_sec", ex)
+
 
 class TestSSEStream(unittest.TestCase):
     """SSE-поток через реальный uvicorn-сервер (детерминировано, как вручную)."""

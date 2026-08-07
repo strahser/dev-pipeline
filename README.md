@@ -100,6 +100,22 @@ python -X utf8 agents/agent_manager.py mission --project heatlossrevit2 ^
   Порог: `--stall-timeout N` или env `TASK_STALL_TIMEOUT_SEC` (default 10800 = 3 ч).
 - Запуск: `python -X utf8 agents/agent_watch.py --project <p> [--stall-timeout 3600]`.
 
+## Чат агентов (dashboard)
+
+Кнопка «💬 Чат» в шапке панели — боковая панель:
+
+- **Список агентов** с живым статусом: 🟢 работает (есть текущая задача) / 🟡 online /
+  🔴 offline / ⛔ спит (нет heartbeat > 90 с); показано время с последнего heartbeat,
+  текущая задача (из событий task_started/subagent_finished).
+- **Команды**: поле ввода → `POST /api/chat/command` (обёртка над `/messages`,
+  сохраняется в очередь + публикуется в SSE-канал агента). Агент отвечает
+  `send_message` — ответ появляется в диалоге в реальном времени (SSE-подписка на `feed`).
+- **Кнопки**: «🫀 Проверить» (пинг/статус), «📄 Запросить отчёт» (сводка по текущей задаче),
+  «🧹 Очистить» (диалог).
+- Агенты отвечают на команды: `executor` — принял + текущая задача; `agent_watch` —
+  сводка (всего/done/в работе/stalled).
+- API: `GET /api/chat/agents`, `GET /api/chat/history?agent=X`, `POST /api/chat/command`.
+
 ## Статус
 
 - [x] Шаг 1: каркас, общий пакет `pipeline/`
@@ -113,5 +129,7 @@ python -X utf8 agents/agent_manager.py mission --project heatlossrevit2 ^
 - [x] Длительность задач: estimate/duration в TDL, `/api/tdl/durations`, модальное окно в dashboard
 - [x] Планировщик миссии `--plan` (скилл pipeline-planner) + скилл
 - [x] Анти-зависание: параметризуемый watchdog (env) + детектор task_stalled в agent_watch
-- [x] Полный unit-тест: `python -X utf8 tests/run_all.py` (92 теста)
+- [x] Чат агентов: /api/chat/agents, /api/chat/history, /api/chat/command, панель в dashboard,
+      ответы агентов (executor/agent_watch) на команды
+- [x] Полный unit-тест: `python -X utf8 tests/run_all.py` (95 тестов)
 - [ ] Пилот на тестовой задаче через сервер
