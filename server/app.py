@@ -75,6 +75,9 @@ async def lifespan(_app: FastAPI):
 
 app = FastAPI(title="dev-pipeline coordinator", lifespan=lifespan)
 
+STATIC_DIR = Path(__file__).parent / "static"
+app.mount("/static", StaticFiles(directory=str(STATIC_DIR)), name="static")
+
 
 def _sse(event: dict) -> str:
     import json as _j
@@ -481,9 +484,45 @@ async def api_projects():
 
 # --- TDL (JSON как источник истины) ---
 
+def _tdl_task_row(cfg, t: dict) -> dict:
+    """Обогатить индексную строку TDL-задачи данными из JSON-файла задачи
+    (module/class_name/layer/is_summary/task_kind/dates) + счётчиками из отчёта."""
+    from pipeline.tdl import store as tdl_store
+    task = tdl_store.load_task(cfg, t.get("task_id", "")) or {}
+    report = tdl_store.load_report(cfg, t.get("task_id", ""))
+    verdict = tdl_store.load_verdict(cfg, t.get("task_id", ""))
+    evidence_count = 0
+    if report:
+        ev = report.get("evidence") or []
+        evidence_count = sum(1 for e in ev if e.get("evidence_id"))
+    return {
+        "task_id": t.get("task_id", ""),
+        "path": t.get("path", ""),
+        "wbs_code": t.get("wbs_code", ""),
+        "parent_wbs": task.get("parent_wbs", "") or "",
+        "is_summary": bool(task.get("is_summary", t.get("is_summary", False))),
+        "task_kind": task.get("task_kind", t.get("task_kind", "")),
+        "name": t.get("name", task.get("name", "")),
+        "status": t.get("status", "open"),
+        "workflow_state": t.get("workflow_state", "issued"),
+        "priority": t.get("priority", task.get("priority", "средний")),
+        "module": task.get("module", "") or "",
+        "class_name": task.get("class_name", "") or "",
+        "layer": task.get("layer", "") or "",
+        "dates": task.get("dates", {}) or {},
+        "has_report": bool(t.get("report_refs")),
+        "has_verdict": bool(t.get("verdict_refs")),
+        "verdict_result": (verdict or {}).get("result") if verdict else None,
+        "links_count": len(task.get("links", []) or []),
+        "evidence_count": evidence_count,
+    }
+
+
 @app.get("/api/tdl/tasks")
 async def api_tdl_tasks(project: str = "", status: str = "", workflow_state: str = "",
-                        task_kind: str = ""):
+                        task_kind: str = "", module: str = "", class_name: str = "",
+                        layer: str = "", is_summary: str = "", wbs: str = "",
+                        q: str = "", has_report: str = "", has_verdict: str = ""):
     from pipeline.tdl import store as tdl_store
     project = project or (list_projects() or [""])[0]
     try:
@@ -493,12 +532,83 @@ async def api_tdl_tasks(project: str = "", status: str = "", workflow_state: str
     idx = tdl_store.load_index(cfg) or {"tasks": []}
     out = []
     for t in idx.get("tasks", []):
-        if status and t.get("status") != status:
+        row = _tdl_task_row(cfg, t)
+        if status and row["status"] != status:
             continue
-        if workflow_state and t.get("workflow_state") != workflow_state:
+        if workflow_state and row["workflow_state"] != workflow_state:
             continue
-        out.append(t)
+        if task_kind and row["task_kind"] != task_kind:
+            continue
+        if module and row["module"] != module:
+            continue
+        if class_name and row["class_name"] != class_name:
+            continue
+        if layer and row["layer"] != layer:
+            continue
+        if is_summary in ("true", "1") and not row["is_summary"]:
+            continue
+        if is_summary in ("false", "0") and row["is_summary"]:
+            continue
+        if wbs and wbs != row["wbs_code"]:
+            continue
+        if has_report in ("true", "1") and not row["has_report"]:
+            continue
+        if has_report in ("false", "0") and row["has_report"]:
+            continue
+        if has_verdict in ("true", "1") and not row["has_verdict"]:
+            continue
+        if has_verdict in ("false", "0") and row["has_verdict"]:
+            continue
+        if q:
+            hay = " ".join([row["name"], row["task_id"], row["wbs_code"],
+                            row["module"], row["class_name"]]).lower()
+            if q.lower() not in hay:
+                continue
+        out.append(row)
     return out
+
+
+@app.get("/api/tdl/filters")
+async def api_tdl_filters(project: str = ""):
+    """Списки значений для панели фильтров dashboard (модули/классы/слои/типы/статусы)."""
+    from pipeline.tdl import store as tdl_store
+    project = project or (list_projects() or [""])[0]
+    try:
+        cfg = load_config(project)
+    except ConfigError:
+        return {}
+    idx = tdl_store.load_index(cfg) or {"tasks": []}
+    statuses: dict[str, int] = {}
+    workflows: dict[str, int] = {}
+    kinds: dict[str, int] = {}
+    modules: dict[str, int] = {}
+    classes: dict[str, int] = {}
+    layers: dict[str, int] = {}
+    for t in idx.get("tasks", []):
+        row = _tdl_task_row(cfg, t)
+        statuses[row["status"]] = statuses.get(row["status"], 0) + 1
+        workflows[row["workflow_state"]] = workflows.get(row["workflow_state"], 0) + 1
+        if row["task_kind"]:
+            kinds[row["task_kind"]] = kinds.get(row["task_kind"], 0) + 1
+        if row["module"]:
+            modules[row["module"]] = modules.get(row["module"], 0) + 1
+        if row["class_name"]:
+            classes[row["class_name"]] = classes.get(row["class_name"], 0) + 1
+        if row["layer"]:
+            layers[row["layer"]] = layers.get(row["layer"], 0) + 1
+
+    def _to_list(cnt: dict) -> list:
+        return [{"value": k, "count": v} for k, v in
+                sorted(cnt.items(), key=lambda x: (-x[1], x[0]))]
+
+    return {
+        "statuses": _to_list(statuses),
+        "workflow_states": _to_list(workflows),
+        "task_kinds": _to_list(kinds),
+        "modules": _to_list(modules),
+        "class_names": _to_list(classes),
+        "layers": _to_list(layers),
+    }
 
 
 @app.get("/api/tdl/task/{task_id}")
@@ -514,14 +624,25 @@ async def api_tdl_task(task_id: str, project: str = ""):
         raise HTTPException(404, f"TDL-задача {task_id} не найдена")
     report = tdl_store.load_report(cfg, task_id)
     verdict = tdl_store.load_verdict(cfg, task_id)
+    evs = [e for e in store.recent_events(limit=500, project=project)
+           if (e.get("task") or "") == task_id]
+    task_path = tdl_store.task_path(cfg, task_id)
+    report_path = tdl_store.latest_report_path(cfg, task_id)
+    verdict_path = tdl_store.latest_verdict_path(cfg, task_id)
     return {
         "task": task,
         "report": report,
         "verdict": verdict,
+        "events": evs,
         "markdown": {
             "task_card": render.render_task_card(task),
             "report": render.render_report_md(report) if report else "",
             "verdict": render.render_verdict_md(verdict) if verdict else "",
+        },
+        "sources": {
+            "task": str(task_path.relative_to(cfg.root)) if task_path else "",
+            "report": str(report_path.relative_to(cfg.root)) if report_path else "",
+            "verdict": str(verdict_path.relative_to(cfg.root)) if verdict_path else "",
         },
     }
 

@@ -4,36 +4,98 @@
 <meta charset="utf-8">
 <meta name="viewport" content="width=device-width, initial-scale=1">
 <title>dev-pipeline · Панель конвейера</title>
+<link rel="stylesheet" href="/static/vendor/dataTables.min.css">
 <style>
-:root { --bg:#0f1117; --panel:#171a23; --panel2:#1d2130; --border:#2a2f42; --text:#e6e8ef; --muted:#9aa2b5; --accent:#6ea8ff; --green:#4ade80; --yellow:#facc15; --red:#f87171; --code:#0b0e14; }
+:root { --bg:#0f1117; --panel:#171a23; --panel2:#1d2130; --border:#2a2f42; --text:#e6e8ef; --muted:#9aa2b5; --accent:#6ea8ff; --green:#4ade80; --yellow:#facc15; --red:#f87171; --orange:#fb923c; --code:#0b0e14; --summary-bg:rgba(250,204,21,0.08); --summary-border:#b8860b; }
 * { box-sizing:border-box; }
 html,body { height:100%; }
 body { margin:0; font:14px/1.55 system-ui,Segoe UI,sans-serif; background:var(--bg); color:var(--text); }
-header { display:flex; align-items:center; gap:16px; padding:10px 20px; background:#12141c; border-bottom:1px solid var(--border); }
+header { display:flex; align-items:center; gap:16px; padding:10px 20px; background:#12141c; border-bottom:1px solid var(--border); flex-wrap:wrap; }
 header h1 { font-size:16px; margin:0; }
 header .status { font-size:12px; color:var(--muted); margin-left:auto; }
-nav { display:flex; gap:6px; padding:10px 20px; border-bottom:1px solid var(--border); background:#14161f; }
-nav button { background:var(--panel); color:var(--text); border:1px solid var(--border); border-radius:8px; padding:7px 14px; cursor:pointer; font-size:13px; }
-nav button:hover { border-color:var(--accent); }
-nav button.active { background:var(--accent); color:#0b0f17; border-color:var(--accent); font-weight:600; }
-main { padding:20px 28px; overflow:auto; height:calc(100vh - 96px); }
-.card { background:var(--panel); border:1px solid var(--border); border-radius:10px; padding:16px; margin-bottom:16px; }
-.card h3 { margin:0 0 10px; font-size:14px; }
-table { width:100%; border-collapse:collapse; font-size:13px; }
-th,td { text-align:left; padding:7px 9px; border-bottom:1px solid var(--border); vertical-align:top; }
-th { color:var(--muted); font-weight:600; white-space:nowrap; }
-tr.clickable { cursor:pointer; }
-tr.clickable:hover { background:var(--panel2); }
-code, pre { font-family:Consolas,monospace; }
-pre { background:var(--code); border:1px solid var(--border); border-radius:8px; padding:12px; overflow:auto; font-size:12.5px; max-height:500px; }
-.badge { display:inline-block; padding:1px 8px; border-radius:999px; font-size:11px; }
+main { padding:20px 28px; overflow:auto; height:calc(100vh - 58px); }
+
+/* Панель фильтров */
+.filter-card { background:var(--panel); border:1px solid var(--border); border-radius:10px; padding:14px 16px; margin-bottom:14px; }
+.filter-row { display:flex; flex-wrap:wrap; gap:10px; align-items:flex-end; }
+.filter-group { display:flex; flex-direction:column; gap:3px; }
+.filter-group label { font-size:11px; color:var(--muted); white-space:nowrap; }
+.filter-group select, .filter-group input[type=text] {
+  background:var(--panel2); color:var(--text); border:1px solid var(--border); border-radius:6px; padding:5px 8px; font-size:12.5px; min-width:130px;
+}
+.filter-group select:focus, .filter-group input[type=text]:focus { outline:none; border-color:var(--accent); }
+.filter-btns { display:flex; gap:8px; margin-left:auto; align-items:flex-end; }
+.filter-btns button { background:var(--panel2); color:var(--text); border:1px solid var(--border); border-radius:6px; padding:6px 12px; cursor:pointer; font-size:12.5px; }
+.filter-btns button:hover { border-color:var(--accent); }
+.filter-btns button.primary { background:var(--accent); color:#0b0f17; border-color:var(--accent); font-weight:600; }
+.checkbox-group { display:flex; flex-direction:column; gap:3px; }
+.checkbox-group label { font-size:11px; color:var(--muted); white-space:nowrap; }
+.checkbox-group .check { display:flex; align-items:center; gap:6px; background:var(--panel2); border:1px solid var(--border); border-radius:6px; padding:5px 8px; font-size:12.5px; white-space:nowrap; }
+.checkbox-group input { accent-color:var(--accent); }
+
+/* Сводка */
+.stats-row { display:flex; flex-wrap:wrap; gap:10px; margin-bottom:14px; }
+.stat { background:var(--panel); border:1px solid var(--border); border-radius:10px; padding:10px 16px; min-width:130px; }
+.stat .num { font-size:22px; font-weight:700; }
+.stat .lbl { font-size:11px; color:var(--muted); }
+
+/* Таблица */
+.table-card { background:var(--panel); border:1px solid var(--border); border-radius:10px; padding:14px 16px; }
+#TaskTable { width:100% !important; border-collapse:collapse; font-size:13px; }
+#TaskTable thead th { color:var(--muted); font-weight:600; white-space:nowrap; border-bottom:1px solid var(--border) !important; text-align:left; padding:7px 9px; }
+#TaskTable tbody td { padding:7px 9px; border-bottom:1px solid var(--border); vertical-align:top; }
+#TaskTable tbody tr { cursor:pointer; }
+#TaskTable tbody tr:hover { background:var(--panel2); }
+#TaskTable tbody tr.row-summary { background:var(--summary-bg); border-left:3px solid var(--summary-border); }
+#TaskTable tbody tr.row-summary:hover { background:rgba(250,204,21,0.14); }
+#TaskTable .wbs { font-family:Consolas,monospace; white-space:nowrap; }
+#TaskTable .summary-badge { display:inline-block; padding:0 6px; border-radius:999px; font-size:10px; background:#3b3312; color:var(--yellow); margin-right:6px; }
+#TaskTable .cls-badge { display:inline-block; padding:1px 7px; border-radius:6px; font-size:11px; background:#12263b; color:var(--accent); font-family:Consolas,monospace; margin:1px 2px 1px 0; }
+.badge { display:inline-block; padding:1px 8px; border-radius:999px; font-size:11px; white-space:nowrap; }
 .badge.ok { background:#123b26; color:var(--green); }
 .badge.warn { background:#3b3312; color:var(--yellow); }
 .badge.err { background:#3b1212; color:var(--red); }
 .badge.info { background:#12263b; color:var(--accent); }
+.badge.orange { background:#3b1d12; color:var(--orange); }
 .muted { color:var(--muted); }
 .empty { color:var(--muted); padding:20px; text-align:center; }
-.back { margin-bottom:12px; }
+
+/* DataTables: тёмная тема */
+.dataTables_wrapper .dataTables_filter input, .dataTables_wrapper .dataTables_length select {
+  background:var(--panel2); color:var(--text); border:1px solid var(--border); border-radius:6px; padding:4px 8px; font-size:12.5px;
+}
+.dataTables_wrapper .dataTables_info, .dataTables_wrapper .dataTables_filter label, .dataTables_wrapper .dataTables_length label { color:var(--muted) !important; font-size:12px; }
+.dataTables_wrapper .dataTables_paginate .paginate_button { color:var(--text) !important; border:1px solid var(--border) !important; border-radius:6px !important; background:var(--panel2) !important; padding:3px 9px !important; margin:0 2px !important; font-size:12px !important; }
+.dataTables_wrapper .dataTables_paginate .paginate_button.current { background:var(--accent) !important; color:#0b0f17 !important; border-color:var(--accent) !important; }
+.dataTables_wrapper .dataTables_paginate .paginate_button:hover { background:#2a3f5f !important; }
+.dataTables_wrapper .dt-column-order { color:var(--muted) !important; }
+
+/* Модальное окно карточки задачи */
+.overlay { position:fixed; inset:0; background:rgba(0,0,0,0.6); z-index:100; display:none; overflow:auto; }
+.overlay.show { display:block; }
+.modal { max-width:1100px; margin:24px auto; background:var(--panel); border:1px solid var(--border); border-radius:12px; padding:18px 22px; }
+.modal header { display:flex; align-items:flex-start; gap:12px; border:none; padding:0 0 12px; background:transparent; border-bottom:1px solid var(--border); }
+.modal header h2 { margin:0; font-size:17px; }
+.modal .close { margin-left:auto; background:var(--panel2); color:var(--text); border:1px solid var(--border); border-radius:6px; cursor:pointer; padding:5px 12px; font-size:13px; }
+.modal .close:hover { border-color:var(--red); }
+.section { margin-top:14px; }
+.section h4 { margin:0 0 8px; font-size:13px; color:var(--accent); text-transform:uppercase; letter-spacing:.4px; }
+.kv { display:grid; grid-template-columns:180px 1fr; gap:4px 12px; font-size:13px; }
+.kv .k { color:var(--muted); }
+.kv .v { word-break:break-word; }
+.kv pre { white-space:pre-wrap; margin:0; }
+.kv ul { margin:0; padding-left:18px; }
+.kv a { color:var(--accent); }
+.card-col { display:grid; grid-template-columns:1fr 1fr; gap:16px; }
+@media (max-width:900px){ .card-col { grid-template-columns:1fr; } }
+.checks-table { width:100%; border-collapse:collapse; font-size:12.5px; }
+.checks-table th, .checks-table td { text-align:left; padding:5px 8px; border-bottom:1px solid var(--border); }
+.tabs { display:flex; gap:6px; margin:14px 0 0; border-bottom:1px solid var(--border); padding-bottom:8px; }
+.tabs button { background:transparent; color:var(--muted); border:1px solid var(--border); border-radius:6px; padding:5px 12px; cursor:pointer; font-size:12.5px; }
+.tabs button.active { background:var(--accent); color:#0b0f17; border-color:var(--accent); font-weight:600; }
+.tabpane { display:none; }
+.tabpane.active { display:block; }
+pre.json { background:var(--code); border:1px solid var(--border); border-radius:8px; padding:12px; overflow:auto; font-size:12px; max-height:480px; white-space:pre; }
 </style>
 </head>
 <body>
@@ -42,141 +104,321 @@ pre { background:var(--code); border:1px solid var(--border); border-radius:8px;
   <select id="projectSelect" style="background:var(--panel);color:var(--text);border:1px solid var(--border);border-radius:8px;padding:6px 10px;font-size:13px;"></select>
   <span class="status" id="status">…</span>
 </header>
-<nav>
-  <button data-tab="plan" class="active">План</button>
-  <button data-tab="task" id="taskTabBtn" style="display:none">Задача</button>
-</nav>
-<main id="content"><div class="empty">Загрузка…</div></main>
+<main id="content">
+  <div class="empty">Загрузка…</div>
+</main>
+
+<div class="overlay" id="taskOverlay">
+  <div class="modal" id="taskModal">
+    <header>
+      <h2 id="modalTitle">Задача</h2>
+      <button class="close" onclick="closeTask()">✕ Закрыть</button>
+    </header>
+    <div id="modalBody"><div class="empty">Загрузка…</div></div>
+  </div>
+</div>
+
+<script src="/static/vendor/jquery.min.js"></script>
+<script src="/static/vendor/dataTables.min.js"></script>
 <script>
 const $ = (id) => document.getElementById(id);
-const state = { tab: 'plan', currentTask: null };
 let activeProject = '';
+let dt = null;
+let currentTaskId = null;
 
 function esc(s){ return String(s??'').replace(/[&<>"']/g, c=>({'&':'&amp;','<':'&lt;','>':'&gt;','"':'&quot;',"'":'&#39;'}[c])); }
-async function get(path){ const r = await fetch(path); if(!r.ok) throw new Error(r.status); return r.json(); }
+async function get(path){ const r = await fetch(path); if(!r.ok) throw new Error(r.status+' '+path); return r.json(); }
 
-const STATUS_COLOR = { 'open':'warn', 'in_progress':'info', 'done_report':'info', 'verified':'ok', 'rejected':'err', 'closed':'ok' };
-function badge(s){ const c = STATUS_COLOR[s] || 'info'; return '<span class="badge '+c+'">'+esc(s)+'</span>'; }
+const STATUS_LABEL = { 'open':'Открыто', 'done':'Выполнено' };
+const WORKFLOW_LABEL = {
+  'issued':'Выдано','in_progress':'В работе','blocked':'Блокировка','reported':'Отчитался',
+  'control':'На контроле','verified':'Проверено','rejected':'Отклонено','archived':'Архив',
+  'pending_report':'Ждёт отчёт','pending_verdict':'Ждёт вердикт'
+};
+const KIND_LABEL = { 'group':'Общая','request':'Запрос','execution':'Исполнение' };
 
-/* ---------- Вкладка 1: ПЛАН (таблица) ---------- */
-async function renderPlan(){
-  let plan;
-  try { plan = await get('/api/plan?project='+encodeURIComponent(activeProject)); }
-  catch(e){ $('content').innerHTML = '<div class="empty">ошибка: '+esc(String(e))+'</div>'; return; }
+function statusBadge(status, workflow){
+  if (workflow === 'blocked') return '<span class="badge orange">⛔ блокировка</span>';
+  if (status === 'done') return '<span class="badge ok">'+esc(STATUS_LABEL[status]||status)+'</span>';
+  if (workflow === 'rejected') return '<span class="badge err">'+esc(STATUS_LABEL[status]||status)+'</span>';
+  return '<span class="badge warn">'+esc(STATUS_LABEL[status]||status)+'</span>';
+}
 
-  const rows = plan.rows || [];
-  const total = plan.total || 0, done = plan.done || 0;
-  const pct = total ? Math.round(100*done/total) : 0;
+/* Индикатор задачи по плану §21.2 */
+function indicator(row){
+  const wf = row.workflow_state;
+  if (wf === 'blocked') return '⛔';
+  if (row.verdict_result === 'fail') return '🔴';
+  if (row.status === 'done') return '🟢';
+  if (row.has_report || row.has_verdict) return '🟡';
+  const finish = row.dates && row.dates.finish;
+  if (finish && String(finish).slice(0,10) < new Date().toISOString().slice(0,10)) return '🔴';
+  return '⚪';
+}
 
-  let html = '';
+function titleHtml(row){
+  let h = '';
+  if (row.is_summary) h += '<span class="summary-badge">ОБЩАЯ</span>';
+  h += esc(row.name || row.task_id);
+  if (row.is_summary) h = '<b>'+h+'</b>';
+  return h;
+}
 
-  // Заголовок: проект + прогресс
-  html += '<div class="card"><h3>План проекта: '+esc(plan.project)+'</h3>'+
-    '<div class="muted" style="margin-bottom:8px">Закрыто '+done+' из '+total+' задач ('+pct+'%).</div>'+
-    '<div style="height:12px;background:var(--panel2);border-radius:6px;overflow:hidden">'+
-    '<div style="height:100%;width:'+pct+'%;background:var(--green);border-radius:6px"></div></div></div>';
+function classesHtml(row){
+  if (!row.class_name) return '<span class="muted">—</span>';
+  return row.class_name.split(',').map(s=>s.trim()).filter(Boolean)
+    .map(s=>'<span class="cls-badge">'+esc(s)+'</span>').join(' ');
+}
 
-  // Таблица плана
-  html += '<div class="card"><table><thead><tr>'+
-    '<th>WBS</th><th>ID</th><th>Задача</th><th>Статус</th><th>Workflow</th><th>Приоритет</th>'+
-    '<th>Отчёт</th><th>Вердикт</th></tr></thead><tbody>';
+/* Глубина WBS (не используется напрямую — отступы заменены бейджем ОБЩАЯ) */
+
+/* Скрытые колонки (для фильтрации): 13 task_kind, 14 is_summary, 15 has_report,
+   16 has_verdict, 17 module, 18 class_name, 19 layer, 20 status, 21 workflow_state */
+function renderTable(rows){
+  const cols = [];
+  const header = ['Индикатор','WBS','ID','Задача','Тип','Модуль','Класс','Статус','Workflow','Отчёт','Вердикт','Док-ва','Сроки'];
+
   for (const r of rows){
-    const doc = r['документ'] ? r['документ'].split('\\').pop() : '—';
-    const rpt = (r.report_refs && r.report_refs.length) ? '📄' : '—';
-    const vrd = (r.verdict_refs && r.verdict_refs.length) ? '🧾' : '—';
-    const status = r.status || (r.workflow_state === 'verified' ? 'done' : 'open');
-    html += '<tr class="clickable" onclick="openTask(\''+esc(r.id)+'\')">'+
-      '<td>'+esc(r.wbs||'')+'</td>'+
-      '<td>'+esc(r.id)+'</td>'+
-      '<td>'+esc(r.title)+'</td>'+
-      '<td>'+badge(status)+'</td>'+
-      '<td class="muted">'+esc(r.workflow_state||'')+'</td>'+
-      '<td>'+esc(r.priority||'')+'</td>'+
-      '<td>'+rpt+'</td>'+
-      '<td>'+vrd+'</td></tr>';
+    const docCount = r.has_report ? (r.evidence_count ? r.evidence_count+' 🧪' : '📄') : '—';
+    const verdictCell = r.verdict_result
+      ? '<span class="badge '+(r.verdict_result==='pass'?'ok':r.verdict_result==='fail'?'err':'warn')+'">'+esc(r.verdict_result)+'</span>'
+      : (r.has_verdict ? '🧾' : '—');
+    const dates = (r.dates||{});
+    const deadline = dates.finish ? String(dates.finish).slice(0,10) : (dates.issued ? String(dates.issued).slice(0,10)+'…' : '—');
+    cols.push([
+      indicator(r),
+      r.wbs_code || '',
+      r.task_id,
+      titleHtml(r),
+      KIND_LABEL[r.task_kind] || (r.is_summary ? 'Общая' : esc(r.task_kind||'')),
+      r.module || '—',
+      classesHtml(r),
+      statusBadge(r.status, r.workflow_state),
+      esc(WORKFLOW_LABEL[r.workflow_state] || r.workflow_state || ''),
+      docCount,
+      verdictCell,
+      r.evidence_count || 0,
+      deadline,
+      r.task_kind || '', r.is_summary?'1':'0', r.has_report?'1':'0', r.has_verdict?'1':'0',
+      r.module || '', r.class_name || '', r.layer || '', r.status || '', r.workflow_state || ''
+    ]);
   }
-  html += '</tbody></table></div>';
-
-  $('content').innerHTML = html;
+  if (dt){ dt.destroy(); dt = null; }
+  $('tblWrap').innerHTML = '<table id="TaskTable"><thead><tr>'+header.map(h=>'<th>'+h+'</th>').join('')+'</tr></thead><tbody></tbody></table>';
+  dt = new DataTable('#TaskTable', {
+    data: cols,
+    language: { url: '/static/vendor/ru.json' },
+    order: [[1, 'asc']],
+    pageLength: 25,
+    lengthMenu: [[10,25,50,-1],[10,25,50,'Все']],
+    autoWidth: false,
+    scrollX: true,
+    columnDefs: [
+      { orderable:false, targets:[0,9,10,11] },
+      { visible:false, targets:[13,14,15,16,17,18,19,20,21] }
+    ],
+    createdRow: function(row, data){
+      if (data[14] === '1') row.classList.add('row-summary');
+      row.addEventListener('click', ()=>openTask(data[2]));
+    }
+  });
+  $('status').textContent = 'Записей: '+rows.length+' · Обновлено '+new Date().toLocaleTimeString();
 }
 
-/* ---------- Вкладка 2: ЗАДАЧА (детализация) ---------- */
+/* Фильтры: применяются к DataTable через скрытые колонки */
+function applyFilters(){
+  if (!dt) return;
+  dt.column(13).search($('fKind').value || '', false).draw(false);
+  dt.column(20).search($('fStatus').value || '', false).draw(false);
+  dt.column(21).search($('fWorkflow').value || '', false).draw(false);
+  dt.column(17).search($('fModule').value || '', false).draw(false);
+  dt.column(18).search($('fClass').value || '', false).draw(false);
+  dt.column(19).search($('fLayer').value || '', false).draw(false);
+  dt.column(15).search($('fReport').value || '', false).draw(false);
+  dt.column(16).search($('fVerdict').value || '', false).draw(false);
+  dt.column(14).search($('fSummary').checked ? '1' : '', false).draw(false);
+  dt.search($('fSearch').value || '', false).draw(false);
+  $('status').textContent = 'Показано: '+dt.rows({filter:'applied'}).count()+' из '+dt.rows().count()+
+    ' · Обновлено '+new Date().toLocaleTimeString();
+}
+
+function resetFilters(){
+  ['fKind','fStatus','fWorkflow','fModule','fClass','fLayer','fReport','fVerdict','fSummary','fSearch']
+    .forEach(id=>{ const el=$(id); el.value=''; });
+  if (dt){ dt.search('').columns().every(function(){ this.search(''); }).draw(); }
+  applyFilters();
+}
+
+/* --- Карточка задачи (modal) --- */
 async function openTask(id){
-  state.currentTask = id;
-  state.tab = 'task';
-  document.querySelectorAll('nav button').forEach(b=>b.classList.toggle('active', b.dataset.tab==='task'));
-  $('taskTabBtn').style.display = '';
-  await renderTask(id);
+  currentTaskId = id;
+  $('taskOverlay').classList.add('show');
+  $('modalBody').innerHTML = '<div class="empty">Загрузка…</div>';
+  let t;
+  try { t = await get('/api/tdl/task/'+id+'?project='+encodeURIComponent(activeProject)); }
+  catch(e){ $('modalBody').innerHTML = '<div class="empty">ошибка: '+esc(String(e))+'</div>'; return; }
+
+  const task = t.task || {};
+  const report = t.report;
+  const verdict = t.verdict;
+  $('modalTitle').textContent = task.wbs_code+' · '+id+' · '+task.name;
+
+  const links = (task.links||[]).map(l=>{
+    const href = l.href||l.url||l.ref||'#';
+    return '<li><a href="'+esc(href)+'" target="_blank">['+esc(l.type)+'] '+esc(href)+'</a></li>';
+  }).join('');
+
+  const criteria = (task.acceptance_criteria||[]).map(c=>'<li>'+esc(c)+'</li>').join('');
+  const inputs = (task.inputs||[]).map(i=>'<li>'+esc(i.type||'')+': '+esc(i.path||i.href||'')+'</li>').join('');
+  const history = (task.history||[]).map(h=>'<li>'+esc(h.timestamp)+' — <b>'+esc(h.action)+'</b>: '+esc(h.details)+'</li>').join('');
+
+  let reportHtml = '<div class="muted">Отчёта нет</div>';
+  if (report){
+    const workDone = (report.work_done||[]).map(w=>'<li>'+esc(w)+'</li>').join('');
+    const ev = (report.evidence||[]).map(e=>'<li>['+esc(e.type)+'] '+esc(e.evidence_id)+': '+esc(e.name||e.command||e.details||'')+
+      ' (<span class="badge '+(e.result==='pass'?'ok':'err')+'">'+esc(e.result)+'</span>)'+
+      ((e.links||[]).map(l=>' — <a href="'+esc(l.href||l.ref||'#')+'" target="_blank">'+esc(l.href||l.ref||'')+'</a>').join(''))+'</li>').join('');
+    reportHtml =
+      '<div class="kv"><span class="k">Статус отчёта</span><span class="v">'+esc(report.report_status)+'</span>'+
+      '<span class="k">Дата</span><span class="v">'+esc(report.date)+'</span>'+
+      '<span class="k">Исполнитель</span><span class="v">'+esc((report.executor||{}).name||'')+'</span></div>'+
+      '<p><b>Что сделано</b></p><ul>'+(workDone||'<li class="muted">—</li>')+'</ul>'+
+      '<p><b>Доказательства</b></p><ul>'+(ev||'<li class="muted">нет</li>')+'</ul>'+
+      '<p><b>Команды проверки</b></p><ul>'+((report.verification_commands||[]).map(c=>'<li><code>'+esc(c)+'</code></li>').join('')||'<li class="muted">—</li>')+'</ul>';
+  }
+
+  let verdictHtml = '<div class="muted">Вердикта нет</div>';
+  if (verdict){
+    const checks = (verdict.checks||[]).map(c=>'<tr><td>'+esc(c.check_id)+'</td><td>'+esc(c.name)+'</td><td><span class="badge '+(c.status==='pass'?'ok':c.status==='fail'?'err':'warn')+'">'+esc(c.status)+'</span></td><td>'+esc(c.expected)+'</td><td>'+esc(c.actual)+'</td></tr>').join('');
+    verdictHtml =
+      '<p><span class="badge '+(verdict.result==='pass'?'ok':verdict.result==='fail'?'err':'warn')+'" style="font-size:13px">Результат: '+esc(verdict.result)+'</span>'+
+      ' · can_move_forward: '+esc(String(verdict.can_move_forward))+' · '+esc(verdict.date)+'</p>'+
+      '<table class="checks-table"><thead><tr><th>ID</th><th>Проверка</th><th>Статус</th><th>Ожидание</th><th>Факт</th></tr></thead><tbody>'+checks+'</tbody></table>';
+  }
+
+  const sources = t.sources || {};
+  const jsonBlocks = [];
+  if (sources.task) jsonBlocks.push('<h4>JSON · задача · '+esc(sources.task)+'</h4><pre class="json">'+esc(JSON.stringify(task, null, 2))+'</pre>');
+  if (sources.report && report) jsonBlocks.push('<h4>JSON · отчёт · '+esc(sources.report)+'</h4><pre class="json">'+esc(JSON.stringify(report, null, 2))+'</pre>');
+  if (sources.verdict && verdict) jsonBlocks.push('<h4>JSON · вердикт · '+esc(sources.verdict)+'</h4><pre class="json">'+esc(JSON.stringify(verdict, null, 2))+'</pre>');
+  const jsonPane = jsonBlocks.join('') || '<div class="muted">JSON-файлов нет</div>';
+
+  $('modalBody').innerHTML =
+    '<div class="tabs"><button class="active" data-tab="main">Обзор</button><button data-tab="report">Отчёт</button><button data-tab="verdict">Вердикт</button><button data-tab="json">JSON</button></div>'+
+    '<div class="tabpane active" id="pane-main">'+
+      '<div class="section"><h4>Основные поля</h4><div class="kv">'+
+        '<span class="k">WBS</span><span class="v">'+esc(task.wbs_code)+'</span>'+
+        '<span class="k">ID</span><span class="v">'+esc(task.task_id)+'</span>'+
+        '<span class="k">Тип</span><span class="v">'+(task.is_summary?'Общая (summary)':esc(KIND_LABEL[task.task_kind]||task.task_kind||''))+'</span>'+
+        '<span class="k">Статус</span><span class="v">'+statusBadge(task.status, task.workflow_state)+'</span>'+
+        '<span class="k">Workflow</span><span class="v">'+esc(WORKFLOW_LABEL[task.workflow_state]||task.workflow_state)+'</span>'+
+        '<span class="k">Приоритет</span><span class="v">'+esc(task.priority)+'</span>'+
+        '<span class="k">Модуль</span><span class="v">'+esc(task.module||'—')+'</span>'+
+        '<span class="k">Класс(ы)</span><span class="v">'+classesHtml(task)+'</span>'+
+        '<span class="k">Слой</span><span class="v">'+esc(task.layer||'—')+'</span>'+
+        '<span class="k">Сроки</span><span class="v">'+esc((task.dates||{}).issued||'')+' → '+esc((task.dates||{}).finish||'')+'</span>'+
+      '</div></div>'+
+      '<div class="card-col">'+
+        '<div><div class="section"><h4>Цель</h4><pre class="kv" style="white-space:pre-wrap;color:var(--text)">'+esc(task.goal||'—')+'</pre></div>'+
+        '<div class="section"><h4>Критерии приёмки</h4><ul>'+(criteria||'<li class="muted">—</li>')+'</ul></div>'+
+        '<div class="section"><h4>Входные данные</h4><ul>'+(inputs||'<li class="muted">—</li>')+'</ul></div></div>'+
+        '<div><div class="section"><h4>Ссылки</h4><ul>'+(links||'<li class="muted">—</li>')+'</ul></div>'+
+        '<div class="section"><h4>Блокировки</h4><div>'+esc(task.blocker||'Нет')+'</div></div>'+
+        '<div class="section"><h4>История</h4><ul>'+(history||'<li class="muted">—</li>')+'</ul></div></div>'+
+      '</div></div>'+
+    '<div class="tabpane" id="pane-report">'+reportHtml+'</div>'+
+    '<div class="tabpane" id="pane-verdict">'+verdictHtml+'</div>'+
+    '<div class="tabpane" id="pane-json">'+jsonPane+'</div>';
+
+  $('modalBody').querySelectorAll('.tabs button').forEach(b=>{
+    b.addEventListener('click', ()=>{
+      $('modalBody').querySelectorAll('.tabs button').forEach(x=>x.classList.toggle('active', x===b));
+      $('modalBody').querySelectorAll('.tabpane').forEach(p=>p.classList.toggle('active', p.id==='pane-'+b.dataset.tab));
+    });
+  });
 }
 
-async function renderTask(id){
-  let t;
-  try { t = await get('/api/task/'+id+'?project='+encodeURIComponent(activeProject)); }
+function closeTask(){ $('taskOverlay').classList.remove('show'); currentTaskId=null; }
+$('taskOverlay').addEventListener('click', e=>{ if (e.target===$('taskOverlay')) closeTask(); });
+
+/* --- Загрузка проекта и рендер --- */
+async function loadFilters(){
+  const f = await get('/api/tdl/filters?project='+encodeURIComponent(activeProject));
+  const fill = (id, items, prefix) => {
+    const sel = $(id); sel.innerHTML = '<option value="">'+prefix+'</option>'+
+      items.map(i=>'<option value="'+esc(i.value)+'">'+esc(i.value)+' ('+i.count+')</option>').join('');
+  };
+  fill('fStatus', f.statuses||[], 'Статус: все');
+  fill('fWorkflow', f.workflow_states||[], 'Workflow: все');
+  fill('fKind', f.task_kinds||[], 'Тип: все');
+  fill('fModule', f.modules||[], 'Модуль: все');
+  fill('fClass', f.class_names||[], 'Класс: все');
+  fill('fLayer', f.layers||[], 'Слой: все');
+}
+
+async function renderPlan(){
+  if (!activeProject) return;
+  let rows;
+  try { rows = await get('/api/tdl/tasks?project='+encodeURIComponent(activeProject)); }
   catch(e){ $('content').innerHTML = '<div class="empty">ошибка: '+esc(String(e))+'</div>'; return; }
 
-  // Этапы: разбита → начато → агент → закончено → тест → проверено
-  const steps = [
-    ['Разбита', t['начато']||'—', 'info'],
-    ['Агент', t['агент']||'—', 'info'],
-    ['Закончено', t['завершено']||'—', t.status==='done_report'||t.status==='verified'?'ok':'warn'],
-    ['Проверено', t['вердикт']||'—', t['вердикт']==='PASS'?'ok':(t['вердикт']?'err':'warn')],
-  ];
+  const total = rows.length;
+  const done = rows.filter(r=>r.status==='done').length;
+  const open = total-done;
+  const blocked = rows.filter(r=>r.workflow_state==='blocked').length;
+  const summary = rows.filter(r=>r.is_summary).length;
+  const withReport = rows.filter(r=>r.has_report).length;
 
-  let html = '<button class="back" onclick="showPlan()">← К плану</button>';
+  const html =
+    '<div class="filter-card">'+
+      '<div class="filter-row">'+
+        '<div class="filter-group"><label>Тип задачи</label><select id="fKind" onchange="applyFilters()"></select></div>'+
+        '<div class="filter-group"><label>Статус</label><select id="fStatus" onchange="applyFilters()"></select></div>'+
+        '<div class="filter-group"><label>Workflow</label><select id="fWorkflow" onchange="applyFilters()"></select></div>'+
+        '<div class="filter-group"><label>Модуль</label><select id="fModule" onchange="applyFilters()"></select></div>'+
+        '<div class="filter-group"><label>Класс (исправляется)</label><select id="fClass" onchange="applyFilters()"></select></div>'+
+        '<div class="filter-group"><label>Слой</label><select id="fLayer" onchange="applyFilters()"></select></div>'+
+        '<div class="filter-group"><label>Отчёт</label><select id="fReport" onchange="applyFilters()"><option value="">Все</option><option value="1">Есть</option><option value="0">Нет</option></select></div>'+
+        '<div class="filter-group"><label>Вердикт</label><select id="fVerdict" onchange="applyFilters()"><option value="">Все</option><option value="1">Есть</option><option value="0">Нет</option></select></div>'+
+        '<div class="checkbox-group"><label>Общие</label><div class="check"><input type="checkbox" id="fSummary" onchange="applyFilters()">только summary</div></div>'+
+        '<div class="filter-group"><label>Поиск</label><input type="text" id="fSearch" placeholder="ID, имя, класс…" oninput="applyFilters()"></div>'+
+        '<div class="filter-btns"><button onclick="resetFilters()">Сброс</button><button class="primary" onclick="renderPlan()">Обновить</button></div>'+
+      '</div>'+
+    '</div>'+
 
-  html += '<div class="card"><h3>'+esc(t.id)+': '+esc(t.title)+'</h3>'+
-    '<div class="muted">Статус: '+badge(t.status)+' · Приоритет: '+esc(t.priority)+' · Документ: '+esc(t['документ']||'—')+'</div></div>';
+    '<div class="stats-row">'+
+      '<div class="stat"><div class="num">'+total+'</div><div class="lbl">всего задач</div></div>'+
+      '<div class="stat"><div class="num" style="color:var(--yellow)">'+open+'</div><div class="lbl">открыто</div></div>'+
+      '<div class="stat"><div class="num" style="color:var(--green)">'+done+'</div><div class="lbl">выполнено</div></div>'+
+      '<div class="stat"><div class="num" style="color:var(--yellow)">'+summary+'</div><div class="lbl">общих (summary)</div></div>'+
+      '<div class="stat"><div class="num" style="color:var(--orange)">'+blocked+'</div><div class="lbl">блокировки</div></div>'+
+      '<div class="stat"><div class="num" style="color:var(--accent)">'+withReport+'</div><div class="lbl">с отчётом</div></div>'+
+    '</div>'+
 
-  // Этапы
-  html += '<div class="card"><h3>Этапы</h3><table><tr><th>Этап</th><th>Дата/значение</th><th>Статус</th></tr>';
-  for (const [name, val, tone] of steps){
-    html += '<tr><td>'+esc(name)+'</td><td>'+esc(val)+'</td><td>'+badge(tone)+'</td></tr>';
-  }
-  html += '</table></div>';
-
-  // Отчёт
-  if (t.report_text){
-    html += '<div class="card"><h3>Отчёт исполнителя</h3><pre>'+esc(t.report_text)+'</pre></div>';
-  }
-  // Вердикт
-  if (t.verdict_text){
-    html += '<div class="card"><h3>Вердикт контролёра</h3><pre>'+esc(t.verdict_text)+'</pre></div>';
-  }
-  // События
-  if (t.events && t.events.length){
-    html += '<div class="card"><h3>События задачи</h3><table><tr><th>Событие</th><th>Время</th></tr>';
-    for (const e of t.events) html += '<tr><td>'+esc(e.type)+'</td><td class="muted">'+esc(e.created_at)+'</td></tr>';
-    html += '</table></div>';
-  }
+    '<div class="table-card"><div id="tblWrap"></div></div>';
 
   $('content').innerHTML = html;
-}
-
-function showPlan(){
-  state.tab = 'plan';
-  $('taskTabBtn').style.display = 'none';
-  document.querySelectorAll('nav button').forEach(b=>b.classList.toggle('active', b.dataset.tab==='plan'));
-  renderPlan();
+  await loadFilters();
+  renderTable(rows);
+  applyFilters();
 }
 
 async function setProject(name){
   activeProject = name || '';
   $('projectSelect').value = name;
-  if (state.tab==='plan') renderPlan();
-  else renderTask(state.currentTask);
+  await renderPlan();
 }
 
 async function boot(){
   try {
-    const r = await fetch('/api/projects');
-    const projects = await r.json();
+    const projects = await get('/api/projects');
     const sel = $('projectSelect');
     sel.innerHTML = projects.map(p=>'<option value="'+esc(p)+'">'+esc(p)+'</option>').join('');
     sel.addEventListener('change', ()=> setProject(sel.value));
     activeProject = projects[0] || '';
-  } catch(_){}
-  renderPlan();
-  setInterval(()=>{ if (state.tab==='plan') renderPlan(); else if (state.tab==='task' && state.currentTask) renderTask(state.currentTask); }, 15000);
+    await renderPlan();
+  } catch(e){ $('content').innerHTML = '<div class="empty">ошибка загрузки проектов: '+esc(String(e))+'</div>'; }
+  setInterval(()=>{ if (!currentTaskId) renderPlan(); }, 20000);
 }
 boot();
 </script>
