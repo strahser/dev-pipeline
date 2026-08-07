@@ -58,6 +58,42 @@ SUBAGENT_TIMEOUT = 1800  # анти-зависание: субагент без 
 SERVER_URL = "http://127.0.0.1:8787"
 DEV_PIPELINE_DIR = Path(__file__).resolve().parent.parent  # корень dev-pipeline (не хардкод E:\)
 
+
+def _pid_alive(pid: int) -> bool:
+    """Жив ли процесс (Windows: tasklist; иначе os.kill(pid, 0))."""
+    if os.name == "nt":
+        try:
+            out = subprocess.run(["tasklist", "/FI", f"PID eq {pid}", "/NH"],
+                                 capture_output=True, text=True, errors="replace",
+                                 timeout=10).stdout or ""
+            return str(pid) in out
+        except Exception:
+            return False
+    try:
+        os.kill(pid, 0)
+        return True
+    except OSError:
+        return False
+
+
+def _kill_tree(pid: int) -> None:
+    """Убить процесс и всё его дерево (Windows: taskkill /F /T; иначе SIGKILL).
+
+    opencode.cmd порождает node.exe — без /T умирает только обёртка cmd,
+    а node-процесс остаётся сиротой и висит (случай A-12, ~1 ГБ памяти)."""
+    if os.name == "nt":
+        try:
+            subprocess.run(["taskkill", "/F", "/T", "/PID", str(pid)],
+                           capture_output=True, text=True, errors="replace",
+                           timeout=10)
+            return
+        except Exception:
+            pass
+    try:
+        os.kill(pid, 9)
+    except OSError:
+        pass
+
 PLANNER_PROMPT = """Ты — планировщик конвейера dev-pipeline. Загрузи скилл планировщика:
 {skill_path} (прочитай его ПЕРВЫМ: схема выхода, правила декомпозиции).
 
@@ -408,14 +444,20 @@ def run_subagent(cfg, task_id: str, report_path: Path, log_path: Path,
         proc = subprocess.Popen(cmd, cwd=str(cfg.root),
                                 stdout=subprocess.PIPE, stderr=subprocess.PIPE,
                                 text=True, encoding="utf-8", errors="replace")
-        pid_file.write_text(str(proc.pid), encoding="utf-8")
+        # PID-файл: строка 1 — PID, строка 2 — время старта (unix).
+        # Сторож (agent_watch) по нему находит сирот: менеджер убит/завис,
+        # а субагент продолжает висеть.
+        pid_file.write_text(f"{proc.pid}\n{int(time.time())}", encoding="utf-8")
         try:
             out, err = proc.communicate(timeout=SUBAGENT_TIMEOUT)
             rc = proc.returncode
         except subprocess.TimeoutExpired:
-            # зависший субагент: убить, пометить таймаут
-            proc.kill()
-            out, err = proc.communicate(timeout=10)
+            # зависший субагент: убить всё дерево (без /T остаётся node-сирота)
+            _kill_tree(proc.pid)
+            try:
+                out, err = proc.communicate(timeout=10)
+            except subprocess.TimeoutExpired:
+                out, err = "", ""
             rc = 124
         log_path.write_text((out or "") + (err or ""), encoding="utf-8")
         return rc

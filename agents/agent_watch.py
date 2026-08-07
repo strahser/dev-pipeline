@@ -26,9 +26,14 @@ sys.path.insert(0, str(Path(__file__).resolve().parent.parent))
 from pipeline.client import Client                 # noqa: E402
 from pipeline.config import load_config             # noqa: E402
 from pipeline.cli import cmd_dispatch, cmd_verify   # noqa: E402
+from agents.agent_manager import _kill_tree, _pid_alive  # noqa: E402
 import argparse as _ap                              # noqa: E402
 
 _STALL_TIMEOUT = int(os.environ.get("TASK_STALL_TIMEOUT_SEC", "10800"))
+# Сирота-субагент: PID-файл старше этого возраста при живом процессе.
+# Менеджер сам убивает субагента через SUBAGENT_TIMEOUT (1800 с), но если
+# менеджер убит/завис — PID-файл остаётся, а процесс-сирота висит.
+_SUBAGENT_MAX_AGE = int(os.environ.get("SUBAGENT_MAX_AGE_SEC", "3600"))
 
 
 def _verify_tdl_or_legacy(cfg, tid: str):
@@ -119,11 +124,81 @@ def check_stalled(cfg, client, timeout_sec: int = 10800) -> int:
     return len(stalled)
 
 
+def _mark_task_stalled(cfg, tid: str, details: str):
+    """Пометить TDL-задачу task_stalled (однократно) в history."""
+    try:
+        from pipeline.tdl import store as tdl_store
+        from pipeline.tdl._tpl import _now_iso
+        t = tdl_store.load_task(cfg, tid)
+        if t is None:
+            return
+        hist = t.setdefault("history", [])
+        if any(h.get("action") == "task_stalled" for h in hist):
+            return
+        hist.append({"timestamp": _now_iso(), "actor": "watch",
+                     "action": "task_stalled", "details": details})
+        tdl_store.save_task(cfg, t)
+        try:
+            tdl_store.rebuild_index(cfg)
+        except Exception:
+            pass
+    except Exception as e:
+        print(f"[watch] stalled-пометка {tid} не сохранена: {e}")
+
+
+def check_subagent_zombies(cfg, client, max_age_sec: int = 3600) -> int:
+    """Найти и убить зависшие процессы субагентов (PID-файлы менеджера).
+
+    Менеджер пишет Tasks\\Конвейер\\logs\\{task_id}.pid (строка 1 — PID,
+    строка 2 — время старта, unix). Если файл старше max_age_sec и процесс
+    жив — это сирота (менеджер убит/завис, субагент продолжает висеть):
+    убиваем дерево процесса, удаляем файл, помечаем задачу task_stalled.
+    Мёртвые PID-файлы просто удаляются. Возвращает количество убитых."""
+    logs_dir = cfg.root / "Tasks" / "Конвейер" / "logs"
+    if not logs_dir.is_dir():
+        return 0
+    killed = 0
+    for pf in sorted(logs_dir.glob("*.pid")):
+        tid = pf.stem
+        try:
+            lines = pf.read_text(encoding="utf-8").strip().splitlines()
+            pid = int(lines[0].strip())
+            start = int(lines[1].strip()) if len(lines) > 1 else pf.stat().st_mtime
+        except Exception:
+            continue
+        if time.time() - start < max_age_sec:
+            continue  # ещё в пределах таймаута менеджера (1800 с) — он сам убьёт
+        if not _pid_alive(pid):
+            try:
+                pf.unlink()  # мусор от убитого/завершённого субагента
+            except Exception:
+                pass
+            continue
+        _kill_tree(pid)
+        killed += 1
+        print(f"[watch] СИРОТА-СУБАГЕНТ: {tid} (PID {pid}) старше {max_age_sec} с — убит")
+        try:
+            pf.unlink()
+        except Exception:
+            pass
+        _mark_task_stalled(cfg, tid,
+                           f"субагент-сирота (PID {pid}) убит сторожем "
+                           f"после {max_age_sec} с без результата")
+        if client is not None:
+            try:
+                client.notify("task_stalled", to="controller", task=tid,
+                              payload={"reason": "subagent zombie killed", "pid": pid})
+            except Exception:
+                pass
+    return killed
+
+
 def _stall_poll(cfg, client, stop, timeout_sec: int):
-    """Фоновый детектор зависших задач (в SSE-режиме)."""
+    """Фоновый детектор зависших задач и сирот-субагентов (в SSE-режиме)."""
     while not (stop and stop.is_set()):
         try:
             check_stalled(cfg, client, timeout_sec)
+            check_subagent_zombies(cfg, client, _SUBAGENT_MAX_AGE)
         except Exception as e:
             print(f"[watch] stall-поллинг ошибка: {e}")
         time.sleep(60)
@@ -168,8 +243,9 @@ def file_polling_loop(cfg, client, stop):
                     _verify_tdl_or_legacy(cfg, tid)
                 except Exception as e:
                     print(f"[watch] verify {tid} ошибка: {e}")
-            # зависшие in_progress-задачи
+            # зависшие in_progress-задачи и сироты-субагенты
             check_stalled(cfg, client, _STALL_TIMEOUT)
+            check_subagent_zombies(cfg, client, _SUBAGENT_MAX_AGE)
         except Exception as e:
             print(f"[watch] поллинг ошибка: {e}")
         time.sleep(30)

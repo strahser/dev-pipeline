@@ -27,7 +27,9 @@
 - API длительностей: `GET /api/tdl/durations?project=<p>` (план vs факт, summary-суммирование)
 - Планировщик миссии (LLM-декомпозиция 1-го уровня): `python -m agents.agent_manager mission --project <p> --mission <файл> --plan` — пишет spec в `Tasks\Конвейер\планы\` и вызывает tdl-plan; фолбэк на `split_mission`
 - Анти-зависание: сервер — `PIPELINE_WATCH_INTERVAL`/`PIPELINE_WATCH_MAX_AGE`;
-  сторож — `python -m agents.agent_watch --project <p> [--stall-timeout N]` (env `TASK_STALL_TIMEOUT_SEC`, default 10800)
+  сторож — `python -m agents.agent_watch --project <p> [--stall-timeout N]` (env `TASK_STALL_TIMEOUT_SEC`, default 10800);
+  субагенты — таймаут 1800 с + PID-файл `logs\<A-NN>.pid` (env `SUBAGENT_MAX_AGE_SEC` для убийства сирот сторожем);
+  фейковый отчёт при rc≠0 не создаётся — пометка `task_stalled` (редиспатч)
 
 ## Правила
 

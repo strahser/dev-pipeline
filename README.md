@@ -98,6 +98,17 @@ python -X utf8 agents/agent_manager.py mission --project heatlossrevit2 ^
 - **Сторож контролёра** (`agent_watch.py`): детектор `check_stalled` — задача в `in_progress`
   дольше порога без JSON-отчёта → пометка `stalled` в history + событие `task_stalled`.
   Порог: `--stall-timeout N` или env `TASK_STALL_TIMEOUT_SEC` (default 10800 = 3 ч).
+- **Менеджер субагентов** (`agent_manager.py`): `opencode run` с таймаутом
+  `SUBAGENT_TIMEOUT` (default 1800 с) — при зависании убивается всё дерево процесса
+  (`taskkill /F /T`, без node-сирот); PID и время старта пишутся в
+  `Tasks\Конвейер\logs\<A-NN>.pid`.
+- **Сторож × PID-файлы** (`agent_watch.check_subagent_zombies`): PID-файл старше
+  `SUBAGENT_MAX_AGE_SEC` (default 3600 с) при живом процессе — сирота (менеджер
+  убит/завис): дерево убивается, файл удаляется, задача помечается `task_stalled`.
+  Мёртвые PID-файлы удаляются. Модель субагента — `DEFAULT_MODEL` (default
+  `opencode/deepseek-v4-flash`, стабильная; flash-free глючит на длинных промптах).
+- Менеджер НЕ создаёт фейковый отчёт при `rc≠0`/пустом отчёте — вместо этого
+  пометка `task_stalled` в history + событие (редиспатч контролёром).
 - Запуск: `python -X utf8 agents/agent_watch.py --project <p> [--stall-timeout 3600]`.
 
 ## Чат агентов (dashboard)

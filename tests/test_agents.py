@@ -234,5 +234,115 @@ class TestCheckStalled(unittest.TestCase):
         import shutil; shutil.rmtree(tmp, ignore_errors=True)
 
 
+class TestEnsureReportNoFake(unittest.TestCase):
+    """Менеджер не создаёт фейковый отчёт при rc!=0/обрыве — пометка stalled."""
+
+    def _cfg(self, tmp):
+        for sub in ("Tasks/Активные", "Tasks/Отчёты", "Tasks/Архив", "Tasks/Конвейер"):
+            (tmp / sub).mkdir(parents=True)
+        from pipeline.config import ProjectConfig
+        return ProjectConfig(name="_t", root=tmp)
+
+    def _mk_task(self, cfg, tid):
+        from pipeline.tdl._tpl import make_task
+        from pipeline.tdl import store as tdl_store
+        t = make_task(tid, "_t", "Задача", "1.1", goal="ц", acceptance=["к"], commands=["b"])
+        tdl_store.save_task(cfg, t)
+
+    def test_rc_nonzero_no_report_marks_stalled(self):
+        import tempfile
+        from pipeline.tdl import store as tdl_store
+        tmp = Path(tempfile.mkdtemp(prefix="rep_"))
+        cfg = self._cfg(tmp)
+        self._mk_task(cfg, "A-01")
+        ok = am._ensure_report(cfg, "A-01", rc=1)
+        self.assertFalse(ok)
+        # фейкового отчёта НЕ создано
+        self.assertEqual(list((tmp / "Tasks" / "Отчёты").glob("A-01_*")), [])
+        t = tdl_store.load_task(cfg, "A-01")
+        self.assertTrue(any(h["action"] == "task_stalled" for h in t["history"]),
+                        "обрыв без отчёта -> task_stalled для редиспатча")
+        import shutil; shutil.rmtree(tmp, ignore_errors=True)
+
+    def test_timeout_rc_124_marks_stalled(self):
+        import tempfile
+        from pipeline.tdl import store as tdl_store
+        tmp = Path(tempfile.mkdtemp(prefix="rep2_"))
+        cfg = self._cfg(tmp)
+        self._mk_task(cfg, "A-01")
+        am._ensure_report(cfg, "A-01", rc=124)
+        t = tdl_store.load_task(cfg, "A-01")
+        self.assertTrue(any(h["action"] == "task_stalled" for h in t["history"]))
+        import shutil; shutil.rmtree(tmp, ignore_errors=True)
+
+    def test_report_exists_ok(self):
+        import tempfile
+        tmp = Path(tempfile.mkdtemp(prefix="rep3_"))
+        cfg = self._cfg(tmp)
+        (tmp / "Tasks" / "Отчёты" / "A-01_Отчёт_2026-08-07.md").write_text(
+            "# ОТЧЁТ: A-01", encoding="utf-8")
+        self.assertTrue(am._ensure_report(cfg, "A-01", rc=0))
+        import shutil; shutil.rmtree(tmp, ignore_errors=True)
+
+
+class TestSubagentZombies(unittest.TestCase):
+    """Сторож: убийство сирот-субагентов по PID-файлам менеджера."""
+
+    def _cfg(self, tmp):
+        for sub in ("Tasks/Активные", "Tasks/Отчёты", "Tasks/Архив",
+                    "Tasks/Конвейер", "Tasks/Конвейер/logs"):
+            (tmp / sub).mkdir(parents=True)
+        from pipeline.config import ProjectConfig
+        return ProjectConfig(name="_t", root=tmp)
+
+    def test_old_alive_killed_stale_removed_young_kept(self):
+        import subprocess, sys, tempfile, time
+        from agents import agent_watch as aw
+        tmp = Path(tempfile.mkdtemp(prefix="zom_"))
+        cfg = self._cfg(tmp)
+        logs = tmp / "Tasks" / "Конвейер" / "logs"
+        # старый PID-файл живого процесса -> убить дерево
+        victim = subprocess.Popen([sys.executable, "-c", "import time; time.sleep(120)"])
+        (logs / "A-01.pid").write_text(
+            f"{victim.pid}\n{int(time.time()) - 7200}", encoding="utf-8")
+        # старый PID-файл мёртвого процесса -> просто удалить
+        (logs / "A-02.pid").write_text(
+            f"999999999\n{int(time.time()) - 7200}", encoding="utf-8")
+        n = aw.check_subagent_zombies(cfg, None, max_age_sec=1800)
+        self.assertEqual(n, 1, "убит только живой сирота")
+        self.assertFalse(am._pid_alive(victim.pid), "процесс-сирота убит")
+        victim.wait()
+        self.assertFalse((logs / "A-01.pid").exists())
+        self.assertFalse((logs / "A-02.pid").exists(), "мёртвый pid-файл удалён")
+        # молодой PID-файл живого процесса -> не трогаем
+        young = subprocess.Popen([sys.executable, "-c", "import time; time.sleep(120)"])
+        (logs / "A-03.pid").write_text(
+            f"{young.pid}\n{int(time.time())}", encoding="utf-8")
+        self.assertEqual(aw.check_subagent_zombies(cfg, None, max_age_sec=1800), 0)
+        self.assertTrue((logs / "A-03.pid").exists())
+        am._kill_tree(young.pid)
+        young.wait()
+        import shutil; shutil.rmtree(tmp, ignore_errors=True)
+
+    def test_zombie_marks_task_stalled(self):
+        import subprocess, sys, tempfile, time
+        from agents import agent_watch as aw
+        from pipeline.tdl import store as tdl_store
+        from pipeline.tdl._tpl import make_task
+        tmp = Path(tempfile.mkdtemp(prefix="zom2_"))
+        cfg = self._cfg(tmp)
+        t = make_task("A-05", "_t", "Задача", "1.1", goal="ц", acceptance=["к"], commands=["b"])
+        tdl_store.save_task(cfg, t)
+        logs = tmp / "Tasks" / "Конвейер" / "logs"
+        victim = subprocess.Popen([sys.executable, "-c", "import time; time.sleep(120)"])
+        (logs / "A-05.pid").write_text(
+            f"{victim.pid}\n{int(time.time()) - 7200}", encoding="utf-8")
+        aw.check_subagent_zombies(cfg, None, max_age_sec=1800)
+        victim.wait()
+        t2 = tdl_store.load_task(cfg, "A-05")
+        self.assertTrue(any(h["action"] == "task_stalled" for h in t2["history"]))
+        import shutil; shutil.rmtree(tmp, ignore_errors=True)
+
+
 if __name__ == "__main__":
     unittest.main(verbosity=2)
