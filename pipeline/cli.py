@@ -291,6 +291,44 @@ def main(argv=None):
     p = sub.add_parser("verify"); add_project(p); p.add_argument("task")
     p.set_defaults(handler=lambda a: cmd_verify(load_config(a.project), a))
 
+    # --- TDL (JSON как источник истины) ---
+    from pipeline.tdl import cli as tdl_cli
+
+    def tdl(proj):
+        return load_config(proj)
+
+    def _t(fn):
+        def h(a):
+            cfg = tdl(a.project)
+            return fn(cfg, a)
+        return h
+
+    for name, fn in [("tdl-init", tdl_cli.tdl_init),
+                     ("tdl-dispatch", tdl_cli.tdl_dispatch),
+                     ("tdl-start", tdl_cli.tdl_start),
+                     ("tdl-report", tdl_cli.tdl_report),
+                     ("tdl-verify", tdl_cli.tdl_verify),
+                     ("tdl-migrate", tdl_cli.tdl_migrate),
+                     ("tdl-validate", tdl_cli.tdl_validate),
+                     ("tdl-index", tdl_cli.tdl_index),
+                     ("tdl-status", tdl_cli.tdl_status)]:
+        p = sub.add_parser(name); add_project(p)
+        if name == "tdl-dispatch":
+            p.add_argument("file"); p.add_argument("--title"); p.add_argument("--priority")
+            p.add_argument("--wbs"); p.add_argument("--parent-wbs"); p.add_argument("--module")
+            p.add_argument("--class-name"); p.add_argument("--layer"); p.add_argument("--goal")
+            p.add_argument("--requirements"); p.add_argument("--result"); p.add_argument("--remark")
+        elif name == "tdl-report":
+            p.add_argument("task"); p.add_argument("--final", action="store_true"); p.add_argument("--from-md")
+        elif name in ("tdl-start", "tdl-verify"):
+            p.add_argument("task")
+        elif name == "tdl-validate":
+            p.add_argument("task", nargs="?", default=None)
+        elif name == "tdl-migrate":
+            p.add_argument("--dry-run", action="store_true")
+            p.add_argument("--allow-done-from-md", action="store_true")
+        p.set_defaults(handler=_t(fn))
+
     args = ap.parse_args(argv)
     if not getattr(args, "cmd", None):
         ap.print_help()

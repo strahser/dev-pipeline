@@ -60,6 +60,15 @@ class ProjectConfig:
     layer_rules: list = field(default_factory=list)
     audit_dirs: list = field(default_factory=lambda: ["Test", "Core.Tests"])
 
+    # TDL (JSON как источник истины)
+    tdl_enabled: bool = True
+    tdl_root: str = "Tasks\\JSON"
+    tdl_active: str = "Tasks\\JSON\\Active"
+    tdl_reports: str = "Tasks\\JSON\\Reports"
+    tdl_verdicts: str = "Tasks\\JSON\\Verdicts"
+    tdl_index: str = "Tasks\\JSON\\Index\\tdl.index.json"
+    tdl_markdown_mirror: bool = True
+
     # Служебные настройки
     skip_dirs: list = field(default_factory=lambda: [
         "bin", "obj", ".git", ".idea", ".opencode", "packages",
@@ -121,6 +130,7 @@ def load_config(project_name: str) -> ProjectConfig:
     c = raw.get("checks", [])
     lr = raw.get("layer_rules", [])
     ad = raw.get("audit_dirs", ["Test", "Core.Tests"])
+    td = raw.get("tdl", {})
 
     root = Path(_require(p, "root", "project.root")).resolve()
     if not root.exists():
@@ -151,6 +161,13 @@ def load_config(project_name: str) -> ProjectConfig:
         checks=c,
         layer_rules=lr,
         audit_dirs=ad,
+        tdl_enabled=td.get("enabled", True),
+        tdl_root=td.get("root", "Tasks\\JSON"),
+        tdl_active=td.get("active", "Tasks\\JSON\\Active"),
+        tdl_reports=td.get("reports", "Tasks\\JSON\\Reports"),
+        tdl_verdicts=td.get("verdicts", "Tasks\\JSON\\Verdicts"),
+        tdl_index=td.get("index", "Tasks\\JSON\\Index\\tdl.index.json"),
+        tdl_markdown_mirror=td.get("markdown_mirror", True),
     )
 
 

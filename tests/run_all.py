@@ -18,6 +18,7 @@ MODULES = [
     "test_server",
     "test_client",
     "test_agents",
+    "test_tdl",
 ]
 
 

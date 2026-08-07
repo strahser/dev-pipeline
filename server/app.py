@@ -215,17 +215,41 @@ async def api_verdicts(project: str = "", limit: int = 20):
 
 @app.get("/api/plan")
 async def api_plan(project: str = ""):
-    """План проекта — таблица согласованного плана: статус, начало, окончание,
-    документ на проверку, детальный отчёт. Источник правды — файлы Tasks."""
+    """План проекта — таблица согласованного плана. Если TDL включён — из JSON index,
+    иначе из legacy Markdown."""
     project = project or (list_projects() or ["_test"])[0]
     try:
         cfg = load_config(project)
+        if cfg.tdl_enabled:
+            from pipeline.tdl import store as tdl_store
+            idx = tdl_store.load_index(cfg) or {"tasks": []}
+            rows = []
+            for t in idx.get("tasks", []):
+                rows.append({
+                    "id": t.get("task_id", ""),
+                    "wbs": t.get("wbs_code", ""),
+                    "title": t.get("name", ""),
+                    "status": t.get("status", "open"),
+                    "workflow_state": t.get("workflow_state", ""),
+                    "документ": "",
+                    "report_refs": t.get("report_refs", []),
+                    "verdict_refs": t.get("verdict_refs", []),
+                })
+            done = [r for r in rows if r["status"] == "done"]
+            return {
+                "project": project, "tdl": True,
+                "total": len(rows), "done": len(done),
+                "rows": rows,
+                "active": [r for r in rows if r["status"] != "done"],
+                "archive": done,
+                "working": _working_subagents(cfg),
+            }
         rows = _plan_rows(cfg)
         active = [r for r in rows if r["status"] in ("open", "in_progress", "done_report", "rejected")]
         done = [r for r in rows if r["status"] in ("verified", "closed")]
         total = len(rows)
         return {
-            "project": project,
+            "project": project, "tdl": False,
             "total": total, "done": len(done),
             "rows": rows, "active": active, "archive": done,
             "working": _working_subagents(cfg),
@@ -453,6 +477,89 @@ async def api_activity(limit: int = 50, project: str = ""):
 @app.get("/api/projects")
 async def api_projects():
     return list_projects()
+
+
+# --- TDL (JSON как источник истины) ---
+
+@app.get("/api/tdl/tasks")
+async def api_tdl_tasks(project: str = "", status: str = "", workflow_state: str = "",
+                        task_kind: str = ""):
+    from pipeline.tdl import store as tdl_store
+    project = project or (list_projects() or [""])[0]
+    try:
+        cfg = load_config(project)
+    except ConfigError:
+        return []
+    idx = tdl_store.load_index(cfg) or {"tasks": []}
+    out = []
+    for t in idx.get("tasks", []):
+        if status and t.get("status") != status:
+            continue
+        if workflow_state and t.get("workflow_state") != workflow_state:
+            continue
+        out.append(t)
+    return out
+
+
+@app.get("/api/tdl/task/{task_id}")
+async def api_tdl_task(task_id: str, project: str = ""):
+    from pipeline.tdl import store as tdl_store, render
+    project = project or (list_projects() or [""])[0]
+    try:
+        cfg = load_config(project)
+    except ConfigError as e:
+        raise HTTPException(404, f"проект не найден: {e}")
+    task = tdl_store.load_task(cfg, task_id)
+    if not task:
+        raise HTTPException(404, f"TDL-задача {task_id} не найдена")
+    report = tdl_store.load_report(cfg, task_id)
+    verdict = tdl_store.load_verdict(cfg, task_id)
+    return {
+        "task": task,
+        "report": report,
+        "verdict": verdict,
+        "markdown": {
+            "task_card": render.render_task_card(task),
+            "report": render.render_report_md(report) if report else "",
+            "verdict": render.render_verdict_md(verdict) if verdict else "",
+        },
+    }
+
+
+@app.get("/api/tdl/index")
+async def api_tdl_index(project: str = ""):
+    from pipeline.tdl import store as tdl_store
+    project = project or (list_projects() or [""])[0]
+    try:
+        cfg = load_config(project)
+    except ConfigError:
+        return {}
+    return tdl_store.load_index(cfg) or {}
+
+
+@app.get("/api/tdl/plan")
+async def api_tdl_plan(project: str = ""):
+    from pipeline.tdl import store as tdl_store
+    project = project or (list_projects() or [""])[0]
+    try:
+        cfg = load_config(project)
+    except ConfigError:
+        return {"project": project, "tasks": []}
+    idx = tdl_store.load_index(cfg) or {"tasks": []}
+    tasks = idx.get("tasks", [])
+    done = [t for t in tasks if t.get("status") == "done"]
+    return {
+        "project": project,
+        "total": len(tasks), "done": len(done),
+        "tasks": tasks,
+    }
+
+
+@app.get("/api/tdl/activity")
+async def api_tdl_activity(limit: int = 50, project: str = ""):
+    evs = store.recent_events(limit=min(limit, 200), project=project)
+    return [{"type": e["type"], "task": e.get("task", ""), "created_at": e["created_at"],
+             "from": e["from"]} for e in evs]
 
 
 @app.get("/api/inbox")

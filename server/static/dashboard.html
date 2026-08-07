@@ -78,25 +78,22 @@ async function renderPlan(){
 
   // Таблица плана
   html += '<div class="card"><table><thead><tr>'+
-    '<th>ID</th><th>Задача</th><th>Статус</th><th>Приоритет</th><th>Начато</th><th>Завершено</th>'+
-    '<th>Агент</th><th>Вердикт</th><th>Документ на проверку</th></tr></thead><tbody>';
+    '<th>WBS</th><th>ID</th><th>Задача</th><th>Статус</th><th>Workflow</th><th>Приоритет</th>'+
+    '<th>Отчёт</th><th>Вердикт</th></tr></thead><tbody>';
   for (const r of rows){
     const doc = r['документ'] ? r['документ'].split('\\').pop() : '—';
+    const rpt = (r.report_refs && r.report_refs.length) ? '📄' : '—';
+    const vrd = (r.verdict_refs && r.verdict_refs.length) ? '🧾' : '—';
+    const status = r.status || (r.workflow_state === 'verified' ? 'done' : 'open');
     html += '<tr class="clickable" onclick="openTask(\''+esc(r.id)+'\')">'+
+      '<td>'+esc(r.wbs||'')+'</td>'+
       '<td>'+esc(r.id)+'</td>'+
       '<td>'+esc(r.title)+'</td>'+
-      '<td>'+badge(r.status)+'</td>'+
-      '<td>'+esc(r.priority)+'</td>'+
-      '<td>'+esc(r['начато']||'')+'</td>'+
-      '<td>'+esc(r['завершено']||'')+'</td>'+
-      '<td>'+esc(r['агент']||'')+'</td>'+
-      '<td>'+(r['вердикт']?badge(r['вердикт']):'—')+'</td>'+
-      '<td class="muted">'+esc(doc)+'</td></tr>';
-    if (r.detail){
-      html += '<tr class="detail-row" onclick="openTask(\''+esc(r.id)+'\')"><td></td>'+
-        '<td colspan="8"><div class="muted">'+esc(r.detail)+'</div>'+
-        (r.tests?'<div class="muted">Тесты: '+esc(r.tests)+'</div>':'')+'</td></tr>';
-    }
+      '<td>'+badge(status)+'</td>'+
+      '<td class="muted">'+esc(r.workflow_state||'')+'</td>'+
+      '<td>'+esc(r.priority||'')+'</td>'+
+      '<td>'+rpt+'</td>'+
+      '<td>'+vrd+'</td></tr>';
   }
   html += '</tbody></table></div>';
 
