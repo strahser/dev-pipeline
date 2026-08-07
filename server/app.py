@@ -695,6 +695,73 @@ async def api_tdl_activity(limit: int = 50, project: str = ""):
              "from": e["from"]} for e in evs]
 
 
+def _running_tasks(cfg) -> list:
+    """Текущие выполняющиеся задачи с затраченным временем (сек).
+    Источник: события task_started/subagent_finished из БД сервера,
+    фолбэк — dates.start из TDL JSON-задачи."""
+    import datetime
+    from pipeline.tdl import store as tdl_store
+    evs = store.recent_events(limit=500, project=cfg.name)
+    started: dict[str, str] = {}
+    finished: set[str] = set()
+    for e in evs:
+        tid = e.get("task") or ""
+        if not tid:
+            continue
+        if e["type"] == "task_started":
+            started[tid] = e["created_at"]
+        elif e["type"] == "subagent_finished":
+            finished.add(tid)
+    idx = tdl_store.load_index(cfg) or {"tasks": []}
+    now = datetime.datetime.now()  # локальное время — события в БД наивные (local)
+    out = []
+    for t in idx.get("tasks", []):
+        tid = t.get("task_id", "")
+        if t.get("status") == "done":
+            continue
+        if t.get("workflow_state") in ("blocked", "rejected"):
+            continue
+        started_at = started.get(tid)
+        if started_at and tid not in finished:
+            try:
+                st = datetime.datetime.fromisoformat(started_at.replace("Z", "+00:00"))
+                if st.tzinfo is not None:
+                    st = st.astimezone().replace(tzinfo=None)
+                out.append({"task_id": tid, "name": t.get("name", ""),
+                            "elapsed_sec": max(0, int((now - st).total_seconds()))})
+            except ValueError:
+                pass
+        elif not started_at:
+            # фолбэк: дата старта из TDL-задачи — только если задача реально в работе
+            if t.get("workflow_state") not in ("in_progress",):
+                continue
+            task = tdl_store.load_task(cfg, tid) or {}
+            st = (task.get("dates") or {}).get("start")
+            if st:
+                try:
+                    st_dt = datetime.datetime.fromisoformat(str(st).replace("Z", "+00:00"))
+                    if st_dt.tzinfo is not None:
+                        st_dt = st_dt.astimezone().replace(tzinfo=None)
+                    out.append({"task_id": tid, "name": t.get("name", ""),
+                                "elapsed_sec": max(0, int((now - st_dt).total_seconds()))})
+                except ValueError:
+                    pass
+    out.sort(key=lambda x: -x["elapsed_sec"])
+    return out
+
+
+@app.get("/api/tdl/running")
+async def api_tdl_running(project: str = ""):
+    """Текущие выполняющиеся задачи с затраченным временем (для прогресс-бара)."""
+    from pipeline.config import ConfigError as _CE
+    project = project or (list_projects() or [""])[0]
+    try:
+        cfg = load_config(project)
+    except _CE:
+        return []
+    return _running_tasks(cfg)
+
+
 # --- Потребление токенов (opencode.db: session.tokens_*) ------------------
 
 def _opencode_db_path() -> Path | None:
@@ -830,6 +897,50 @@ async def api_usage_go():
             "reset_in_sec": _go_reset_in(lim["window_h"]),
         })
     return {"provider": "OpenCode Go", "items": out}
+
+
+def _session_durations(project: str = "", days: int = 30) -> dict:
+    """Длительности сессий opencode (time_updated - time_created) с группировкой
+    по проекту/задаче. project — имя проекта: фильтр по directory, содержащему его."""
+    import sqlite3
+    import time as _t
+    db_path = _opencode_db_path()
+    if not db_path:
+        return {"project": project, "sessions": [], "total_sec": 0, "count": 0}
+    rows = []
+    try:
+        con = sqlite3.connect(f"file:{db_path}?mode=ro", uri=True)
+        con.row_factory = sqlite3.Row
+        q = ("SELECT directory, title, model, time_created, time_updated, "
+             "tokens_input, tokens_output, cost FROM session "
+             "WHERE time_created IS NOT NULL AND time_updated IS NOT NULL")
+        params: tuple = ()
+        if days:
+            cutoff = int((_t.time() - days * 86400) * 1000)
+            q += " AND time_created >= ?"
+            params = (cutoff,)
+        q += " ORDER BY time_created DESC"
+        for r in con.execute(q, params):
+            d = dict(r)
+            d["duration_sec"] = max(0, int((d["time_updated"] - d["time_created"]) / 1000))
+            rows.append(d)
+        con.close()
+    except Exception:
+        return {"project": project, "sessions": [], "total_sec": 0, "count": 0}
+
+    if project:
+        proj_key = project.lower()
+        rows = [r for r in rows if proj_key in (r.get("directory") or "").lower()]
+    total = sum(r["duration_sec"] for r in rows)
+    return {"project": project, "sessions": rows, "total_sec": total, "count": len(rows)}
+
+
+@app.get("/api/usage/sessions")
+async def api_usage_sessions(project: str = "", days: int = 30):
+    """Длительности сессий opencode (таблица: задача | длительность | итого).
+    project — имя проекта (фильтр по directory)."""
+    days = min(max(days, 1), 365)
+    return _session_durations(project or "", days)
 
 
 @app.get("/api/inbox")

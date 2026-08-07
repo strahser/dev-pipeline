@@ -38,6 +38,11 @@ main { padding:0 28px 20px; overflow:auto; height:calc(100vh - 58px); }
 .progress-track { height:14px; background:var(--panel2); border:1px solid var(--border); border-radius:8px; overflow:hidden; margin-top:8px; }
 .progress-fill { height:100%; background:linear-gradient(90deg, var(--green), #22d3ee); border-radius:8px; transition:width .4s ease; }
 .progress-lbl { display:flex; justify-content:space-between; font-size:12px; color:var(--muted); margin-top:6px; }
+.running-list { margin-top:10px; border-top:1px solid var(--border); padding-top:8px; }
+.running-list .rl-title { font-size:11px; color:var(--muted); text-transform:uppercase; letter-spacing:.4px; margin-bottom:6px; }
+.running-item { display:flex; justify-content:space-between; gap:10px; font-size:12.5px; padding:2px 0; }
+.running-item .rn { color:var(--text); overflow:hidden; text-overflow:ellipsis; white-space:nowrap; }
+.running-item .re { color:var(--accent); font-family:Consolas,monospace; white-space:nowrap; }
 
 /* Таблица */
 .table-card { background:var(--panel); border:1px solid var(--border); border-radius:10px; padding:14px 16px; }
@@ -631,7 +636,22 @@ function renderStats(){
     '<div class="stat"><div class="num" style="color:var(--accent)">'+withReport+'</div><div class="lbl">с отчётом</div></div>'+
     '<div class="stat progress-card"><div class="lbl">Выполнение</div>'+
       '<div class="progress-track"><div class="progress-fill" style="width:'+pct+'%"></div></div>'+
-      '<div class="progress-lbl"><span>'+done+' из '+total+' закрыто</span><span>'+pct+'%</span></div></div>';
+      '<div class="progress-lbl"><span>'+done+' из '+total+' закрыто</span><span>'+pct+'%</span></div>'+
+      '<div id="runningList"></div></div>';
+  loadRunning();
+}
+
+async function loadRunning(){
+  const el = $('runningList');
+  if (!el) return;
+  let run = [];
+  try { run = await get('/api/tdl/running?project='+encodeURIComponent(activeProject)); }
+  catch(e){ return; }
+  if (!run.length){ el.innerHTML = ''; return; }
+  el.innerHTML =
+    '<div class="running-list"><div class="rl-title">Время выполнения текущих задач</div>'+
+    run.map(r=>'<div class="running-item"><span class="rn" title="'+esc(r.name||r.task_id)+'">'+esc((r.task_id)+' · '+(r.name||''))+'</span><span class="re">'+fmtDuration(r.elapsed_sec)+'</span></div>').join('')+
+    '</div>';
 }
 
 async function fetchRows(){
