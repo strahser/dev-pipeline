@@ -102,19 +102,25 @@ python -X utf8 agents/agent_manager.py mission --project heatlossrevit2 ^
 
 ## Чат агентов (dashboard)
 
-Кнопка «💬 Чат» в шапке панели — боковая панель:
+Кнопка «💬 Чат» в шапке панели — полноэкранная панель в 2 колонки (контакты + диалог,
+размер изменяется за угол и сохраняется):
 
 - **Список агентов** с живым статусом: 🟢 работает (есть текущая задача) / 🟡 online /
-  🔴 offline / ⛔ спит (нет heartbeat > 90 с); показано время с последнего heartbeat,
-  текущая задача (из событий task_started/subagent_finished).
+  🔴 offline / ⛔ спит (нет heartbeat > 90 с); показаны проект агента, время с последнего
+  heartbeat, текущая задача (из событий task_started/subagent_finished).
+  Фильтры: по проекту (`project` из heartbeat) и «только активные» (сохраняются).
 - **Команды**: поле ввода → `POST /api/chat/command` (обёртка над `/messages`,
   сохраняется в очередь + публикуется в SSE-канал агента). Агент отвечает
   `send_message` — ответ появляется в диалоге в реальном времени (SSE-подписка на `feed`).
-- **Кнопки**: «🫀 Проверить» (пинг/статус), «📄 Запросить отчёт» (сводка по текущей задаче),
-  «🧹 Очистить» (диалог).
+- **Кнопки**: «🫀 Проверить» (пинг/статус, PID), «📄 Запросить отчёт» (сводка по текущей
+  задаче), «🔄 Перезапустить» (kill + запуск по сохранённой команде `cmd` из heartbeat),
+  «⛔ Убить» (taskkill по PID), «🧹 Очистить» (диалог).
 - Агенты отвечают на команды: `executor` — принял + текущая задача; `agent_watch` —
   сводка (всего/done/в работе/stalled).
-- API: `GET /api/chat/agents`, `GET /api/chat/history?agent=X`, `POST /api/chat/command`.
+- API: `GET /api/chat/agents`, `GET /api/chat/history?agent=X`, `POST /api/chat/command`,
+  `POST /api/chat/agents/{name}/kill`, `POST /api/chat/agents/{name}/restart`.
+- Heartbeat агентов передаёт `project`/`pid`/`cmd` (для kill/restart и фильтра по проекту);
+  старые БД мигрируются автоматически (ALTER TABLE).
 
 ## Статус
 

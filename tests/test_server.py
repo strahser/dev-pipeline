@@ -135,6 +135,43 @@ class TestAppAPI(unittest.TestCase):
         self.assertEqual(len(r.json()), 1)
         self.assertEqual(r.json()[0]["status"], "online")
 
+    def test_heartbeat_with_pid_cmd_project(self):
+        self.client.post("/heartbeat", json={
+            "agent": "executor", "project": "heatlossrevit2",
+            "pid": 12345, "cmd": "python -X utf8 agents/executor_client.py --project heatlossrevit2"})
+        r = self.client.get("/api/chat/agents")
+        ex = next(a for a in r.json() if a["name"] == "executor")
+        self.assertEqual(ex["project"], "heatlossrevit2")
+        self.assertEqual(ex["pid"], 12345)
+        self.assertTrue(ex["restartable"])
+        self.assertTrue(ex["killable"])
+
+    def test_agent_kill_unknown_pid(self):
+        r = self.client.post("/api/chat/agents/executor/kill")
+        self.assertEqual(r.status_code, 404)
+
+    def test_agent_kill_bad_pid(self):
+        self.client.post("/heartbeat", json={"agent": "executor", "pid": 12345})
+        r = self.client.post("/api/chat/agents/executor/kill")
+        self.assertEqual(r.status_code, 200)
+        self.assertFalse(r.json()["ok"])
+        self.assertEqual(r.json()["pid"], 12345)
+
+    def test_agent_restart_no_cmd(self):
+        self.client.post("/heartbeat", json={"agent": "executor", "pid": 12345})
+        r = self.client.post("/api/chat/agents/executor/restart")
+        self.assertEqual(r.status_code, 404)
+
+    def test_agent_restart_with_cmd(self):
+        self.client.post("/heartbeat", json={
+            "agent": "executor", "pid": 12345,
+            "cmd": "python -c \"pass\""})
+        r = self.client.post("/api/chat/agents/executor/restart")
+        self.assertEqual(r.status_code, 200)
+        self.assertTrue(r.json()["ok"])
+        self.assertIn("python", r.json()["cmd"])
+
+
     def test_dashboard_index(self):
         r = self.client.get("/")
         self.assertEqual(r.status_code, 200)

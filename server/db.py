@@ -34,7 +34,10 @@ CREATE TABLE IF NOT EXISTS messages (
 CREATE TABLE IF NOT EXISTS agents (
   name TEXT PRIMARY KEY,
   last_seen TEXT NOT NULL,
-  status TEXT NOT NULL DEFAULT 'online'
+  status TEXT NOT NULL DEFAULT 'online',
+  project TEXT NOT NULL DEFAULT '',
+  pid INTEGER,
+  cmd TEXT NOT NULL DEFAULT ''
 );
 CREATE INDEX IF NOT EXISTS idx_events_to_delivery ON events("to", delivery);
 CREATE INDEX IF NOT EXISTS idx_messages_to_delivery ON messages("to", delivery);
@@ -85,7 +88,18 @@ class Store:
         self._conn = sqlite3.connect(self.db_path, check_same_thread=False)
         self._conn.row_factory = sqlite3.Row
         self._conn.executescript(SCHEMA)
+        self._migrate_agents()
         self._lock = sqlite3.connect(self.db_path)  # отдельное соединение для write-lock
+
+    def _migrate_agents(self):
+        """Добавить колонки project/pid/cmd в старые БД (если их нет)."""
+        cols = {r["name"] for r in self._conn.execute("PRAGMA table_info(agents)")}
+        for col, ddl in (("project", "TEXT NOT NULL DEFAULT ''"),
+                         ("pid", "INTEGER"),
+                         ("cmd", "TEXT NOT NULL DEFAULT ''")):
+            if col not in cols:
+                self._conn.execute(f"ALTER TABLE agents ADD COLUMN {col} {ddl}")
+        self._conn.commit()
 
     def close(self):
         self._conn.close()
@@ -199,11 +213,16 @@ class Store:
 
     # --- агенты / heartbeat --------------------------------------------------
 
-    def heartbeat(self, name: str) -> None:
+    def heartbeat(self, name: str, project: str = "", pid: int | None = None,
+                  cmd: str = "") -> None:
         self._conn.execute(
-            "INSERT INTO agents (name,last_seen,status) VALUES (?,?, 'online') "
-            "ON CONFLICT(name) DO UPDATE SET last_seen=excluded.last_seen, status='online'",
-            (name, now_iso()))
+            "INSERT INTO agents (name,last_seen,status,project,pid,cmd) "
+            "VALUES (?,?, 'online',?,?,?) "
+            "ON CONFLICT(name) DO UPDATE SET last_seen=excluded.last_seen, status='online', "
+            "project=CASE WHEN excluded.project!='' THEN excluded.project ELSE project END, "
+            "pid=CASE WHEN excluded.pid IS NOT NULL THEN excluded.pid ELSE pid END, "
+            "cmd=CASE WHEN excluded.cmd!='' THEN excluded.cmd ELSE cmd END",
+            (name, now_iso(), project, pid, cmd))
         self._conn.commit()
 
     def mark_offline(self, name: str) -> None:
@@ -211,7 +230,8 @@ class Store:
         self._conn.commit()
 
     def agents(self) -> list[dict]:
-        rows = self._conn.execute("SELECT name,last_seen,status FROM agents ORDER BY name").fetchall()
+        rows = self._conn.execute(
+            "SELECT name,last_seen,status,project,pid,cmd FROM agents ORDER BY name").fetchall()
         return [dict(r) for r in rows]
 
     def stale_agents(self, max_age_sec: int) -> list[str]:

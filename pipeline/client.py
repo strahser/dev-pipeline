@@ -17,6 +17,7 @@ from __future__ import annotations
 
 import json
 import os
+import sys
 import threading
 import time
 import urllib.error
@@ -99,11 +100,21 @@ class Client:
             return False
 
     def heartbeat(self, interval: float = HEARTBEAT_SEC, stop_event: threading.Event | None = None):
-        """Фоновый поток heartbeats (остановка — stop_event.set())."""
+        """Фоновый поток heartbeats (остановка — stop_event.set()).
+        Передаёт проект, PID и команду запуска — для чата (kill/restart, фильтр по проекту)."""
+        def _q(s: str) -> str:
+            return f'"{s}"' if " " in s else s
+        if sys.argv and sys.argv[0] and sys.argv[0].endswith(".py"):
+            cmd = "python -X utf8 " + " ".join(_q(a) for a in sys.argv)
+        else:
+            cmd = "python -X utf8 -m " + " ".join(_q(a) for a in sys.argv[1:])
+
         def _loop():
             while not (stop_event and stop_event.is_set()):
                 try:
-                    self._request("POST", "/heartbeat", body={"agent": self.agent}, timeout=3.0)
+                    self._request("POST", "/heartbeat", timeout=3.0, body={
+                        "agent": self.agent, "project": self.project,
+                        "pid": os.getpid(), "cmd": cmd})
                 except Exception:
                     pass
                 time.sleep(interval)

@@ -2,6 +2,7 @@
 """FastAPI-приложение сервера координации dev-pipeline.
 
 Запуск:
+    python -X utf8 server/app.py [--port 8787]
     python -m uvicorn server.app:app --host 127.0.0.1 --port 8787
     (или python -m server  — см. server/__main__.py)
 
@@ -22,8 +23,11 @@ from __future__ import annotations
 import asyncio
 import datetime
 import os
+import sys
 from contextlib import asynccontextmanager
 from pathlib import Path
+
+sys.path.insert(0, str(Path(__file__).resolve().parent.parent))  # прямой запуск server/app.py
 
 from fastapi import FastAPI, HTTPException, Request
 from fastapi.responses import JSONResponse, StreamingResponse
@@ -57,6 +61,9 @@ class MessageIn(BaseModel):
 
 class HeartbeatIn(BaseModel):
     agent: str
+    project: str = ""
+    pid: int | None = None
+    cmd: str = ""
 
 
 store = Store(DB_PATH)
@@ -158,7 +165,7 @@ async def ack_message(msg_id: int):
 
 @app.post("/heartbeat")
 async def heartbeat(body: HeartbeatIn):
-    store.heartbeat(body.agent)
+    store.heartbeat(body.agent, project=body.project, pid=body.pid, cmd=body.cmd)
     return {"ok": True, "agent": body.agent}
 
 
@@ -1079,14 +1086,15 @@ KNOWN_AGENTS = [
 
 @app.get("/api/chat/agents")
 async def chat_agents():
-    """Агенты для чата: онлайн-статус, сон, текущая задача (по последним событиям)."""
+    """Агенты для чата: онлайн-статус, сон, проект, текущая задача (по событиям)."""
     import datetime as _dt
     agents = store.agents()
     by_name = {a["name"]: a for a in agents}
     # известные роли, ещё не объявлявшие heartbeat
     for k in KNOWN_AGENTS:
         if k["name"] not in by_name:
-            by_name[k["name"]] = {"name": k["name"], "last_seen": None, "status": "offline"}
+            by_name[k["name"]] = {"name": k["name"], "last_seen": None, "status": "offline",
+                                  "project": "", "pid": None, "cmd": ""}
 
     evs = store.recent_events(limit=400)
     started: dict[str, str] = {}
@@ -1120,13 +1128,83 @@ async def chat_agents():
             "name": name,
             "role": role,
             "status": a["status"],
+            "project": a.get("project", ""),
+            "pid": a.get("pid"),
+            "cmd": a.get("cmd", ""),
             "last_seen": last,
             "heartbeat_age_sec": age,
             "sleeping": sleeping,
             "current_task": task,
+            "restartable": bool(a.get("cmd")),
+            "killable": a.get("pid") is not None,
         })
     out.sort(key=lambda x: (x["status"] != "online", x["name"]))
     return out
+
+
+def _agent_proc(name: str) -> dict | None:
+    """Информация о процессе агента (pid, cmd) или None."""
+    for a in store.agents():
+        if a["name"] == name:
+            return a
+    return None
+
+
+def _run_detached(cmd: list[str], cwd: str) -> None:
+    """Запустить процесс агента в отрыве от сервера (новый процесс, без консоли)."""
+    import subprocess
+    creationflags = subprocess.CREATE_NEW_PROCESS_GROUP | subprocess.DETACHED_PROCESS \
+        if os.name == "nt" else 0
+    subprocess.Popen(cmd, cwd=cwd, stdout=subprocess.DEVNULL,
+                     stderr=subprocess.DEVNULL, stdin=subprocess.DEVNULL,
+                     creationflags=creationflags, shell=False)
+
+
+def _kill_pid(pid: int) -> bool:
+    import subprocess
+    try:
+        if os.name == "nt":
+            r = subprocess.run(["taskkill", "/PID", str(pid), "/F", "/T"],
+                               capture_output=True, timeout=10)
+            return r.returncode == 0
+        os.kill(pid, 9)
+        return True
+    except Exception:
+        return False
+
+
+@app.post("/api/chat/agents/{name}/kill")
+async def chat_agent_kill(name: str):
+    """Убить процесс агента (если серверу известен его PID)."""
+    a = _agent_proc(name)
+    if not a or a.get("pid") is None:
+        raise HTTPException(404, f"у агента {name} нет зарегистрированного PID")
+    ok = _kill_pid(int(a["pid"]))
+    store.mark_offline(name)
+    if ok:
+        store.add_event("agent_killed", "dashboard", "feed",
+                        payload={"agent": name, "pid": a["pid"]})
+    return {"ok": ok, "agent": name, "pid": a["pid"]}
+
+
+@app.post("/api/chat/agents/{name}/restart")
+async def chat_agent_restart(name: str):
+    """Перезапустить агента: убить текущий процесс и поднять заново по сохранённой команде."""
+    import shlex
+    a = _agent_proc(name)
+    if not a or not a.get("cmd"):
+        raise HTTPException(404, f"у агента {name} нет команды запуска (cmd)")
+    if a.get("pid") is not None:
+        _kill_pid(int(a["pid"]))
+    try:
+        cmd = shlex.split(a["cmd"])
+    except ValueError:
+        cmd = a["cmd"].split()
+    root = Path(__file__).resolve().parent.parent  # корень dev-pipeline
+    _run_detached(cmd, cwd=str(root))
+    store.add_event("agent_restarted", "dashboard", "feed",
+                    payload={"agent": name, "cmd": a["cmd"]})
+    return {"ok": True, "agent": name, "cmd": a["cmd"]}
 
 
 @app.get("/api/chat/history")
@@ -1165,3 +1243,18 @@ async def dashboard_page():
 @app.get("/healthz")
 async def healthz():
     return {"ok": True}
+
+
+def main():
+    import argparse
+    import uvicorn
+    ap = argparse.ArgumentParser(description="Сервер координации dev-pipeline")
+    ap.add_argument("--host", default="127.0.0.1")
+    ap.add_argument("--port", type=int, default=8787)
+    ap.add_argument("--reload", action="store_true")
+    a = ap.parse_args()
+    uvicorn.run(app, host=a.host, port=a.port, reload=a.reload)
+
+
+if __name__ == "__main__":
+    main()
