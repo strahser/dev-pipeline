@@ -11,3 +11,6 @@ obj/
 server.pid
 *.log
 temp/
+combined.txt
+_srv.*
+_t_*.txt

@@ -28,7 +28,7 @@ from pipeline.client import Client                 # noqa: E402
 from pipeline.config import load_config             # noqa: E402
 from pipeline.models import Task                    # noqa: E402
 
-OPENCODE = r"C:\Users\Strakhov\AppData\Roaming\npm\opencode.cmd"
+OPENCODE = os.environ.get("OPENCODE_CMD") or "opencode"
 
 
 def run_opencode(cfg, task: Task) -> str:

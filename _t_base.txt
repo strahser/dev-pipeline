@@ -1,2 +1,0 @@
-﻿MSBUILD : error MSB1009: ╤Д╨░╨╣╨╗ ╨┐╤А╨╛╨╡╨║╤В╨░ ╨╜╨╡ ╤Б╤Г╤Й╨╡╤Б╤В╨▓╤Г╨╡╤В.
-╨Ъ╨╗╤О╤З: C:\Users\Strakhov\AppData\Local\Temp\opencode\mep_baseline\Core.Tests\Core.Tests.csproj

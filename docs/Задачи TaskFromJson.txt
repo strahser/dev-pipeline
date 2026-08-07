@@ -1,0 +1,1180 @@
+Ниже — переработанный стандарт системы «задание → отчёт → вердикт» в JSON с учётом принятых TDL-правил: СДР/WBS, leaf-задачи, статусы `open/done`, обязательные гиперссылки, доказательства, отчётный документ, цель, критерии приёмки и проверяемые артефакты.
+
+Markdown можно оставить как человекочитаемый рендер, но **источником истины должен быть JSON**.
+
+---
+
+# 1. Основные принципы новой JSON-системы
+
+1. **Задача** описывается JSON-объектом `tdl.task`.
+2. **Отчёт исполнителя** описывается JSON-объектом `tdl.report`.
+3. **Вердикт контролёра** описывается JSON-объектом `tdl.verdict`.
+4. Каждое выполненное действие должно иметь:
+   - ссылку на файл, commit, лог, тест, артефакт;
+   - метрику «до/после»;
+   - команду проверки;
+   - результат проверки.
+5. Статус задачи по TDL остаётся простым:
+   - `open` — открыто;
+   - `done` — выполнено.
+6. Технологическое состояние задачи хранится отдельно в `workflow_state`:
+   - `issued`;
+   - `in_progress`;
+   - `blocked`;
+   - `reported`;
+   - `control`;
+   - `verified`;
+   - `rejected`;
+   - `archived`.
+7. Задача может получить `status = done` только если:
+   - существует `tdl.report`;
+   - отчёт содержит доказательства;
+   - существует `tdl.verdict`;
+   - вердикт имеет `result = pass`.
+
+---
+
+# 2. Структура файлов и каталогов
+
+Рекомендуемая структура:
+
+```text
+Tasks/
+  JSON/
+    Active/
+      A-01.task.json
+      A-02.task.json
+    Reports/
+      A-01_2026-08-06.report.json
+    Verdicts/
+      A-01_2026-08-06.verdict.json
+    Index/
+      tdl.index.json
+```
+
+Правила именования:
+
+```text
+{task_id}.task.json
+{task_id}_{YYYY-MM-DD}.report.json
+{task_id}_{YYYY-MM-DD}.verdict.json
+```
+
+Требования:
+
+- кодировка UTF-8;
+- даты в ISO 8601: `YYYY-MM-DD`;
+- дата-время: `YYYY-MM-DDTHH:MM:SSZ`;
+- комментарии внутри JSON запрещены;
+- все ссылки должны быть в полях `href`, `path`, `url` или `ref`.
+
+---
+
+# 3. Статусы и lifecycle
+
+## 3.1. TDL-статус
+
+```json
+["open", "done"]
+```
+
+## 3.2. Workflow state
+
+```json
+[
+  "issued",
+  "in_progress",
+  "blocked",
+  "reported",
+  "control",
+  "verified",
+  "rejected",
+  "archived"
+]
+```
+
+## 3.3. Соответствие
+
+| workflow_state | TDL status |
+|---|---|
+| `issued` | `open` |
+| `in_progress` | `open` |
+| `blocked` | `open` |
+| `reported` | `open` |
+| `control` | `open` |
+| `rejected` | `open` |
+| `verified` | `done` |
+| `archived` | `done` |
+
+---
+
+# 4. Обязательные поля JSON-сущностей
+
+## 4.1. Task
+
+Обязательные поля:
+
+```json
+[
+  "schema_version",
+  "entity_type",
+  "task_id",
+  "wbs_code",
+  "project",
+  "name",
+  "status",
+  "task_kind",
+  "goal",
+  "acceptance_criteria",
+  "dates",
+  "links"
+]
+```
+
+## 4.2. Report
+
+Обязательные поля:
+
+```json
+[
+  "schema_version",
+  "entity_type",
+  "report_id",
+  "task_ref",
+  "date",
+  "executor",
+  "problem",
+  "work_done",
+  "evidence",
+  "verification_commands"
+]
+```
+
+## 4.3. Verdict
+
+Обязательные поля:
+
+```json
+[
+  "schema_version",
+  "entity_type",
+  "verdict_id",
+  "task_ref",
+  "report_ref",
+  "date",
+  "result",
+  "checks"
+]
+```
+
+---
+
+# 5. Маппинг старых Markdown-файлов на JSON
+
+## 5.1. Task
+
+| Старый Markdown | Новый JSON |
+|---|---|
+| `id: A-01` | `task_id` |
+| `приоритет: высокий` | `priority` |
+| `статус: verified` | `legacy_status`, а TDL `status` вычисляется отдельно |
+| `постановщик: агент-менеджер` | `assignees.issued_by` |
+| `исполнитель: subagent` | `assignees.executor` |
+| `дата: 2026-08-06` | `dates.issued` |
+| `источник_запроса` | `source.type` |
+| `замечание` | `mission.name` |
+| `Контекст` | `context` |
+| `Требования` | `acceptance_criteria` |
+| `Границы` | `constraints` |
+| `Результат` | `artifacts` |
+| `Ход работы` | `history` / `progress_log` |
+
+## 5.2. Report
+
+| Старый Markdown | Новый JSON |
+|---|---|
+| `ОТЧЁТ: A-01` | `report_id` |
+| `Дата` | `date` |
+| `Исполнитель` | `executor` |
+| `Что было не так` | `problem` |
+| `Что сделано` | `work_done` |
+| `Доказательства` | `evidence` |
+| `Числа до/после` | `metrics` |
+| `Открытые вопросы / ограничения` | `open_questions` |
+| `Как пересобрать/проверить` | `verification_commands` |
+
+## 5.3. Verdict
+
+| Старый Markdown | Новый JSON |
+|---|---|
+| `ВЕРДИКТ КОНТРОЛЁРА` | `entity_type = tdl.verdict` |
+| `Общий вердикт` | `result`, `confidence` |
+| `Механические проверки` | `checks` |
+| `Доказательства исполнителя` | `evidence_review` |
+| `Обязательные исправления` | `required_fixes` |
+| `Примечания контролёра` | `notes` |
+
+---
+
+# 6. Пример: `A-01.task.json`
+
+```json
+{
+  "schema_version": "1.0.0",
+  "entity_type": "tdl.task",
+  "task_id": "A-01",
+  "external_ids": [
+    "A-01_Стратегии_расстановки_марок"
+  ],
+  "wbs_code": "1.1",
+  "parent_wbs": "1",
+  "is_summary": false,
+  "project": {
+    "code": "MepTaggingSolution",
+    "name": "MepTaggingSolution"
+  },
+  "mission": {
+    "name": "Стратегии_расстановки_марок",
+    "part": "1/5"
+  },
+  "module": "Models",
+  "class_name": "TagRule",
+  "layer": "core",
+  "name": "Добавить поля стратегий размещения в TagRule",
+  "description": "Добавить в Models/TagRule.cs энумы DirectionStrategy и DuctLocalization и секцию из 7 полей стратегий размещения, чтобы JSON-профили могли типизированно десериализовать стратегии расстановки марок.",
+  "status": "done",
+  "status_display": "Выполнено",
+  "workflow_state": "verified",
+  "legacy_status": "verified",
+  "priority": "high",
+  "task_kind": "execution",
+  "goal": "Модель TagRule должна типизированно поддерживать стратегии размещения марок и корректно читать JSON-профили с этими полями.",
+  "context": "В Models/TagRule.cs отсутствовали поля стратегий размещения и соответствующие энумы. Профиль Profiles/ОВ_Цоколь.json уже ссылался на эти поля, но до A-01 они не десериализовались.",
+  "inputs": [
+    {
+      "type": "source_file",
+      "path": "Models/TagRule.cs"
+    },
+    {
+      "type": "source_file",
+      "path": "MepTagging/Configuration/JsonSerializerSettingsFactory.cs"
+    },
+    {
+      "type": "profile",
+      "path": "Profiles/ОВ_Цоколь.json"
+    },
+    {
+      "type": "reference",
+      "path": "Tasks/00_Референсы/Ответ_Qwen_стратегии_расстановки.md"
+    }
+  ],
+  "acceptance_criteria": [
+    "В Models/TagRule.cs добавлены энумы DirectionStrategy и DuctLocalization.",
+    "В Models/TagRule.cs добавлена секция Стратегии размещения с 7 полями.",
+    "Поля имеют корректные значения по умолчанию: DirectionStrategy.Auto, ClusterRadiusFeet=3.0, FreeSpaceGridStepFeet=0.5, MaxRoomTagShifts=2, ClusterModeThreshold=5, DuctLocalization.PrimaryRoom, UseDoubleLeaderForDucts=false.",
+    "Поля размечены UiShow Group=Advanced и Order 110-116.",
+    "JSON-профили с этими полями десериализуются через StringEnumConverter.",
+    "Сборка Core.Tests завершается с кодом 0.",
+    "Тесты Core.Tests не хуже базового результата 8 passed / 7 failed / 15 total."
+  ],
+  "constraints": [
+    "Не менять архитектуру сверх задачи.",
+    "Не трогать файлы вне своей части.",
+    "Не коммитить .idea, .opencode, bin, obj, TestResults.",
+    "Не создавать субагентов.",
+    "Исполнитель не закрывает задачу сам; архивация только контролёром."
+  ],
+  "dependencies": [],
+  "dates": {
+    "issued": "2026-08-06",
+    "start": "2026-08-06",
+    "finish": "2026-08-06"
+  },
+  "assignees": {
+    "issued_by": "агент-менеджер",
+    "executor": "subagent",
+    "executor_details": "опencode (deepseek-v4-flash) — Агент-2",
+    "controller": "controller"
+  },
+  "source": {
+    "type": "mission",
+    "name": "Стратегии_расстановки_марок",
+    "part": "1/5"
+  },
+  "links": [
+    {
+      "type": "task_source",
+      "href": "file://Tasks/Активные/A-01_Стратегии_расстановки_марок.md"
+    },
+    {
+      "type": "assignment",
+      "href": "file://Tasks/Задание на улучшение алгоритмов.md"
+    },
+    {
+      "type": "reference",
+      "href": "file://Tasks/00_Референсы/Ответ_Qwen_стратегии_расстановки.md"
+    },
+    {
+      "type": "report",
+      "href": "file://Tasks/Отчёты/A-01_Отчёт_2026-08-06.md"
+    },
+    {
+      "type": "verdict",
+      "href": "file://Tasks/Отчёты/A-01_Вердикт_контролёра_2026-08-06.md"
+    },
+    {
+      "type": "source_file",
+      "href": "file://Models/TagRule.cs"
+    }
+  ],
+  "artifacts": [
+    {
+      "type": "commit",
+      "ref": "agent/A-01"
+    },
+    {
+      "type": "report",
+      "href": "file://Tasks/Отчёты/A-01_Отчёт_2026-08-06.md"
+    },
+    {
+      "type": "verdict",
+      "href": "file://Tasks/Отчёты/A-01_Вердикт_контролёра_2026-08-06.md"
+    }
+  ],
+  "verification": {
+    "required": true,
+    "method": "build_and_tests_plus_controller_review",
+    "commands": [
+      "dotnet build Core.Tests/Core.Tests.csproj --nologo -v q",
+      "dotnet test Core.Tests/Core.Tests.csproj --nologo -v q",
+      "git diff Models/TagRule.cs"
+    ],
+    "baseline": {
+      "tests_passed": 8,
+      "tests_failed": 7,
+      "tests_skipped": 0,
+      "tests_total": 15
+    },
+    "result": "pass",
+    "verified_by": "controller",
+    "verdict_ref": "A-01_2026-08-06"
+  },
+  "history": [
+    {
+      "timestamp": "2026-08-06T00:00:00Z",
+      "actor": "агент-менеджер",
+      "action": "task_issued",
+      "details": "Задача выдана как часть 1/5 миссии Стратегии_расстановки_марок."
+    },
+    {
+      "timestamp": "2026-08-06T00:00:00Z",
+      "actor": "subagent",
+      "action": "workflow_state_changed",
+      "workflow_state": "in_progress",
+      "details": "Исполнитель взял задачу."
+    },
+    {
+      "timestamp": "2026-08-06T00:00:00Z",
+      "actor": "subagent",
+      "action": "report_created",
+      "report_ref": "A-01_2026-08-06"
+    },
+    {
+      "timestamp": "2026-08-06T00:00:00Z",
+      "actor": "controller",
+      "action": "verdict_created",
+      "verdict_ref": "A-01_2026-08-06",
+      "result": "pass"
+    },
+    {
+      "timestamp": "2026-08-06T00:00:00Z",
+      "actor": "controller",
+      "action": "status_changed",
+      "from": "open",
+      "to": "done"
+    }
+  ]
+}
+```
+
+---
+
+# 7. Пример: `A-01_2026-08-06.report.json`
+
+```json
+{
+  "schema_version": "1.0.0",
+  "entity_type": "tdl.report",
+  "report_id": "A-01_2026-08-06",
+  "task_ref": "A-01",
+  "wbs_ref": "1.1",
+  "date": "2026-08-06",
+  "report_status": "final",
+  "executor": {
+    "name": "subagent",
+    "agent": "opencode (deepseek-v4-flash)",
+    "role": "Агент-2"
+  },
+  "problem": "В Models/TagRule.cs отсутствовали поля стратегий размещения: DirectionStrategy, ClusterRadiusFeet, FreeSpaceGridStepFeet, MaxRoomTagShifts, ClusterModeThreshold, DuctLocalization, UseDoubleLeaderForDucts. Также отсутствовали энумы DirectionStrategy и DuctLocalization, без которых поля нельзя было описать типизированно. Профиль Profiles/ОВ_Цоколь.json уже ссылался на эти поля, но до A-01 они не десериализовались.",
+  "work_done": [
+    "Добавлены энумы DirectionStrategy и DuctLocalization в Models/TagRule.cs:25-38.",
+    "Добавлена секция Стратегии размещения в Models/TagRule.cs:107-130 с 7 полями.",
+    "Полю DirectionStrategy задано значение по умолчанию DirectionStrategy.Auto, Order 110, ComboBox.",
+    "Полю ClusterRadiusFeet задано значение по умолчанию 3.0, Order 111.",
+    "Полю FreeSpaceGridStepFeet задано значение по умолчанию 0.5, Order 112.",
+    "Полю MaxRoomTagShifts задано значение по умолчанию 2, Order 113.",
+    "Полю ClusterModeThreshold задано значение по умолчанию 5, Order 114.",
+    "Полю DuctLocalization задано значение по умолчанию DuctLocalization.PrimaryRoom, Order 115, ComboBox.",
+    "Полю UseDoubleLeaderForDucts задано значение по умолчанию false, Order 116, CheckBox.",
+    "Все поля размечены UiShow Group=Advanced.",
+    "Использованы Order 110-116, так как Order 100 занят полем ExcludedRoomNames.",
+    "Типизация энумами совместима с JSON-профилями через StringEnumConverter."
+  ],
+  "files_changed": [
+    {
+      "path": "Models/TagRule.cs",
+      "change": "modified",
+      "lines_added": 35,
+      "details": "Добавлены 2 энума и секция из 7 полей стратегий размещения."
+    }
+  ],
+  "metrics": [
+    {
+      "metric_id": "strategy_fields_count",
+      "name": "Поля стратегий в TagRule",
+      "unit": "count",
+      "before": 0,
+      "after": 7,
+      "expected": 7
+    },
+    {
+      "metric_id": "strategy_enums_count",
+      "name": "Энумы стратегий",
+      "unit": "count",
+      "before": 0,
+      "after": 2,
+      "expected": 2
+    },
+    {
+      "metric_id": "core_tests_passed",
+      "name": "Пройденные тесты Core.Tests",
+      "unit": "count",
+      "before": 8,
+      "after": 8,
+      "expected": 8
+    },
+    {
+      "metric_id": "core_tests_failed",
+      "name": "Проваленные тесты Core.Tests",
+      "unit": "count",
+      "before": 7,
+      "after": 7,
+      "expected": 7
+    },
+    {
+      "metric_id": "core_tests_total",
+      "name": "Всего тестов Core.Tests",
+      "unit": "count",
+      "before": 15,
+      "after": 15,
+      "expected": 15
+    },
+    {
+      "metric_id": "build_exit_code",
+      "name": "Код завершения сборки Core.Tests",
+      "unit": "exit_code",
+      "before": null,
+      "after": 0,
+      "expected": 0
+    }
+  ],
+  "evidence": [
+    {
+      "evidence_id": "E1",
+      "type": "git_diff",
+      "name": "Дифф Models/TagRule.cs",
+      "command": "git diff Models/TagRule.cs",
+      "description": "Добавлено 35 строк: 2 энума и секция из 7 полей.",
+      "result": "pass",
+      "links": [
+        {
+          "type": "source_file",
+          "href": "file://Models/TagRule.cs"
+        }
+      ]
+    },
+    {
+      "evidence_id": "E2",
+      "type": "build_log",
+      "name": "Сборка Core.Tests",
+      "command": "dotnet build Core.Tests/Core.Tests.csproj --nologo -v q",
+      "exit_code": 0,
+      "result": "pass",
+      "details": "Ошибок: 0. Сборка успешно завершена. 100 предупреждений являются до-существующими nullable/CS8618 и к задаче не относятся."
+    },
+    {
+      "evidence_id": "E3",
+      "type": "test_report",
+      "name": "Тесты Core.Tests",
+      "command": "dotnet test Core.Tests/Core.Tests.csproj --nologo -v q",
+      "exit_code": 1,
+      "result": "pass",
+      "acceptance_rule": "no_regression_against_baseline",
+      "metrics": {
+        "passed": 8,
+        "failed": 7,
+        "skipped": 0,
+        "total": 15
+      },
+      "baseline": {
+        "passed": 8,
+        "failed": 7,
+        "skipped": 0,
+        "total": 15
+      },
+      "details": "Результат соответствует базовому 8/15. 7 FAIL — известные реальные коллизии View1."
+    }
+  ],
+  "open_questions": [
+    "Секция Стратегии размещения добавлена в модель, но алгоритмы кластеризации, свободного места и локализации воздуховодов используют эти поля позже в задачах A-02…A-04. Сейчас поля являются данными без потребителя.",
+    "JSON-профили с этими полями, включая задачу A-05, теперь десериализуются корректно."
+  ],
+  "verification_commands": [
+    "dotnet build Core.Tests/Core.Tests.csproj --nologo -v q",
+    "dotnet test Core.Tests/Core.Tests.csproj --nologo -v q",
+    "git diff Models/TagRule.cs"
+  ],
+  "links": [
+    {
+      "type": "task",
+      "href": "file://Tasks/JSON/Active/A-01.task.json"
+    },
+    {
+      "type": "report_markdown",
+      "href": "file://Tasks/Отчёты/A-01_Отчёт_2026-08-06.md"
+    },
+    {
+      "type": "commit",
+      "ref": "agent/A-01"
+    }
+  ]
+}
+```
+
+---
+
+# 8. Пример: `A-01_2026-08-06.verdict.json`
+
+```json
+{
+  "schema_version": "1.0.0",
+  "entity_type": "tdl.verdict",
+  "verdict_id": "A-01_2026-08-06",
+  "task_ref": "A-01",
+  "report_ref": "A-01_2026-08-06",
+  "task_source_ref": "file://Tasks/Активные/A-01_Стратегии_расстановки_марок.md",
+  "date": "2026-08-06",
+  "result": "pass",
+  "confidence": "high",
+  "can_move_forward": true,
+  "checks": [
+    {
+      "check_id": "report_section_what_done",
+      "name": "Секция Что сделано в отчёте",
+      "status": "pass",
+      "expected": "present",
+      "actual": "present"
+    },
+    {
+      "check_id": "report_section_evidence",
+      "name": "Секция Доказательства в отчёте",
+      "status": "pass",
+      "expected": "present",
+      "actual": "present"
+    },
+    {
+      "check_id": "report_section_open_questions",
+      "name": "Секция Открытые вопросы в отчёте",
+      "status": "pass",
+      "expected": "present",
+      "actual": "present"
+    },
+    {
+      "check_id": "report_not_empty",
+      "name": "Отчёт не пустой",
+      "status": "pass",
+      "expected": ">0",
+      "actual": "3078"
+    },
+    {
+      "check_id": "report_no_meta_templates",
+      "name": "Отчёт без незаполненных meta-шаблонов",
+      "status": "pass",
+      "expected": "no_meta_templates",
+      "actual": "no_meta_templates"
+    },
+    {
+      "check_id": "build_exit_0",
+      "name": "Сборка Core.Tests завершается с кодом 0",
+      "status": "pass",
+      "expected": "exit_code=0",
+      "actual": "exit_code=0"
+    },
+    {
+      "check_id": "tests_baseline",
+      "name": "Тесты Core.Tests не хуже базовых",
+      "status": "pass",
+      "expected": "passed=8,total=15,failed=7",
+      "actual": "passed=8,total=15,failed=7",
+      "exit_code": 1,
+      "note": "rc=1 допускается, потому что 7 FAIL являются базовыми известными коллизиями View1."
+    },
+    {
+      "check_id": "core_no_autodesk_revit",
+      "name": "Core не ссылается на Revit",
+      "status": "pass",
+      "expected": "using Autodesk.Revit count=0",
+      "actual": "using Autodesk.Revit count=0"
+    },
+    {
+      "check_id": "core_guard_layer",
+      "name": "Правила слоёв Core чисты",
+      "status": "pass",
+      "expected": "clean",
+      "actual": "clean"
+    },
+    {
+      "check_id": "core_tests_no_revit_sdk",
+      "name": "Core.Tests без Revit SDK",
+      "status": "pass",
+      "expected": "clean",
+      "actual": "clean"
+    },
+    {
+      "check_id": "test_audit_stubs",
+      "name": "Аудит тестов на заглушки и пустые тесты",
+      "status": "pass",
+      "expected": "stubs=0",
+      "actual": "files=9,stubs=0"
+    }
+  ],
+  "evidence_review": [
+    {
+      "evidence_ref": "E1",
+      "status": "accepted",
+      "comment": "Дифф Models/TagRule.cs подтверждает добавление 2 энумов и 7 полей."
+    },
+    {
+      "evidence_ref": "E2",
+      "status": "accepted",
+      "comment": "Сборка Core.Tests прошла без ошибок."
+    },
+    {
+      "evidence_ref": "E3",
+      "status": "accepted",
+      "comment": "Тесты соответствуют базовому уровню 8/15, регрессия отсутствует."
+    }
+  ],
+  "required_fixes": [],
+  "notes": [
+    "Механический вердикт автоконвейера; финальное решение — за контролёром."
+  ],
+  "links": [
+    {
+      "type": "task",
+      "href": "file://Tasks/JSON/Active/A-01.task.json"
+    },
+    {
+      "type": "report",
+      "href": "file://Tasks/JSON/Reports/A-01_2026-08-06.report.json"
+    },
+    {
+      "type": "report_markdown",
+      "href": "file://Tasks/Отчёты/A-01_Отчёт_2026-08-06.md"
+    }
+  ]
+}
+```
+
+---
+
+# 9. Пример: `A-02.task.json`
+
+Важно: в исходном Markdown у A-02 указан `status: verified`, но в новой TDL-системе задача не может быть автоматически закрыта без отдельного JSON-отчёта и JSON-вердикта. Поэтому при миграции корректно хранить старый статус в `legacy_status`, а TDL-статус держать `open`, пока не появятся JSON-доказательства.
+
+```json
+{
+  "schema_version": "1.0.0",
+  "entity_type": "tdl.task",
+  "task_id": "A-02",
+  "external_ids": [
+    "A-02_Стратегии_расстановки_марок"
+  ],
+  "wbs_code": "1.2",
+  "parent_wbs": "1",
+  "is_summary": false,
+  "project": {
+    "code": "MepTaggingSolution",
+    "name": "MepTaggingSolution"
+  },
+  "mission": {
+    "name": "Стратегии_расстановки_марок",
+    "part": "2/5"
+  },
+  "module": "Core/Placement/Ducts",
+  "class_name": "DuctDirectionCalculator",
+  "layer": "core",
+  "name": "Каркас маркировки воздуховодов",
+  "description": "Довести каркас маркировки воздуховодов: интерфейс IDuctPlacementService, реализация DuctPlacementService, правило DuctRule, калькулятор направления DuctDirectionCalculator и регистрации в DI.",
+  "status": "open",
+  "status_display": "Открыто",
+  "workflow_state": "pending_report",
+  "legacy_status": "verified",
+  "priority": "high",
+  "task_kind": "execution",
+  "goal": "Воздуховоды должны получить каркас маркировки: сборка данных уже работает, далее нужно типизированно разместить марки воздуховодов с учётом направления и локализации к помещению.",
+  "context": "Сейчас воздуховоды собираются в снапшот: CreateDuctData работает, но не маркируются. Необходимо заменить пустой класс IDuctPlacementService на интерфейс и реализацию, создать DuctRule и DuctDirectionCalculator, а также зарегистрировать зависимости в Core DI.",
+  "inputs": [
+    {
+      "type": "source_file",
+      "path": "Core/Placement/Ducts/Abstractions/IDuctPlacementService.cs"
+    },
+    {
+      "type": "source_file",
+      "path": "Core/Rules/DuctRule.cs"
+    },
+    {
+      "type": "source_file",
+      "path": "Core/Placement/Ducts/DuctDirectionCalculator.cs"
+    },
+    {
+      "type": "source_file",
+      "path": "Core/DependencyInjection/CoreServiceCollection.cs"
+    }
+  ],
+  "acceptance_criteria": [
+    "IDuctPlacementService является интерфейсом, а не пустым классом.",
+    "Создана реализация DuctPlacementService.",
+    "Создан DuctRule по аналогии с PipeRule: CategoryId OST_DuctCurves, ProcessCategory создаёт предложение по минимальной длине, PostProcess вызывает DuctCollisionResolver.ResolveCollisions.",
+    "Создан DuctDirectionCalculator с Ray Casting из 16 лучей к стенам комнаты.",
+    "DuctDirectionCalculator выбирает направление с максимальным свободным расстоянием с вычетом пересечений с занятыми BoundingBox.",
+    "DuctDirectionCalculator имеет fallback направления (0,1).",
+    "Локализация к помещению работает как центр воздуховода внутри полигона комнаты или пересечение BBox более 50% площади.",
+    "В CoreServiceCollection зарегистрированы DuctRule, IDuctPlacementService, DuctPlacementService и DuctCollisionResolver.",
+    "Сборка завершается с кодом 0.",
+    "В Core отсутствует using Autodesk.Revit."
+  ],
+  "constraints": [
+    "Не менять архитектуру сверх задачи.",
+    "Не трогать файлы вне своей части.",
+    "Не коммитить .idea, .opencode, bin, obj, TestResults.",
+    "Не создавать субагентов.",
+    "Исполнитель не закрывает задачу сам; архивация только контролёром."
+  ],
+  "dependencies": [
+    "A-01"
+  ],
+  "dates": {
+    "issued": "2026-08-06",
+    "start": "2026-08-06",
+    "finish": null
+  },
+  "assignees": {
+    "issued_by": "агент-менеджер",
+    "executor": "subagent",
+    "controller": "controller"
+  },
+  "source": {
+    "type": "mission",
+    "name": "Стратегии_расстановки_марок",
+    "part": "2/5"
+  },
+  "progress_log": [
+    {
+      "date": "2026-08-06",
+      "actor": "subagent",
+      "entry": "Взял задачу: статус in_progress."
+    },
+    {
+      "date": "2026-08-06",
+      "actor": "subagent",
+      "entry": "Создан Core/Placement/Ducts/DuctDirectionCalculator.cs: Ray Casting 16 лучей, локализация комнаты: центр в полигоне или пересечение BBox больше 50%, freeDist с вычетом занятых BBox, fallback (0,1). DuctPlacementService переведён на калькулятор. DI дополнен DuctDirectionCalculator. Остальные пункты уже присутствовали в репозитории и были проверены."
+    }
+  ],
+  "blocker": "Для закрытия по TDL нужен JSON-отчёт и JSON-вердикт с доказательствами. Legacy-статус verified без JSON-доказательств не является основанием для status=done.",
+  "links": [
+    {
+      "type": "task_source",
+      "href": "file://Tasks/Активные/A-02_Стратегии_расстановки_марок.md"
+    },
+    {
+      "type": "assignment",
+      "href": "file://Tasks/Задание на улучшение алгоритмов.md"
+    },
+    {
+      "type": "reference",
+      "href": "file://Tasks/00_Референсы/Ответ_Qwen_стратегии_расстановки.md"
+    }
+  ],
+  "artifacts": [],
+  "verification": {
+    "required": true,
+    "method": "build_and_tests_plus_grep",
+    "commands": [
+      "dotnet build Core.Tests/Core.Tests.csproj --nologo -v q",
+      "dotnet test Core.Tests/Core.Tests.csproj --nologo -v q",
+      "grep -R \"using Autodesk.Revit\" Core"
+    ],
+    "baseline": {
+      "tests_passed": 8,
+      "tests_failed": 7,
+      "tests_skipped": 0,
+      "tests_total": 15
+    },
+    "result": null,
+    "verified_by": null,
+    "verdict_ref": null
+  },
+  "history": [
+    {
+      "timestamp": "2026-08-06T00:00:00Z",
+      "actor": "агент-менеджер",
+      "action": "task_issued",
+      "details": "Задача выдана как часть 2/5 миссии Стратегии_расстановки_марок."
+    },
+    {
+      "timestamp": "2026-08-06T00:00:00Z",
+      "actor": "subagent",
+      "action": "workflow_state_changed",
+      "workflow_state": "in_progress",
+      "details": "Исполнитель взял задачу."
+    },
+    {
+      "timestamp": "2026-08-06T00:00:00Z",
+      "actor": "tdl_migration",
+      "action": "legacy_status_imported",
+      "legacy_status": "verified",
+      "details": "Старый Markdown-статус сохранён, но TDL-статус остаётся open до появления JSON-отчёта и JSON-вердикта."
+    }
+  ]
+}
+```
+
+---
+
+# 10. Шаблон отчёта для A-02
+
+Когда исполнитель будет закрывать A-02, нужно создать файл:
+
+```text
+Tasks/JSON/Reports/A-02_YYYY-MM-DD.report.json
+```
+
+Минимально правильный шаблон:
+
+```json
+{
+  "schema_version": "1.0.0",
+  "entity_type": "tdl.report",
+  "report_id": "A-02_YYYY-MM-DD",
+  "task_ref": "A-02",
+  "wbs_ref": "1.2",
+  "date": "YYYY-MM-DD",
+  "report_status": "draft",
+  "executor": {
+    "name": "subagent",
+    "agent": "",
+    "role": ""
+  },
+  "problem": "Описать, что было не так до выполнения задачи.",
+  "work_done": [],
+  "files_changed": [],
+  "metrics": [],
+  "evidence": [],
+  "open_questions": [],
+  "verification_commands": [
+    "dotnet build Core.Tests/Core.Tests.csproj --nologo -v q",
+    "dotnet test Core.Tests/Core.Tests.csproj --nologo -v q",
+    "grep -R \"using Autodesk.Revit\" Core"
+  ],
+  "links": [
+    {
+      "type": "task",
+      "href": "file://Tasks/JSON/Active/A-02.task.json"
+    }
+  ]
+}
+```
+
+После заполнения `report_status` нужно поменять на `final`.
+
+---
+
+# 11. Шаблон вердикта для A-02
+
+Файл:
+
+```text
+Tasks/JSON/Verdicts/A-02_YYYY-MM-DD.verdict.json
+```
+
+Шаблон:
+
+```json
+{
+  "schema_version": "1.0.0",
+  "entity_type": "tdl.verdict",
+  "verdict_id": "A-02_YYYY-MM-DD",
+  "task_ref": "A-02",
+  "report_ref": "A-02_YYYY-MM-DD",
+  "date": "YYYY-MM-DD",
+  "result": "pending",
+  "confidence": null,
+  "can_move_forward": false,
+  "checks": [],
+  "evidence_review": [],
+  "required_fixes": [],
+  "notes": [],
+  "links": [
+    {
+      "type": "task",
+      "href": "file://Tasks/JSON/Active/A-02.task.json"
+    },
+    {
+      "type": "report",
+      "href": "file://Tasks/JSON/Reports/A-02_YYYY-MM-DD.report.json"
+    }
+  ]
+}
+```
+
+Допустимые значения `result`:
+
+```json
+["pass", "fail", "pending"]
+```
+
+---
+
+# 12. Обязательные автоматические проверки JSON
+
+## 12.1. Проверки задачи
+
+Проверять:
+
+1. `schema_version` существует.
+2. `entity_type` равен:
+   - `tdl.task`;
+   - `tdl.report`;
+   - `tdl.verdict`.
+3. `task_id` уникален.
+4. `wbs_code` соответствует родителю.
+5. `wbs_code` имеет глубину не больше 4.
+6. `is_summary = false` для исполнительских задач.
+7. `status` равен только `open` или `done`.
+8. Для `status = done` существуют:
+   - минимум один `report_ref`;
+   - минимум один `verdict_ref`;
+   - `verdict.result = pass`.
+9. Для `task_kind = execution` заполнены:
+   - `goal`;
+   - `acceptance_criteria`;
+   - `verification.commands`.
+10. Для тестовых задач заполнены:
+   - `test_inputs`;
+   - `check_subject`;
+   - ожидаемые метрики.
+
+## 12.2. Проверки отчёта
+
+Проверять:
+
+1. `task_ref` существует.
+2. `work_done` не пуст.
+3. `evidence` не пуст.
+4. Каждое доказательство имеет:
+   - `evidence_id`;
+   - `type`;
+   - `result`;
+   - ссылку, команду или артефакт.
+5. Если `exit_code != 0`, должно быть:
+   - `acceptance_rule`;
+   - baseline;
+   - объяснение.
+6. `metrics` содержат показатели до/после.
+7. `verification_commands` не пуст.
+8. `open_questions` может быть пустым, но поле обязательно.
+
+## 12.3. Проверки вердикта
+
+Проверять:
+
+1. `task_ref` существует.
+2. `report_ref` существует.
+3. `checks` не пуст.
+4. Каждая проверка имеет:
+   - `check_id`;
+   - `name`;
+   - `status`;
+   - `expected`;
+   - `actual`.
+5. Если `result = pass`, все критичные проверки должны быть `pass`.
+6. Если `result = fail`, массив `required_fixes` не должен быть пуст.
+7. Если `result = pass`, задача может быть переведена в `status = done`.
+
+---
+
+# 13. Правила закрытия задачи
+
+Задача закрывается только так:
+
+```text
+task.status = done
+```
+
+если одновременно:
+
+```text
+report exists
+report.evidence not empty
+verdict exists
+verdict.result = pass
+verdict.can_move_forward = true
+```
+
+Если хотя бы одно условие не выполняется:
+
+```text
+task.status = open
+```
+
+Если есть блокировка:
+
+```text
+task.workflow_state = blocked
+task.blocker = "причина"
+```
+
+---
+
+# 14. Рекомендуемый реестр `tdl.index.json`
+
+Для удобства навигации можно генерировать индекс:
+
+```json
+{
+  "schema_version": "1.0.0",
+  "entity_type": "tdl.index",
+  "generated_at": "2026-08-06T00:00:00Z",
+  "tasks": [
+    {
+      "task_id": "A-01",
+      "path": "Tasks/JSON/Active/A-01.task.json",
+      "wbs_code": "1.1",
+      "status": "done",
+      "workflow_state": "verified",
+      "report_refs": [
+        "A-01_2026-08-06"
+      ],
+      "verdict_refs": [
+        "A-01_2026-08-06"
+      ]
+    },
+    {
+      "task_id": "A-02",
+      "path": "Tasks/JSON/Active/A-02.task.json",
+      "wbs_code": "1.2",
+      "status": "open",
+      "workflow_state": "pending_report",
+      "report_refs": [],
+      "verdict_refs": []
+    }
+  ]
+}
+```
+
+---
+
+# 15. Связь с текущей системой ProjectTDL
+
+Если импортировать эти JSON в существующую Django-модель `ProjectTDL.TaskNode`, рекомендуется такое соответствие.
+
+| JSON TDL | ProjectTDL / целевое поле |
+|---|---|
+| `task_id` | отдельное поле `external_task_id` |
+| `wbs_code` | отдельное поле `wbs_code` |
+| `parent_wbs` | родитель через `parent` / MPTT |
+| `project.code` | `project_site` |
+| `module` | отдельное поле `module_name` |
+| `class_name` | отдельное поле `class_name` |
+| `layer` | отдельное поле `layer` |
+| `name` | `TaskNode.name` |
+| `description` | `TaskNode.description` |
+| `status` | `TaskNode.status`, только `Открыто` / `Выполнено` |
+| `workflow_state` | отдельное поле `workflow_state` |
+| `dates.start` | отдельное поле `start_date` |
+| `dates.finish` | `TaskNode.due_date` |
+| `links` | JSONField `links` |
+| `artifacts` | JSONField `artifacts` |
+| `evidence` из report | JSONField `evidence` |
+| `verification.commands` | JSONField `verification_commands` |
+| `history` | отдельная audit-модель или JSONField |
+| `TaskDueDateHistory` | использовать для истории изменения `dates.finish` |
+
+Если миграцию схемы делать пока нельзя, минимально допустимый вариант:
+
+- `name` = наименование;
+- `description` = JSON или markdown, сгенерированный из JSON;
+- `due_date` = `dates.finish`;
+- ссылки и доказательства хранить в `description` или отдельном JSON-поле, если оно доступно.
+
+Но для полноценной фильтрации лучше вынести поля в отдельные колонки БД.
+
+---
+
+# 16. Короткий регламент для агента
+
+```text
+Ты работаешь с задачами только через JSON-файлы TDL.
+
+1. Создай A-XX.task.json до начала работы.
+2. Не приступай к выполнению, если не заполнены goal, acceptance_criteria, inputs, verification.commands.
+3. Каждое действие фиксируй в history или progress_log.
+4. После выполнения создай A-XX_YYYY-MM-DD.report.json.
+5. В отчёте обязательно заполни work_done, files_changed, metrics, evidence, verification_commands, open_questions.
+6. Не пиши «выполнено», если нет доказательств.
+7. Не закрывай задачу сам.
+8. Закрытие возможно только после verdict.json с result=pass.
+9. Если проверка провалена, оставь status=open и заполни required_fixes или blocker.
+10. Все ссылки должны быть реальными: файл, commit, лог, тест, артефакт.
+```
+
+---
+
+# 17. Итог
+
+Новая схема заменяет свободный Markdown на управляемый JSON-конвейер:
+
+```text
+A-XX.task.json
+   ↓
+A-XX_YYYY-MM-DD.report.json
+   ↓
+A-XX_YYYY-MM-DD.verdict.json
+   ↓
+task.status = done
+```
+
+Для `A-01` этот конвейер уже можно считать корректно перенесённым в JSON: задача, отчёт и вердикт связаны, доказательства присутствуют, TDL-статус может быть `done`.
+
+Для `A-02` корректная миграция такая:
+
+```json
+{
+  "status": "open",
+  "workflow_state": "pending_report",
+  "legacy_status": "verified"
+}
+```
+
+пока не будут созданы полноценные `A-02.report.json` и `A-02.verdict.json`.

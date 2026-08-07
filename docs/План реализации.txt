@@ -1,0 +1,2568 @@
+Ниже — готовое **детальное задание / ТЗ** на изменение `E:\ПлагиныРевит\dev-pipeline\combined.txt` и соответствующих исходных файлов `dev-pipeline`, чтобы система задач/отчётов/вердиктов перешла на прилагаемую TDL-структуру: **JSON как источник истины**, Markdown — опциональный человекочитаемый рендер.
+
+Задание можно сохранить, например, как:
+
+```text
+Tasks/Входящие/Задание_на_изменение_dev-pipeline_TDL_JSON.md
+```
+
+или сразу оформить как JSON-задачу в новой структуре.
+
+---
+
+# Задание на изменение dev-pipeline: перевод задач, отчётов и вердиктов на TDL JSON
+
+## 1. Объект изменения
+
+Основной объект:
+
+```text
+E:\ПлагиныРевит\dev-pipeline\combined.txt
+```
+
+`combined.txt` рассматривается как дамп исходных файлов проекта `dev-pipeline`.
+
+Если изменения вносятся непосредственно в `combined.txt`, обязательно:
+
+1. Сохранять формат блоков:
+   ```text
+   ====================================================================================================
+   FILE: agents\agent_manager.py
+   ====================================================================================================
+   ```
+2. Не удалять существующие файлы без явной команды.
+3. При добавлении новых файлов добавлять новые блоки `FILE: ...`.
+4. Обновить итоговую строку `TOTAL FILES`, если она ведётся вручную.
+5. Кодировка — UTF-8.
+6. Не использовать многоточия, заглушки и «остальное без изменений».
+7. После правки `combined.txt` должен быть полным и пригодным для разделения обратно на файлы.
+
+Если правки применяются к реальному репозиторию, то `combined.txt` должен быть перегенерирован из фактических файлов после изменений.
+
+---
+
+## 2. Цель изменения
+
+Перевести `dev-pipeline` с текущей Markdown-модели задач:
+
+```text
+Tasks/Активные/A-NN_*.md
+Tasks/Отчёты/A-NN_Отчёт_*.md
+Tasks/Отчёты/A-NN_Вердикт_*.md
+```
+
+на управляемую TDL-модель:
+
+```text
+Tasks/JSON/Active/A-NN.task.json
+Tasks/JSON/Reports/A-NN_YYYY-MM-DD.report.json
+Tasks/JSON/Verdicts/A-NN_YYYY-MM-DD.verdict.json
+Tasks/JSON/Index/tdl.index.json
+```
+
+где:
+
+1. JSON является источником истины.
+2. Markdown может оставаться как человекочитаемый рендер.
+3. Задача не может получить статус `done` без:
+   - JSON-отчёта;
+   - доказательств;
+   - JSON-вердикта;
+   - `verdict.result = pass`;
+   - `verdict.can_move_forward = true`.
+
+---
+
+## 3. Текущее состояние dev-pipeline
+
+В текущем `combined.txt` уже есть:
+
+1. `pipeline/models.py`:
+   - модель `Task`;
+   - парсинг Markdown frontmatter;
+   - статусы:
+     ```python
+     STATUSES = {"open", "in_progress", "done_report", "verified", "rejected", "closed"}
+     ```
+
+2. `pipeline/templates.py`:
+   - Markdown-шаблоны задач, отчётов, вердиктов.
+
+3. `pipeline/cli.py`:
+   - команды:
+     - `list`;
+     - `env`;
+     - `status`;
+     - `dispatch`;
+     - `execute`;
+     - `verify`.
+
+4. `pipeline/checks.py`:
+   - механические проверки:
+     - сборка;
+     - тесты;
+     - grep;
+     - правила слоёв;
+     - аудит тестов.
+
+5. `agents/agent_manager.py`:
+   - декомпозиция миссии;
+   - создание Markdown-задач;
+   - запуск субагентов;
+   - проверка отчётов.
+
+6. `agents/agent_watch.py`, `agents/executor_client.py`:
+   - файловый и SSE-циклы;
+   - реакция на отчёты;
+   - запуск verify.
+
+7. `server/app.py`:
+   - чтение Markdown-задач для dashboard;
+   - `/api/tasks`, `/api/plan`, `/api/task/{task_id}`, `/api/verdicts`.
+
+8. `server/static/dashboard.html`:
+   - отображение плана по Markdown-файлам.
+
+Это нужно не удалить, а перевести на двойную модель:
+
+- legacy Markdown остаётся для совместимости;
+- TDL JSON становится основным источником.
+
+---
+
+## 4. Целевой результат
+
+После выполнения задания `dev-pipeline` должен уметь:
+
+1. Создавать задачи в JSON-формате `tdl.task`.
+2. Хранить отчёты исполнителей в JSON-формате `tdl.report`.
+3. Хранить вердикты контролёра в JSON-формате `tdl.verdict`.
+4. Генерировать и поддерживать `tdl.index.json`.
+5. Валидировать JSON-задачи, отчёты и вердикты.
+6. Запрещать закрытие задачи без доказательств.
+7. Мигрировать старые Markdown-задачи в JSON.
+8. Показывать TDL-план в сервере и dashboard.
+9. Использовать JSON в агентах:
+   - agent-manager;
+   - executor;
+   - controller/watch.
+10. Сохранять работоспособность старых команд и старых проектов, если JSON ещё не включён.
+
+---
+
+## 5. Границы изменения
+
+### Разрешено
+
+1. Добавлять новые модули в `pipeline/`.
+2. Менять:
+   - `pipeline/cli.py`;
+   - `pipeline/config.py`;
+   - `pipeline/models.py`;
+   - `pipeline/templates.py`;
+   - `pipeline/checks.py`;
+   - `agents/agent_manager.py`;
+   - `agents/agent_watch.py`;
+   - `agents/executor_client.py`;
+   - `server/app.py`;
+   - `server/db.py`;
+   - `server/static/dashboard.html`.
+3. Добавлять новые команды CLI.
+4. Добавлять новые API-эндпоинты.
+5. Создавать тесты.
+6. Создавать миграционные скрипты.
+7. Генерировать Markdown из JSON как вторичный рендер.
+
+### Запрещено
+
+1. Ломать существующий файловый принцип хранения артефактов.
+2. Удалять legacy Markdown-файлы при миграции.
+3. Автоматически ставить `status = done` только на основании старого Markdown-статуса.
+4. Создавать JSON с комментариями.
+5. Позволять агенту закрывать задачу без:
+   - отчёта;
+   - доказательств;
+   - вердикта;
+   - pass-результата.
+6. Заменять доказательства текстовыми утверждениями.
+7. Менять бизнес-логику проверок `checks.py` сверх необходимости结构化ированного вывода.
+8. Вносить изменения в `bin`, `obj`, `.git`, `.idea`, `.opencode`, `TestResults`.
+
+---
+
+## 6. Целевая файловая структура TDL
+
+Для каждого проекта внутри его корня создать структуру:
+
+```text
+Tasks/
+  JSON/
+    Active/
+      A-01.task.json
+      A-02.task.json
+    Reports/
+      A-01_2026-08-06.report.json
+      A-02_2026-08-07.report.json
+    Verdicts/
+      A-01_2026-08-06.verdict.json
+      A-02_2026-08-07.verdict.json
+    Index/
+      tdl.index.json
+```
+
+Дополнительно допускается:
+
+```text
+Tasks/JSON/Archive/
+```
+
+но в первой версии можно не переносить выполненные задачи в Archive, а хранить их в `Active` со статусом `done`. Индекс должен показывать фактическое состояние.
+
+---
+
+## 7. Статусная модель
+
+### 7.1. TDL-статус задачи
+
+Разрешены только два статуса:
+
+```json
+["open", "done"]
+```
+
+Отображение для пользователя:
+
+| status | status_display |
+|---|---|
+| `open` | `Открыто` |
+| `done` | `Выполнено` |
+
+### 7.2. Технологическое состояние
+
+Базовый набор:
+
+```json
+[
+  "issued",
+  "in_progress",
+  "blocked",
+  "reported",
+  "control",
+  "verified",
+  "rejected",
+  "archived"
+]
+```
+
+Для миграции legacy-состояний разрешается дополнительно использовать переходные состояния:
+
+```json
+[
+  "pending_report",
+  "pending_verdict"
+]
+```
+
+Они всегда соответствуют TDL-статусу `open`.
+
+### 7.3. Соответствие workflow_state и TDL status
+
+| workflow_state | TDL status |
+|---|---|
+| `issued` | `open` |
+| `in_progress` | `open` |
+| `blocked` | `open` |
+| `pending_report` | `open` |
+| `reported` | `open` |
+| `pending_verdict` | `open` |
+| `control` | `open` |
+| `rejected` | `open` |
+| `verified` | `done` |
+| `archived` | `done` |
+
+### 7.4. Условия закрытия задачи
+
+Задача может быть переведена в:
+
+```json
+"status": "done"
+```
+
+только если одновременно:
+
+1. Существует минимум один `tdl.report` для задачи.
+2. `report.evidence` не пуст.
+3. Существует минимум один `tdl.verdict` для задачи.
+4. `verdict.result = "pass"`.
+5. `verdict.can_move_forward = true`.
+6. Валидатор не нашёл критичных ошибок.
+7. Изменение статуса записано в `history`.
+
+Во всех остальных случаях:
+
+```json
+"status": "open"
+```
+
+---
+
+## 8. Обязательные JSON-сущности
+
+## 8.1. Task
+
+Файл:
+
+```text
+Tasks/JSON/Active/{task_id}.task.json
+```
+
+Обязательные поля:
+
+```json
+[
+  "schema_version",
+  "entity_type",
+  "task_id",
+  "wbs_code",
+  "project",
+  "name",
+  "status",
+  "task_kind",
+  "goal",
+  "acceptance_criteria",
+  "dates",
+  "links"
+]
+```
+
+Рекомендуемые и необходимые для работы поля:
+
+```json
+[
+  "parent_wbs",
+  "is_summary",
+  "status_display",
+  "workflow_state",
+  "legacy_status",
+  "priority",
+  "module",
+  "class_name",
+  "layer",
+  "description",
+  "context",
+  "inputs",
+  "constraints",
+  "dependencies",
+  "assignees",
+  "source",
+  "artifacts",
+  "verification",
+  "history",
+  "progress_log",
+  "blocker"
+]
+```
+
+Требования:
+
+1. `entity_type` всегда:
+   ```json
+   "tdl.task"
+   ```
+2. `task_id` уникален.
+3. `wbs_code` обязателен.
+4. Глубина WBS не более 4 уровней.
+5. `is_summary = false` для исполнительских задач.
+6. `status` только `open` или `done`.
+7. Для `task_kind = "execution"` обязательны:
+   - `goal`;
+   - `acceptance_criteria`;
+   - `verification.commands`.
+8. Для `status = "done"` обязательны ссылки на:
+   - report;
+   - verdict.
+9. Все ссылки должны быть в `links`, `artifacts`, `href`, `path`, `url` или `ref`.
+
+---
+
+## 8.2. Report
+
+Файл:
+
+```text
+Tasks/JSON/Reports/{task_id}_{YYYY-MM-DD}.report.json
+```
+
+Обязательные поля:
+
+```json
+[
+  "schema_version",
+  "entity_type",
+  "report_id",
+  "task_ref",
+  "date",
+  "executor",
+  "problem",
+  "work_done",
+  "evidence",
+  "verification_commands"
+]
+```
+
+Обязательные для закрытия:
+
+1. `work_done` не пуст.
+2. `evidence` не пуст.
+3. Каждое доказательство имеет:
+   - `evidence_id`;
+   - `type`;
+   - `result`;
+   - ссылку, команду или артефакт.
+4. Если проверка имеет `exit_code != 0`, то должны быть:
+   - `acceptance_rule`;
+   - baseline;
+   - объяснение.
+5. `metrics` должны содержать показатели до/после, если задача измеряемая.
+6. `verification_commands` не пуст.
+7. `open_questions` может быть пустым массивом, но поле обязательно.
+8. `report_status` должен быть:
+   - `draft`;
+   - `final`;
+   - `partial`;
+   - `migrated`.
+
+Для закрытия задачи допускается только:
+
+```json
+"report_status": "final"
+```
+
+---
+
+## 8.3. Verdict
+
+Файл:
+
+```text
+Tasks/JSON/Verdicts/{task_id}_{YYYY-MM-DD}.verdict.json
+```
+
+Обязательные поля:
+
+```json
+[
+  "schema_version",
+  "entity_type",
+  "verdict_id",
+  "task_ref",
+  "report_ref",
+  "date",
+  "result",
+  "checks"
+]
+```
+
+Требования:
+
+1. `entity_type`:
+   ```json
+   "tdl.verdict"
+   ```
+2. `task_ref` существует.
+3. `report_ref` существует.
+4. `checks` не пуст.
+5. Каждая проверка имеет:
+   - `check_id`;
+   - `name`;
+   - `status`;
+   - `expected`;
+   - `actual`.
+6. Если `result = "pass"`, все критичные проверки должны быть `pass`.
+7. Если `result = "fail"`, массив `required_fixes` не должен быть пуст.
+8. Если `result = "pass"`, задача может быть переведена в `done`.
+9. Допустимые значения `result`:
+   ```json
+   ["pass", "fail", "pending"]
+   ```
+
+---
+
+## 8.4. Index
+
+Файл:
+
+```text
+Tasks/JSON/Index/tdl.index.json
+```
+
+Обязательные поля:
+
+```json
+[
+  "schema_version",
+  "entity_type",
+  "generated_at",
+  "tasks"
+]
+```
+
+Каждый элемент `tasks`:
+
+```json
+{
+  "task_id": "",
+  "path": "",
+  "wbs_code": "",
+  "status": "",
+  "workflow_state": "",
+  "report_refs": [],
+  "verdict_refs": []
+}
+```
+
+Индекс должен быть перегенерируем командой CLI.
+
+---
+
+## 9. Требования к именам файлов и датам
+
+### 9.1. Имена файлов
+
+```text
+{task_id}.task.json
+{task_id}_{YYYY-MM-DD}.report.json
+{task_id}_{YYYY-MM-DD}.verdict.json
+```
+
+Примеры:
+
+```text
+A-01.task.json
+A-01_2026-08-06.report.json
+A-01_2026-08-06.verdict.json
+```
+
+Если в один день создаётся повторный отчёт или вердикт, разрешается перезаписать файл того же имени, но предыдущая версия должна сохраняться в git-истории.
+
+### 9.2. Даты
+
+Дата:
+
+```text
+YYYY-MM-DD
+```
+
+Дата-время:
+
+```text
+YYYY-MM-DDTHH:MM:SSZ
+```
+
+### 9.3. Кодировка JSON
+
+1. UTF-8.
+2. Без комментариев.
+3. `ensure_ascii = false`.
+4. Отступ 2 пробела.
+5. В конце файла один перевод строки.
+
+---
+
+## 10. Изменения в структуре кода dev-pipeline
+
+Нужно добавить новые модули.
+
+### 10.1. Новый пакет `pipeline/tdl`
+
+Создать:
+
+```text
+pipeline/tdl/__init__.py
+pipeline/tdl/schema.py
+pipeline/tdl/models.py
+pipeline/tdl/store.py
+pipeline/tdl/validate.py
+pipeline/tdl/migrate.py
+pipeline/tdl/render.py
+```
+
+---
+
+## 10.2. `pipeline/tdl/schema.py`
+
+Содержит константы и схемы.
+
+Обязательно реализовать:
+
+```python
+TDL_SCHEMA_VERSION = "1.0.0"
+
+TASK_STATUS = {"open", "done"}
+
+WORKFLOW_STATES = {
+    "issued",
+    "in_progress",
+    "blocked",
+    "reported",
+    "control",
+    "verified",
+    "rejected",
+    "archived",
+    "pending_report",
+    "pending_verdict",
+}
+
+TASK_KINDS = {"group", "request", "execution"}
+
+VERDICT_RESULTS = {"pass", "fail", "pending"}
+
+REPORT_STATUSES = {"draft", "final", "partial", "migrated"}
+
+REQUIRED_TASK_FIELDS = [...]
+REQUIRED_REPORT_FIELDS = [...]
+REQUIRED_VERDICT_FIELDS = [...]
+```
+
+Также описать допустимые типы ссылок и доказательств.
+
+---
+
+## 10.3. `pipeline/tdl/models.py`
+
+Создать dataclass-модели:
+
+```python
+TdlLink
+TdlInput
+TdlArtifact
+TdlMetric
+TdlEvidence
+TdlCheck
+TdlHistoryEntry
+TdlExecutor
+TdlVerification
+TdlTask
+TdlReport
+TdlVerdict
+TdlIndexEntry
+TdlIndex
+```
+
+Требования:
+
+1. Модели должны уметь:
+   - `to_dict()`;
+   - `from_dict()`.
+2. Не выполнять бизнес-валидацию внутри моделей.
+3. Все даты хранить как строки ISO.
+4. Пути внутри JSON — относительные от корня проекта, с прямыми слэшами.
+
+---
+
+## 10.4. `pipeline/tdl/store.py`
+
+Реализовать файловое хранилище TDL.
+
+Функции:
+
+```python
+def tdl_root(cfg) -> Path
+def active_dir(cfg) -> Path
+def reports_dir(cfg) -> Path
+def verdicts_dir(cfg) -> Path
+def index_path(cfg) -> Path
+
+def ensure_dirs(cfg) -> None
+
+def task_path(cfg, task_id: str) -> Path | None
+def load_task(cfg, task_id: str) -> dict
+def save_task(cfg, task: dict) -> Path
+
+def report_path(cfg, task_id: str, date: str) -> Path
+def latest_report(cfg, task_id: str) -> Path | None
+def load_report(cfg, path: Path) -> dict
+def save_report(cfg, report: dict) -> Path
+
+def verdict_path(cfg, task_id: str, date: str) -> Path
+def latest_verdict(cfg, task_id: str) -> Path | None
+def load_verdict(cfg, path: Path) -> dict
+def save_verdict(cfg, verdict: dict) -> Path
+
+def rebuild_index(cfg) -> Path
+
+def next_task_id(cfg) -> str
+```
+
+Требования:
+
+1. Запись JSON должна быть атомарной:
+   - запись во временный файл;
+   - замена целевого файла.
+2. При сохранении использовать:
+   ```python
+   json.dumps(obj, ensure_ascii=False, indent=2)
+   ```
+3. `next_task_id` обязан учитывать:
+   - legacy Markdown файлы;
+   - JSON Active;
+   - JSON Reports;
+   - JSON Verdicts.
+4. Поиск задач должен поддерживать старые ID вида `A-01`.
+
+---
+
+## 10.5. `pipeline/tdl/validate.py`
+
+Реализовать валидаторы.
+
+Функции:
+
+```python
+def validate_task(task: dict, ctx: dict) -> list[dict]
+def validate_report(report: dict, ctx: dict) -> list[dict]
+def validate_verdict(verdict: dict, ctx: dict) -> list[dict]
+def validate_task_file(cfg, path: Path) -> list[dict]
+def validate_project(cfg) -> list[dict]
+def can_close_task(task: dict, report: dict | None, verdict: dict | None) -> tuple[bool, str]
+```
+
+Формат ошибки:
+
+```json
+{
+  "path": "Tasks/JSON/Active/A-01.task.json",
+  "code": "missing_field",
+  "message": "Отсутствует обязательное поле goal"
+}
+```
+
+Обязательные проверки:
+
+### Для задачи
+
+1. `schema_version` существует.
+2. `entity_type = "tdl.task"`.
+3. `task_id` уникален.
+4. `wbs_code` существует.
+5. Глубина WBS не больше 4.
+6. `is_summary = false` для execution-задач.
+7. `status` только `open` или `done`.
+8. Для `status = done` есть:
+   - report;
+   - verdict;
+   - `verdict.result = pass`.
+9. Для `task_kind = execution` заполнены:
+   - `goal`;
+   - `acceptance_criteria`;
+   - `verification.commands`.
+10. Для тестовых задач заполнены:
+   - `test_inputs`;
+   - `check_subject`;
+   - ожидаемые метрики.
+
+### Для отчёта
+
+1. `task_ref` существует.
+2. `work_done` не пуст.
+3. `evidence` не пуст.
+4. Каждое доказательство имеет:
+   - `evidence_id`;
+   - `type`;
+   - `result`;
+   - ссылку или команду.
+5. Если `exit_code != 0`, должны быть:
+   - `acceptance_rule`;
+   - baseline;
+   - объяснение.
+6. `metrics` содержат до/после.
+7. `verification_commands` не пуст.
+8. `open_questions` присутствует.
+
+### Для вердикта
+
+1. `task_ref` существует.
+2. `report_ref` существует.
+3. `checks` не пуст.
+4. Каждая проверка имеет:
+   - `check_id`;
+   - `name`;
+   - `status`;
+   - `expected`;
+   - `actual`.
+5. Если `result = pass`, нет критичных fail-проверок.
+6. Если `result = fail`, `required_fixes` не пуст.
+7. Если `result = pass`, можно закрыть задачу.
+
+---
+
+## 10.6. `pipeline/tdl/migrate.py`
+
+Реализовать миграцию legacy Markdown в TDL JSON.
+
+Функции:
+
+```python
+def migrate_project(cfg, dry_run: bool = False, allow_done_from_md: bool = False) -> dict
+def migrate_task_file(cfg, path: Path, dry_run: bool) -> dict
+def migrate_report_file(cfg, path: Path, dry_run: bool) -> dict
+def migrate_verdict_file(cfg, path: Path, dry_run: bool) -> dict
+```
+
+Правила миграции:
+
+1. Старый Markdown-файл не удаляется.
+2. Создаётся JSON-задача.
+3. Старый статус сохраняется в `legacy_status`.
+4. TDL `status` не становится `done` автоматически только из legacy-статуса.
+5. Если нет JSON-отчёта и JSON-вердикта, задача остаётся `open`.
+6. Если есть только Markdown-отчёт, можно создать `migrated` report, но `report_status` не должен быть `final` без доказательств.
+7. Если есть старый Markdown-вердикт PASS, разрешается создать migrated-verdict только при флаге:
+   ```text
+   --allow-done-from-md
+   ```
+   и только если можно извлечь проверки/доказательства.
+8. По умолчанию миграция консервативна:
+   ```json
+   "status": "open"
+   ```
+
+---
+
+## 10.7. `pipeline/tdl/render.py`
+
+Реализовать генерацию человекочитаемых Markdown-файлов из JSON.
+
+Функции:
+
+```python
+def render_task_card(task: dict) -> str
+def render_report_md(report: dict) -> str
+def render_verdict_md(verdict: dict) -> str
+```
+
+Использовать для зеркалирования в:
+
+```text
+Tasks/Отчёты/
+Tasks/Карточки/
+```
+
+или другое место по конфигу проекта.
+
+Markdown является вторичным и не заменяет JSON.
+
+---
+
+## 11. Изменения в `pipeline/config.py`
+
+Добавить секцию `tdl` в `ProjectConfig`.
+
+Поля по умолчанию:
+
+```python
+tdl_enabled: bool = True
+tdl_root: str = "Tasks\\JSON"
+tdl_active: str = "Tasks\\JSON\\Active"
+tdl_reports: str = "Tasks\\JSON\\Reports"
+tdl_verdicts: str = "Tasks\\JSON\\Verdicts"
+tdl_index: str = "Tasks\\JSON\\Index\\tdl.index.json"
+tdl_markdown_mirror: bool = True
+```
+
+В `load_config` читать опциональную секцию:
+
+```yaml
+tdl:
+  enabled: true
+  root: Tasks/JSON
+  active: Tasks/JSON/Active
+  reports: Tasks/JSON/Reports
+  verdicts: Tasks/JSON/Verdicts
+  index: Tasks/JSON/Index/tdl.index.json
+  markdown_mirror: true
+```
+
+Добавить помощники:
+
+```python
+def abs_tdl_dir(self, key: str) -> Path
+def abs_tdl_index(self) -> Path
+```
+
+Если секции `tdl` нет, использовать значения по умолчанию.
+
+---
+
+## 12. Изменения в `pipeline/models.py`
+
+Не удалять существующую legacy-модель `Task`.
+
+Добавить:
+
+1. Маппинг legacy-статусов:
+   ```python
+   LEGACY_TO_WORKFLOW = {
+       "open": "issued",
+       "in_progress": "in_progress",
+       "done_report": "reported",
+       "verified": "pending_verdict",
+       "rejected": "rejected",
+       "closed": "blocked",
+   }
+   ```
+2. Функцию:
+   ```python
+   def legacy_status_to_workflow(status: str) -> str
+   ```
+3. Оставить `Task.from_file` для обратной совместимости.
+4. Не смешивать старые статусы и новые TDL-статусы в одном поле.
+
+---
+
+## 13. Изменения в `pipeline/templates.py`
+
+Добавить:
+
+1. JSON-шаблоны:
+   - task;
+   - report;
+   - verdict;
+   - index.
+2. Функции:
+   ```python
+   def tdl_task_template(...) -> dict
+   def tdl_report_template(...) -> dict
+   def tdl_verdict_template(...) -> dict
+   ```
+3. Markdown-рендеры:
+   ```python
+   def tdl_task_card_md(...) -> str
+   def tdl_report_md(...) -> str
+   def tdl_verdict_md(...) -> str
+   ```
+
+Markdown-шаблоны должны содержать:
+
+- WBS;
+- task_id;
+- статус;
+- workflow_state;
+- цель;
+- критерии приёмки;
+- ссылки;
+- доказательства;
+- проверки;
+- историю.
+
+---
+
+## 14. Изменения в `pipeline/checks.py`
+
+Текущие проверки должны продолжать работать.
+
+Дополнительно добавить структурированный вывод для JSON-вердикта.
+
+Новая функция:
+
+```python
+def verify_checks_structured(cfg, task_id: str, b_out: str = "") -> list[dict]
+```
+
+Каждая проверка должна возвращать:
+
+```json
+{
+  "check_id": "",
+  "name": "",
+  "status": "pass|fail|skip|warn",
+  "expected": "",
+  "actual": "",
+  "critical": true,
+  "details": ""
+}
+```
+
+Аналогично:
+
+```python
+def layer_rule_rows_structured(cfg) -> list[dict]
+def test_audit_structured(cfg) -> dict
+```
+
+Эти данные должны использоваться при создании `tdl.verdict`.
+
+---
+
+## 15. Изменения в `pipeline/cli.py`
+
+Добавить новые команды.
+
+Старые команды сохранить, но перевести их на приоритет TDL, если TDL включён.
+
+---
+
+### 15.1. `tdl-init`
+
+Команда:
+
+```bash
+python -m pipeline.cli <project> tdl-init
+```
+
+Действия:
+
+1. Создать:
+   ```text
+   Tasks/JSON/Active
+   Tasks/JSON/Reports
+   Tasks/JSON/Verdicts
+   Tasks/JSON/Index
+   ```
+2. Создать пустой или начальный `tdl.index.json`.
+3. Проверить конфигурацию проекта.
+
+Критерий приёмки:
+
+- каталоги созданы;
+- индекс существует;
+- команда завершается с кодом 0.
+
+---
+
+### 15.2. `tdl-dispatch`
+
+Команда:
+
+```bash
+python -m pipeline.cli <project> tdl-dispatch <file> [options]
+```
+
+Опции:
+
+```text
+--title
+--priority
+--wbs
+--parent-wbs
+--module
+--class-name
+--layer
+--goal
+--requirements
+--result
+--remark
+```
+
+Действия:
+
+1. Прочитать входящий файл.
+2. Создать `A-NN.task.json`.
+3. Заполнить обязательные поля.
+4. Если `--wbs` не задан, сгенерировать WBS от родительской группы.
+5. Переместить исходный файл в `_история`.
+6. Сделать git-коммит.
+7. Обновить индекс.
+
+Запрещено создавать execution-задачу без:
+
+- `goal`;
+- `acceptance_criteria`;
+- `verification.commands`.
+
+---
+
+### 15.3. `tdl-start`
+
+Команда:
+
+```bash
+python -m pipeline.cli <project> tdl-start <task_id>
+```
+
+Действия:
+
+1. Найти JSON-задачу.
+2. Проверить, что задача не summary.
+3. Перевести:
+   ```json
+   "workflow_state": "in_progress"
+   ```
+4. Добавить запись в `history`.
+5. Обновить индекс.
+
+---
+
+### 15.4. `tdl-report`
+
+Команда:
+
+```bash
+python -m pipeline.cli <project> tdl-report <task_id> [--final] [--from-md <path>]
+```
+
+Действия:
+
+1. Создать skeleton JSON-отчёта.
+2. Если указан `--from-md`, извлечь секции Markdown:
+   - Что было не так;
+   - Что сделано;
+   - Доказательства;
+   - Открытые вопросы;
+   - Как пересобрать/проверить.
+3. Записать:
+   ```text
+   Tasks/JSON/Reports/{task_id}_{date}.report.json
+   ```
+4. Без `--final` ставить:
+   ```json
+   "report_status": "draft"
+   ```
+5. С `--final` ставить:
+   ```json
+   "report_status": "final"
+   ```
+   только если базовые поля заполнены.
+
+---
+
+### 15.5. `tdl-verify`
+
+Команда:
+
+```bash
+python -m pipeline.cli <project> tdl-verify <task_id>
+```
+
+Действия:
+
+1. Найти JSON-задачу.
+2. Найти последний JSON-отчёт.
+3. Если JSON-отчёта нет:
+   - создать fail-вердикт;
+   - задача остаётся `open`.
+4. Запустить механические проверки:
+   - сборка;
+   - тесты;
+   - grep;
+   - layer rules;
+   - test audit.
+5. Сформировать JSON-вердикт:
+   ```text
+   Tasks/JSON/Verdicts/{task_id}_{date}.verdict.json
+   ```
+6. Если результат `pass`:
+   - `task.status = done`;
+   - `task.workflow_state = verified`;
+   - добавить `history`.
+7. Если результат `fail`:
+   - `task.status = open`;
+   - `task.workflow_state = rejected`;
+   - заполнить `required_fixes`.
+8. Обновить индекс.
+9. Создать git-коммит.
+
+Критерий приёмки:
+
+- вердикт создаётся только в JSON;
+- задача не закрывается при fail;
+- все проверки имеют `check_id`, `expected`, `actual`.
+
+---
+
+### 15.6. `tdl-migrate`
+
+Команда:
+
+```bash
+python -m pipeline.cli <project> tdl-migrate [--dry-run] [--allow-done-from-md]
+```
+
+Действия:
+
+1. Сканировать:
+   ```text
+   Tasks/Активные
+   Tasks/Архив
+   Tasks/Отчёты
+   ```
+2. Создать JSON-задачи.
+3. Сохранить `legacy_status`.
+4. Не закрывать задачи автоматически без JSON-доказательств.
+5. Для старых отчётов создавать `migrated` report.
+6. Для старых вердиктов создавать `migrated` verdict только при разрешении.
+7. Обновить индекс.
+8. В режиме `--dry-run` ничего не писать.
+
+Критерий приёмки:
+
+- после миграции `tdl-validate` проходит без критичных ошибок;
+- старые Markdown-файлы не удалены;
+- ни одна задача не получила `done` только из legacy-статуса.
+
+---
+
+### 15.7. `tdl-validate`
+
+Команда:
+
+```bash
+python -m pipeline.cli <project> tdl-validate [task_id]
+```
+
+Действия:
+
+1. Проверить одну задачу или весь проект.
+2. Проверить:
+   - задачи;
+   - отчёты;
+   - вердикты;
+   - индекс;
+   - ссылки на файлы.
+3. Вернуть exit code:
+   - 0 — ошибок нет;
+   - 1 — есть ошибки.
+
+Вывод должен быть человекочитаемым и машинным.
+
+---
+
+### 15.8. `tdl-index`
+
+Команда:
+
+```bash
+python -m pipeline.cli <project> tdl-index
+```
+
+Действия:
+
+1. Пересканировать JSON-каталоги.
+2. Пересоздать:
+   ```text
+   Tasks/JSON/Index/tdl.index.json
+   ```
+
+---
+
+### 15.9. `tdl-status`
+
+Команда:
+
+```bash
+python -m pipeline.cli <project> tdl-status
+```
+
+Действия:
+
+1. Считать TDL JSON.
+2. Сформировать сводку:
+   - всего задач;
+   - open;
+   - done;
+   - blocked;
+   - pending_report;
+   - pending_verdict;
+   - rejected;
+   - verified.
+3. Записать статус в Markdown, например:
+   ```text
+   Tasks/Статус_конвейера.md
+   ```
+   или отдельный TDL-статус.
+
+---
+
+## 16. Изменения в `agents/agent_manager.py`
+
+`agent_manager` должен стать TDL-совместимым.
+
+### 16.1. Создание задач
+
+Функция `dispatch_chunk` должна:
+
+1. Создать не только Markdown-задачу.
+2. Создать JSON-задачу:
+   ```text
+   Tasks/JSON/Active/{task_id}.task.json
+   ```
+3. Заполнить:
+   - `task_id`;
+   - `wbs_code`;
+   - `project`;
+   - `mission`;
+   - `name`;
+   - `goal`;
+   - `acceptance_criteria`;
+   - `constraints`;
+   - `verification.commands`;
+   - `links`;
+   - `history`.
+4. Опционально создать Markdown-карточку как зерка.
+
+### 16.2. WBS для миссии
+
+При запуске миссии:
+
+```bash
+python -m agents.agent_manager mission ...
+```
+
+менеджер должен:
+
+1. Создать корневую summary-задачу миссии, если её нет.
+2. Для частей миссии создавать leaf-задачи.
+3. Назначать `wbs_code`:
+   - корень миссии: `1` или заданный `--wbs-root`;
+   - части: `1.1`, `1.2`, `1.3` и т.д.
+
+Опции CLI:
+
+```text
+--wbs-root
+--parent-wbs
+```
+
+Если не задано, использовать автоматическую генерацию.
+
+### 16.3. SUBPROMPT субагента
+
+Текущий `SUBPROMPT` должен быть дополнен.
+
+Обязательные новые требования в промпте:
+
+```text
+1. Прочитай Tasks/JSON/Active/{task_id}.task.json.
+2. Если JSON-задача отсутствует, заблокируй работу и сообщи контролёру.
+3. Не начинай выполнение, если не заполнены goal, acceptance_criteria, verification.commands.
+4. После выполнения создай Tasks/JSON/Reports/{task_id}_{date}.report.json.
+5. Отчёт должен быть заполнен: work_done, files_changed, metrics, evidence, verification_commands, open_questions.
+6. Не пиши status = done.
+7. Не закрывай задачу сам.
+8. Каждое доказательство должно быть реальным: сборка, тесты, git diff, лог, grep, файл.
+9. Если доказательств нет, оставь report_status = draft или partial.
+10. Markdown-отчёт может быть создан только как зерка из JSON.
+```
+
+### 16.4. `_ensure_report`
+
+Функция должна проверять не только Markdown-отчёт, но и JSON-отчёт.
+
+Если субагент не создал JSON-отчёт:
+
+1. Создать частичный JSON-отчёт:
+   ```json
+   "report_status": "partial"
+   ```
+2. Указать:
+   ```json
+   "problem": "Субагент не завершил JSON-отчёт"
+   ```
+3. Задача не может быть закрыта.
+
+### 16.5. Сводка менеджера
+
+`_print_summary` и `cmd_report` должны читать:
+
+```text
+Tasks/JSON/Active
+Tasks/JSON/Reports
+Tasks/JSON/Verdicts
+Tasks/JSON/Index
+```
+
+В сводке показывать:
+
+- task_id;
+- wbs_code;
+- status;
+- workflow_state;
+- наличие report;
+- наличие verdict;
+- verdict.result.
+
+---
+
+## 17. Изменения в `agents/agent_watch.py`
+
+Контролёр должен работать с TDL JSON.
+
+### 17.1. Реакция на отчёт
+
+На событие:
+
+```text
+report_done
+```
+
+или при обнаружении JSON-отчёта без вердикта:
+
+```text
+Tasks/JSON/Reports/{task_id}_*.report.json
+```
+
+запускать:
+
+```bash
+python -m pipeline.cli <project> tdl-verify <task_id>
+```
+
+### 17.2. Файловый поллинг
+
+Фолбэк должен искать:
+
+1. JSON-отчёты без JSON-вердиктов.
+2. Legacy Markdown-отчёты без вердиктов, если TDL-JSON ещё не создан.
+3. Задачи в статусе `reported` или `pending_verdict`.
+
+### 17.3. Публикация событий
+
+После вердикта публиковать:
+
+```json
+{
+  "type": "verdict",
+  "task": "A-NN",
+  "payload": {
+    "result": "pass|fail|pending",
+    "verdict": "Tasks/JSON/Verdicts/A-NN_YYYY-MM-DD.verdict.json"
+  }
+}
+```
+
+---
+
+## 18. Изменения в `agents/executor_client.py`
+
+Исполнитель должен работать с JSON-задачами.
+
+### 18.1. Приём задачи
+
+Функция `take_task` должна:
+
+1. Искать:
+   ```text
+   Tasks/JSON/Active/{task_id}.task.json
+   ```
+2. Если JSON нет, но есть legacy Markdown:
+   - создать минимальную migrated JSON-задачу;
+   - сохранить `legacy_status`;
+   - поставить `workflow_state = pending_report` или `issued`.
+3. Не брать summary-задачи.
+4. Не брать задачи без:
+   - `goal`;
+   - `acceptance_criteria`;
+   - `verification.commands`.
+
+### 18.2. Выполнение
+
+После выполнения:
+
+1. Создать JSON-отчёт.
+2. Обновить task:
+   ```json
+   "workflow_state": "reported"
+   ```
+3. Добавить запись в `history`.
+4. Опубликовать:
+   ```text
+   report_done
+   ```
+
+### 18.3. Запрет закрытия
+
+Исполнитель не имеет права менять:
+
+```json
+"status": "done"
+```
+
+---
+
+## 19. Изменения в `server/app.py`
+
+Сервер должен читать TDL JSON как источник истины.
+
+### 19.1. Новые эндпоинты
+
+Добавить:
+
+```text
+GET /api/tdl/projects
+GET /api/tdl/tasks
+GET /api/tdl/task/{task_id}
+GET /api/tdl/index
+GET /api/tdl/plan
+GET /api/tdl/reports
+GET /api/tdl/verdicts
+GET /api/tdl/activity
+```
+
+### 19.2. `GET /api/tdl/tasks`
+
+Параметры:
+
+```text
+project
+status
+workflow_state
+wbs
+task_kind
+q
+```
+
+Ответ:
+
+```json
+[
+  {
+    "task_id": "A-01",
+    "wbs_code": "1.1",
+    "name": "",
+    "status": "open",
+    "workflow_state": "in_progress",
+    "priority": "high",
+    "has_report": true,
+    "has_verdict": false,
+    "verdict_result": null,
+    "dates": {},
+    "links_count": 3,
+    "evidence_count": 0
+  }
+]
+```
+
+### 19.3. `GET /api/tdl/task/{task_id}`
+
+Ответ должен включать:
+
+```json
+{
+  "task": {},
+  "report": {},
+  "verdict": {},
+  "events": [],
+  "markdown": {
+    "task_card": "",
+    "report": "",
+    "verdict": ""
+  }
+}
+```
+
+### 19.4. Совместимость
+
+Старые эндпоинты:
+
+```text
+/api/tasks
+/api/plan
+/api/task/{task_id}
+```
+
+сохранить.
+
+Если проект TDL-enabled, они должны:
+
+- либо читать JSON;
+- либо делегировать TDL-функциям;
+- либо возвращать legacy-данные с пометкой `legacy = true`.
+
+---
+
+## 20. Изменения в `server/db.py`
+
+Добавить человекочитаемые подписи для новых событий:
+
+```python
+"tdl_task_created": "Создана TDL-задача",
+"tdl_report_created": "Создан TDL-отчёт",
+"tdl_verdict_created": "Создан TDL-вердикт",
+"tdl_task_done": "TDL-задача закрыта",
+"tdl_validation_failed": "TDL-валидация не прошла",
+```
+
+Схема SQLite не должна хранить задачи как источник истины.
+
+---
+
+## 21. Изменения в `server/static/dashboard.html`
+
+Dashboard должен отображать TDL-план.
+
+### 21.1. Обязательные колонки таблицы
+
+| WBS | ID | Задача | Статус | Workflow | Отчёт | Вердикт | Доказательства | Сроки |
+
+### 21.2. Индикаторы
+
+Добавить визуальные индикаторы:
+
+| Индикатор | Значение |
+|---|---|
+| 🟢 | done с доказательствами |
+| 🟡 | open, есть частичные артефакты |
+| 🔴 | fail или просрочено |
+| ⛔ | blocked |
+| 📄 | есть отчёт |
+| 🧾 | есть вердикт |
+| 🔗 | есть ссылки |
+| 🧪 | есть тестовое доказательство |
+
+### 21.3. Карточка задачи
+
+При клике на задачу показывать:
+
+1. Основные поля:
+   - WBS;
+   - task_id;
+   - project;
+   - module;
+   - class_name;
+   - layer;
+   - status;
+   - workflow_state.
+2. Цель.
+3. Критерии приёмки.
+4. Входные данные.
+5. Ссылки.
+6. Отчёт.
+7. Вердикт.
+8. Доказательства.
+9. Проверки.
+10. Историю.
+11. JSON-исходник задачи/отчёта/вердикта.
+
+### 21.4. Запрет ложного прогресса
+
+Если у задачи нет отчёта и вердикта, прогресс не должен отображаться как выполненный.
+
+---
+
+## 22. Миграция legacy Markdown в TDL JSON
+
+### 22.1. Mapping задачи
+
+| Старый Markdown | Новый JSON |
+|---|---|
+| `id: A-01` | `task_id` |
+| `приоритет: высокий` | `priority` |
+| `статус: verified` | `legacy_status` |
+| `постановщик: агент-менеджер` | `assignees.issued_by` |
+| `исполнитель: subagent` | `assignees.executor` |
+| `дата: 2026-08-06` | `dates.issued` |
+| `источник_запроса` | `source.type` |
+| `замечание` | `mission.name` |
+| `Контекст` | `context` |
+| `Требования` | `acceptance_criteria` |
+| `Границы` | `constraints` |
+| `Результат` | `artifacts` |
+| `Ход работы` | `history` / `progress_log` |
+
+### 22.2. Mapping отчёта
+
+| Старый Markdown | Новый JSON |
+|---|---|
+| `ОТЧЁТ: A-01` | `report_id` |
+| `Дата` | `date` |
+| `Исполнитель` | `executor` |
+| `Что было не так` | `problem` |
+| `Что сделано` | `work_done` |
+| `Доказательства` | `evidence` |
+| `Числа до/после` | `metrics` |
+| `Открытые вопросы` | `open_questions` |
+| `Как пересобрать/проверить` | `verification_commands` |
+
+### 22.3. Mapping вердикта
+
+| Старый Markdown | Новый JSON |
+|---|---|
+| `ВЕРДИКТ КОНТРОЛЁРА` | `entity_type = tdl.verdict` |
+| `Общий вердикт` | `result`, `confidence` |
+| `Механические проверки` | `checks` |
+| `Доказательства исполнителя` | `evidence_review` |
+| `Обязательные исправления` | `required_fixes` |
+| `Примечания контролёра` | `notes` |
+
+### 22.4. Консервативное правило
+
+Если старый Markdown имеет статус:
+
+```yaml
+статус: verified
+```
+
+но нет JSON-отчёта и JSON-вердикта, после миграции должно быть:
+
+```json
+{
+  "status": "open",
+  "workflow_state": "pending_verdict",
+  "legacy_status": "verified"
+}
+```
+
+Если нет даже отчёта:
+
+```json
+{
+  "status": "open",
+  "workflow_state": "pending_report",
+  "legacy_status": "verified"
+}
+```
+
+---
+
+## 23. Требования к доказательствам
+
+Каждое доказательство в JSON-отчёте должно содержать минимум:
+
+```json
+{
+  "evidence_id": "E1",
+  "type": "build_log",
+  "name": "Сборка проекта",
+  "command": "dotnet build ...",
+  "result": "pass",
+  "links": []
+}
+```
+
+Для тестов:
+
+```json
+{
+  "evidence_id": "E2",
+  "type": "test_report",
+  "name": "Тесты",
+  "command": "dotnet test ...",
+  "exit_code": 0,
+  "result": "pass",
+  "metrics": {
+    "passed": 8,
+    "failed": 0,
+    "skipped": 0,
+    "total": 8
+  },
+  "baseline": {
+    "passed": 8,
+    "failed": 0,
+    "skipped": 0,
+    "total": 8
+  }
+}
+```
+
+Если `exit_code != 0`, обязательно:
+
+```json
+{
+  "acceptance_rule": "no_regression_against_baseline",
+  "baseline": {},
+  "details": "Почему такой результат допустим"
+}
+```
+
+---
+
+## 24. Требования к ссылкам
+
+Все ссылки должны быть явными.
+
+Типы:
+
+```text
+task_source
+assignment
+reference
+source_file
+report
+verdict
+commit
+log
+test_report
+dxf
+screenshot
+artifact
+```
+
+Формат:
+
+```json
+{
+  "type": "report",
+  "href": "file://Tasks/JSON/Reports/A-01_2026-08-06.report.json"
+}
+```
+
+Для commit:
+
+```json
+{
+  "type": "commit",
+  "ref": "agent/A-01"
+}
+```
+
+Запрещено:
+
+- «файл где-то в папке»;
+- «см. последний отчёт»;
+- «проверено вручную» без ссылки на лог, файл или артефакт.
+
+---
+
+## 25. Требования к WBS
+
+### 25.1. Глубина
+
+Максимум 4 уровня:
+
+```text
+1
+1.1
+1.1.1
+1.1.1.1
+```
+
+### 25.2. Summary
+
+Summary-задачи:
+
+```json
+"is_summary": true
+```
+
+Используются только для группировки.
+
+Запрещено:
+
+1. Назначать summary как исполнительскую задачу.
+2. Создавать для summary доказательства.
+3. Закрывать summary вручную.
+4. Использовать summary для фактического выполнения.
+
+### 25.3. Leaf
+
+Исполняются только leaf-задачи:
+
+```json
+"is_summary": false
+```
+
+Leaf должна быть:
+
+1. Атомарной.
+2. Измеримой.
+3. Проверяемой.
+4. Имеющей критерии приёмки.
+5. Имеющей ожидаемый результат.
+
+---
+
+## 26. Декомпозиция задания
+
+Ниже — обязательная декомпозиция работы по изменению `dev-pipeline`.
+
+## Корневая задача
+
+```text
+1. Перевод dev-pipeline на TDL JSON
+```
+
+## Листовые задачи
+
+| WBS | Наименование | Описание | Критерии приёмки |
+|---|---|---|---|
+| 1.1 | Создать TDL-схему и модели | Добавить `pipeline/tdl/schema.py`, `pipeline/tdl/models.py` | Есть константы статусов, обязательных полей, dataclass-модели |
+| 1.2 | Создать TDL-хранилище | Добавить `pipeline/tdl/store.py` | JSON читается/пишется, индекс пересоздаётся, ID генерируются без конфликтов |
+| 1.3 | Создать TDL-валидатор | Добавить `pipeline/tdl/validate.py` | Ошибки возвращаются списком; done без доказательств невозможен |
+| 1.4 | Создать TDL-миграцию | Добавить `pipeline/tdl/migrate.py` | Legacy Markdown переносится в JSON без удаления и без автозакрытия |
+| 1.5 | Создать TDL-рендер | Добавить `pipeline/tdl/render.py` | Markdown генерируется из JSON и не является источником истины |
+| 1.6 | Обновить конфигурацию | Изменить `pipeline/config.py` | Появилась секция `tdl`, есть значения по умолчанию |
+| 1.7 | Обновить CLI | Изменить `pipeline/cli.py` | Команды `tdl-init`, `tdl-dispatch`, `tdl-start`, `tdl-report`, `tdl-verify`, `tdl-migrate`, `tdl-validate`, `tdl-index`, `tdl-status` работают |
+| 1.8 | Обновить checks | Изменить `pipeline/checks.py` | Проверки возвращают structured JSON для verdict |
+| 1.9 | Обновить agent_manager | Изменить `agents/agent_manager.py` | Менеджер создаёт JSON-задачи и требует JSON-отчёты |
+| 1.10 | Обновить executor_client | Изменить `agents/executor_client.py` | Исполнитель читает JSON-задачи и создаёт JSON-отчёты |
+| 1.11 | Обновить agent_watch | Изменить `agents/agent_watch.py` | Контролёр запускает `tdl-verify` по JSON-отчётам |
+| 1.12 | Обновить сервер | Изменить `server/app.py` | Есть `/api/tdl/*`, данные читаются из JSON |
+| 1.13 | Обновить dashboard | Изменить `server/static/dashboard.html` | Отображаются WBS, статусы, отчёты, вердикты, доказательства |
+| 1.14 | Обновить события | Изменить `server/db.py` | Новые TDL-события имеют человекочитаемые подписи |
+| 1.15 | Добавить тесты | Создать `tests/test_tdl.py` | Проверяются валидаторы, store, migration, closure rules |
+| 1.16 | Обновить combined.txt | Синхронизировать дамп | `combined.txt` содержит все новые и изменённые файлы без пропусков |
+
+---
+
+## 27. Порядок выполнения
+
+Рекомендуемая последовательность:
+
+1. Добавить `pipeline/tdl/` без ломки старых команд.
+2. Добавить конфигурацию TDL.
+3. Добавить CLI-команды.
+4. Обновить `checks.py` для structured-вывода.
+5. Обновить `agent_manager.py`.
+6. Обновить `executor_client.py` и `agent_watch.py`.
+7. Обновить `server/app.py`.
+8. Обновить dashboard.
+9. Написать миграцию legacy.
+10. Добавить тесты.
+11. Обновить `combined.txt`.
+12. Прогнать валидацию и smoke-проверки.
+
+---
+
+## 28. Тесты и проверки
+
+Нужно создать:
+
+```text
+tests/__init__.py
+tests/test_tdl.py
+```
+
+Использовать стандартный `unittest`, чтобы не добавлять обязательных зависимостей.
+
+### 28.1. Обязательные unit-проверки
+
+1. Валидный task проходит валидацию.
+2. Task без `goal` не проходит валидацию.
+3. Task без `acceptance_criteria` не проходит валидацию для execution.
+4. Task со статусом `done` без report не проходит валидацию.
+5. Task со статусом `done` без verdict не проходит валидацию.
+6. Verdict `fail` без `required_fixes` не проходит валидацию.
+7. Report без `evidence` не проходит валидацию.
+8. Evidence без `evidence_id` не проходит валидацию.
+9. `can_close_task` возвращает false, если нет доказательств.
+10. `can_close_task` возвращает true только при pass-вердикте.
+11. WBS глубже 4 уровней отклоняется.
+12. Дубликат `task_id` отклоняется.
+
+### 28.2. Smoke-проверки CLI
+
+Для любого доступного проекта:
+
+```bash
+python -m pipeline.cli list
+python -m pipeline.cli <project> tdl-init
+python -m pipeline.cli <project> tdl-validate
+python -m pipeline.cli <project> tdl-index
+python -m pipeline.cli <project> tdl-status
+```
+
+Все команды должны завершаться без аварий.
+
+### 28.3. Проверка сервера
+
+```bash
+python -m server --host 127.0.0.1 --port 8787
+```
+
+Затем проверить:
+
+```text
+GET /healthz
+GET /api/tdl/projects
+GET /api/tdl/tasks?project=<project>
+GET /api/tdl/index?project=<project>
+```
+
+Ответы должны быть валидным JSON.
+
+---
+
+## 29. Доказательства выполнения самого задания
+
+Исполнитель этой задачи обязан приложить:
+
+1. `git diff` изменённых файлов.
+2. Лог:
+   ```bash
+   python -m compileall pipeline agents server tests
+   ```
+3. Лог:
+   ```bash
+   python -m unittest discover -s tests -q
+   ```
+4. Лог:
+   ```bash
+   python -m pipeline.cli <project> tdl-validate
+   ```
+5. Пример созданной JSON-задачи.
+6. Пример JSON-отчёта.
+7. Пример JSON-вердикта.
+8. Пример `tdl.index.json`.
+9. При необходимости скриншот dashboard.
+10. Отчёт по форме TDL JSON.
+
+Без этих доказательств само задание не может быть закрыто.
+
+---
+
+## 30. Критерии приёмки изменения
+
+Изменение считается выполненным, если:
+
+1. В `dev-pipeline` существует пакет `pipeline/tdl`.
+2. JSON-файлы задач, отчётов и вердиктов создаются по правилам.
+3. `tdl-validate` проходит без ошибок на корректных данных.
+4. Задача не закрывается без:
+   - report;
+   - evidence;
+   - verdict;
+   - pass.
+5. Legacy Markdown мигрируется без удаления.
+6. Старый статус `verified` не приводит автоматически к TDL `done` без JSON-доказательств.
+7. CLI-команды TDL работают.
+8. Сервер отдаёт TDL API.
+9. Dashboard показывает WBS, статусы, отчёты, вердикты, доказательства.
+10. `agent_manager` создаёт JSON-задачи.
+11. Субагенты обязаны создавать JSON-отчёты.
+12. Контролёр создаёт JSON-вердикты.
+13. `combined.txt` обновлён и содержит все новые файлы.
+14. Тесты проходят.
+15. Нет комментариев внутри JSON.
+16. Все даты в ISO 8601.
+17. Все ссылки явные.
+
+---
+
+## 31. Анти-ложь checklist для исполнителя
+
+Перед отметкой «выполнено» исполнитель обязан проверить:
+
+```text
+[ ] Задача является листовой.
+[ ] Заполнены goal и acceptance_criteria.
+[ ] Заполнены verification.commands.
+[ ] Создан JSON-отчёт.
+[ ] work_done не пуст.
+[ ] evidence не пуст.
+[ ] Каждое доказательство имеет ссылку или команду.
+[ ] Сборка/тесты реально запускались.
+[ ] Нет выдуманных результатов.
+[ ] Создан JSON-вердикт.
+[ ] verdict.result = pass.
+[ ] verdict.can_move_forward = true.
+[ ] task.status изменён на done только после pass.
+[ ] История изменения сохранена.
+[ ] combined.txt синхронизирован.
+```
+
+Если хотя бы один пункт не выполнен, задача остаётся `open`.
+
+---
+
+## 32. Машинный шаблон корневой задачи задания
+
+Ниже приведён пример корневой summary-задачи для самой работы по изменению `dev-pipeline`.
+
+Файл:
+
+```text
+Tasks/JSON/Active/TDL-01.task.json
+```
+
+```json
+{
+  "schema_version": "1.0.0",
+  "entity_type": "tdl.task",
+  "task_id": "TDL-01",
+  "external_ids": [
+    "dev-pipeline-tdl-json-migration"
+  ],
+  "wbs_code": "1",
+  "parent_wbs": null,
+  "is_summary": true,
+  "project": {
+    "code": "dev-pipeline",
+    "name": "dev-pipeline"
+  },
+  "mission": {
+    "name": "Перевод dev-pipeline на TDL JSON",
+    "part": "1/1"
+  },
+  "module": "pipeline",
+  "class_name": null,
+  "layer": "core",
+  "name": "Перевод dev-pipeline на TDL JSON",
+  "description": "Изменить dev-pipeline так, чтобы задачи, отчёты и вердикты хранились в TDL JSON, а Markdown был вторичным рендером.",
+  "status": "open",
+  "status_display": "Открыто",
+  "workflow_state": "issued",
+  "legacy_status": null,
+  "priority": "high",
+  "task_kind": "group",
+  "goal": "Сделать JSON источником истины для задач, отчётов и вердиктов dev-pipeline и запретить закрытие задач без доказательств.",
+  "context": "Текущий dev-pipeline использует Markdown frontmatter и Markdown-отчёты. Требуется перевести систему на TDL JSON согласно прилагаемой структуре.",
+  "inputs": [
+    {
+      "type": "source_file",
+      "path": "combined.txt"
+    },
+    {
+      "type": "reference",
+      "path": "Задачи TaskFromJson.txt"
+    },
+    {
+      "type": "reference",
+      "path": "TDL Task.txt"
+    }
+  ],
+  "acceptance_criteria": [
+    "Создан пакет pipeline/tdl.",
+    "JSON-файлы task/report/verdict поддерживаются.",
+    "CLI имеет команды tdl-init, tdl-dispatch, tdl-start, tdl-report, tdl-verify, tdl-migrate, tdl-validate, tdl-index, tdl-status.",
+    "Задача не может получить status=done без JSON-отчёта, доказательств, JSON-вердикта и result=pass.",
+    "Legacy Markdown мигрируется без удаления.",
+    "Сервер имеет /api/tdl/* эндпоинты.",
+    "Dashboard показывает WBS, статусы, отчёты, вердикты и доказательства.",
+    "combined.txt обновлён."
+  ],
+  "constraints": [
+    "Не удалять legacy Markdown.",
+    "Не закрывать задачи автоматически на основании legacy_status.",
+    "Не использовать комментарии в JSON.",
+    "Не ломать существующие команды pipeline.cli без замены.",
+    "Не коммитить bin, obj, .git, .idea, .opencode, TestResults."
+  ],
+  "dependencies": [],
+  "dates": {
+    "issued": "YYYY-MM-DD",
+    "start": null,
+    "finish": null
+  },
+  "assignees": {
+    "issued_by": "controller",
+    "executor": "subagent",
+    "controller": "controller"
+  },
+  "source": {
+    "type": "mission",
+    "name": "Перевод dev-pipeline на TDL JSON",
+    "part": "1/1"
+  },
+  "links": [
+    {
+      "type": "assignment",
+      "href": "file://Tasks/Входящие/Задание_на_изменение_dev-pipeline_TDL_JSON.md"
+    },
+    {
+      "type": "reference",
+      "href": "file://Задачи TaskFromJson.txt"
+    },
+    {
+      "type": "reference",
+      "href": "file://TDL Task.txt"
+    },
+    {
+      "type": "source_file",
+      "href": "file://combined.txt"
+    }
+  ],
+  "artifacts": [],
+  "verification": {
+    "required": true,
+    "method": "python_compile_and_unit_tests",
+    "commands": [
+      "python -m compileall pipeline agents server tests",
+      "python -m unittest discover -s tests -q",
+      "python -m pipeline.cli list",
+      "python -m pipeline.cli dev-pipeline tdl-init",
+      "python -m pipeline.cli dev-pipeline tdl-validate"
+    ],
+    "baseline": null,
+    "result": null,
+    "verified_by": null,
+    "verdict_ref": null
+  },
+  "history": [
+    {
+      "timestamp": "YYYY-MM-DDTHH:MM:SSZ",
+      "actor": "controller",
+      "action": "task_issued",
+      "details": "Создано задание на перевод dev-pipeline на TDL JSON."
+    }
+  ]
+}
+```
+
+---
+
+## 33. Машинный шаблон листовой задачи
+
+Пример листовой задачи для части `1.3` — валидатор.
+
+Файл:
+
+```text
+Tasks/JSON/Active/TDL-03.task.json
+```
+
+```json
+{
+  "schema_version": "1.0.0",
+  "entity_type": "tdl.task",
+  "task_id": "TDL-03",
+  "external_ids": [
+    "tdl-validator"
+  ],
+  "wbs_code": "1.3",
+  "parent_wbs": "1",
+  "is_summary": false,
+  "project": {
+    "code": "dev-pipeline",
+    "name": "dev-pipeline"
+  },
+  "mission": {
+    "name": "Перевод dev-pipeline на TDL JSON",
+    "part": "3/16"
+  },
+  "module": "pipeline/tdl",
+  "class_name": "validate",
+  "layer": "core",
+  "name": "Реализовать TDL-валидатор",
+  "description": "Создать pipeline/tdl/validate.py с проверками task, report, verdict и правилами закрытия задач.",
+  "status": "open",
+  "status_display": "Открыто",
+  "workflow_state": "issued",
+  "legacy_status": null,
+  "priority": "high",
+  "task_kind": "execution",
+  "goal": "Запретить некорректное закрытие TDL-задач и гарантировать наличие доказательств перед status=done.",
+  "context": "Для TDL JSON нужен валидатор, который проверяет обязательные поля, статусы, WBS, доказательства и правила закрытия.",
+  "inputs": [
+    {
+      "type": "reference",
+      "path": "Задачи TaskFromJson.txt"
+    },
+    {
+      "type": "reference",
+      "path": "TDL Task.txt"
+    },
+    {
+      "type": "source_file",
+      "path": "pipeline/tdl/schema.py"
+    },
+    {
+      "type": "source_file",
+      "path": "pipeline/tdl/models.py"
+    }
+  ],
+  "acceptance_criteria": [
+    "validate_task проверяет обязательные поля.",
+    "validate_report проверяет evidence и verification_commands.",
+    "validate_verdict проверяет checks и result.",
+    "can_close_task возвращает false без report, evidence, verdict и pass.",
+    "Ошибки возвращаются списком объектов с path, code, message.",
+    "Добавлены unit-тесты для валидатора."
+  ],
+  "constraints": [
+    "Не писать status=done.",
+    "Не удалять legacy Markdown.",
+    "Не использовать комментарии в JSON."
+  ],
+  "dependencies": [
+    "TDL-01",
+    "TDL-02"
+  ],
+  "dates": {
+    "issued": "YYYY-MM-DD",
+    "start": null,
+    "finish": null
+  },
+  "assignees": {
+    "issued_by": "controller",
+    "executor": "subagent",
+    "controller": "controller"
+  },
+  "source": {
+    "type": "mission",
+    "name": "Перевод dev-pipeline на TDL JSON",
+    "part": "3/16"
+  },
+  "links": [
+    {
+      "type": "task_source",
+      "href": "file://Tasks/JSON/Active/TDL-03.task.json"
+    },
+    {
+      "type": "reference",
+      "href": "file://Задачи TaskFromJson.txt"
+    }
+  ],
+  "artifacts": [],
+  "verification": {
+    "required": true,
+    "method": "unit_tests",
+    "commands": [
+      "python -m unittest discover -s tests -q",
+      "python -m compileall pipeline/tdl"
+    ],
+    "baseline": null,
+    "result": null,
+    "verified_by": null,
+    "verdict_ref": null
+  },
+  "history": [
+    {
+      "timestamp": "YYYY-MM-DDTHH:MM:SSZ",
+      "actor": "controller",
+      "action": "task_issued",
+      "details": "Создана листовая задача на реализацию TDL-валидатора."
+    }
+  ]
+}
+```
+
+---
+
+## 34. Шаблон JSON-отчёта для исполнителя этого задания
+
+Файл:
+
+```text
+Tasks/JSON/Reports/TDL-01_YYYY-MM-DD.report.json
+```
+
+Минимальный шаблон:
+
+```json
+{
+  "schema_version": "1.0.0",
+  "entity_type": "tdl.report",
+  "report_id": "TDL-01_YYYY-MM-DD",
+  "task_ref": "TDL-01",
+  "wbs_ref": "1",
+  "date": "YYYY-MM-DD",
+  "report_status": "draft",
+  "executor": {
+    "name": "subagent",
+    "agent": "",
+    "role": "Агент-2"
+  },
+  "problem": "dev-pipeline использует Markdown как источник истины, что позволяет закрыть задачу без формализованных доказательств.",
+  "work_done": [],
+  "files_changed": [],
+  "metrics": [],
+  "evidence": [],
+  "open_questions": [],
+  "verification_commands": [
+    "python -m compileall pipeline agents server tests",
+    "python -m unittest discover -s tests -q",
+    "python -m pipeline.cli list",
+    "python -m pipeline.cli dev-pipeline tdl-init",
+    "python -m pipeline.cli dev-pipeline tdl-validate"
+  ],
+  "links": [
+    {
+      "type": "task",
+      "href": "file://Tasks/JSON/Active/TDL-01.task.json"
+    }
+  ]
+}
+```
+
+Перед закрытием:
+
+```json
+"report_status": "final"
+```
+
+---
+
+## 35. Шаблон JSON-вердикта для контролёра
+
+Файл:
+
+```text
+Tasks/JSON/Verdicts/TDL-01_YYYY-MM-DD.verdict.json
+```
+
+```json
+{
+  "schema_version": "1.0.0",
+  "entity_type": "tdl.verdict",
+  "verdict_id": "TDL-01_YYYY-MM-DD",
+  "task_ref": "TDL-01",
+  "report_ref": "TDL-01_YYYY-MM-DD",
+  "date": "YYYY-MM-DD",
+  "result": "pending",
+  "confidence": null,
+  "can_move_forward": false,
+  "checks": [],
+  "evidence_review": [],
+  "required_fixes": [],
+  "notes": [],
+  "links": [
+    {
+      "type": "task",
+      "href": "file://Tasks/JSON/Active/TDL-01.task.json"
+    },
+    {
+      "type": "report",
+      "href": "file://Tasks/JSON/Reports/TDL-01_YYYY-MM-DD.report.json"
+    }
+  ]
+}
+```
+
+Допустимые значения:
+
+```json
+"result": "pass"
+"result": "fail"
+"result": "pending"
+```
+
+---
+
+## 36. Пример целевого `tdl.index.json`
+
+Файл:
+
+```text
+Tasks/JSON/Index/tdl.index.json
+```
+
+```json
+{
+  "schema_version": "1.0.0",
+  "entity_type": "tdl.index",
+  "generated_at": "YYYY-MM-DDTHH:MM:SSZ",
+  "tasks": [
+    {
+      "task_id": "TDL-01",
+      "path": "Tasks/JSON/Active/TDL-01.task.json",
+      "wbs_code": "1",
+      "status": "open",
+      "workflow_state": "issued",
+      "report_refs": [],
+      "verdict_refs": []
+    },
+    {
+      "task_id": "TDL-02",
+      "path": "Tasks/JSON/Active/TDL-02.task.json",
+      "wbs_code": "1.1",
+      "status": "open",
+      "workflow_state": "issued",
+      "report_refs": [],
+      "verdict_refs": []
+    },
+    {
+      "task_id": "TDL-03",
+      "path": "Tasks/JSON/Active/TDL-03.task.json",
+      "wbs_code": "1.3",
+      "status": "open",
+      "workflow_state": "issued",
+      "report_refs": [],
+      "verdict_refs": []
+    }
+  ]
+}
+```
+
+---
+
+## 37. Требования к обновлению `combined.txt`
+
+После реализации всех изменений `combined.txt` должен содержать как минимум новые блоки:
+
+```text
+FILE: pipeline\tdl\__init__.py
+FILE: pipeline\tdl\schema.py
+FILE: pipeline\tdl\models.py
+FILE: pipeline\tdl\store.py
+FILE: pipeline\tdl\validate.py
+FILE: pipeline\tdl\migrate.py
+FILE: pipeline\tdl\render.py
+FILE: tests\__init__.py
+FILE: tests\test_tdl.py
+```
+
+И изменённые блоки:
+
+```text
+FILE: pipeline\config.py
+FILE: pipeline\models.py
+FILE: pipeline\templates.py
+FILE: pipeline\checks.py
+FILE: pipeline\cli.py
+FILE: agents\agent_manager.py
+FILE: agents\agent_watch.py
+FILE: agents\executor_client.py
+FILE: server\app.py
+FILE: server\db.py
+FILE: server\static\dashboard.html
+```
+
+Если `combined.txt` используется как вход для генерации кода, итоговый файл должен быть полным, без сокращений.
+
+---
+
+## 38. Итоговая формулировка для агента-исполнителя
+
+Можно вставить в промпт исполнителю:
+
+```text
+Ты должен изменить dev-pipeline так, чтобы система задач соответствовала TDL JSON.
+
+Источник истины — JSON:
+Tasks/JSON/Active/*.task.json
+Tasks/JSON/Reports/*.report.json
+Tasks/JSON/Verdicts/*.verdict.json
+Tasks/JSON/Index/tdl.index.json
+
+Markdown может оставаться только вторичным рендером.
+
+Запрещено:
+- ставить status=done без JSON-отчёта;
+- ставить status=done без доказательств;
+- ставить status=done без JSON-вердикта;
+- ставить status=done, если verdict.result != "pass";
+- удалять legacy Markdown;
+- создавать JSON с комментариями;
+- выдумывать доказательства.
+
+Нужно реализовать:
+1. pipeline/tdl/schema.py
+2. pipeline/tdl/models.py
+3. pipeline/tdl/store.py
+4. pipeline/tdl/validate.py
+5. pipeline/tdl/migrate.py
+6. pipeline/tdl/render.py
+7. CLI-команды tdl-*
+8. Обновление agents
+9. Обновление server/app.py
+10. Обновление dashboard
+11. Тесты
+12. Обновление combined.txt
+
+Каждое изменение должно быть подтверждено:
+- git diff;
+- compile log;
+- unit test log;
+- CLI smoke log;
+- примерами JSON-файлов.
+```
+
+---
+
+## 39. Минимальный Definition of Done
+
+Работа считается завершённой, если:
+
+1. JSON-структура создана.
+2. JSON является источником истины.
+3. Задачи без доказательств не закрываются.
+4. Legacy Markdown сохранён.
+5. Миграция работает.
+6. CLI работает.
+7. Агенты используют JSON.
+8. Сервер и dashboard показывают TDL.
+9. Тесты проходят.
+10. `combined.txt` обновлён.
+11. Есть JSON-отчёт исполнителя.
+12. Есть JSON-вердикт контролёра.
+13. `task.status = done` установлен только после `verdict.result = pass`.

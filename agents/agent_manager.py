@@ -35,7 +35,23 @@ from pipeline.templates import now               # noqa: E402
 from pipeline.cli import cmd_dispatch            # noqa: E402
 import argparse as _ap                           # noqa: E402
 
-OPENCODE = r"C:\Users\Strakhov\AppData\Roaming\npm\opencode.cmd"
+
+def _opencode_cmd() -> str:
+    """Путь к opencode: env OPENCODE_CMD, затем поиск в PATH/стандартных местах."""
+    env = os.environ.get("OPENCODE_CMD")
+    if env and os.path.exists(env):
+        return env
+    found = shutil.which("opencode")
+    if found:
+        return found
+    # npm global on Windows
+    npm = Path(os.environ.get("APPDATA", "")) / "npm" / "opencode.cmd"
+    if npm.exists():
+        return str(npm)
+    return "opencode"
+
+
+OPENCODE = _opencode_cmd()
 DEFAULT_MODEL = "opencode/deepseek-v4-flash-free"  # экономия: free-модель по умолчанию
 SERVER_URL = "http://127.0.0.1:8787"
 
