@@ -302,6 +302,10 @@ def run_subagent(cfg, task_id: str, report_path: Path, log_path: Path,
         cmd += ["-m", model]
     if agent:
         cmd += ["--agent", agent]
+    # Прикрепить файл задачи как вложение: субагент гарантированно видит постановку
+    # (иначе при загрузке скилла путается «какой файл?»).
+    if task_file and task_file.exists():
+        cmd += ["-f", str(task_file)]
     # --auto: авто-подтверждение разрешений (иначе неинтерактивный субагент
     # останавливается на запросе записи файла и не завершает задачу)
     cmd += ["--auto"]
