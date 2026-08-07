@@ -224,6 +224,59 @@ def subagent_env(cfg):
     )
 
 
+def _write_task_md_from_tdl(cfg, task_id: str, tdl_task: dict, dst) -> None:
+    """Создать MD-постановку (для legacy-совместимости) из TDL JSON-задачи."""
+    name = tdl_task.get("name", task_id)
+    goal = tdl_task.get("goal", "")
+    criteria = tdl_task.get("acceptance_criteria") or [goal]
+    module = tdl_task.get("module", "")
+    class_name = tdl_task.get("class_name", "")
+    layer = tdl_task.get("layer", "")
+    wbs = tdl_task.get("wbs_code", "")
+    content = f"""---
+id: {task_id}
+приоритет: {tdl_task.get('priority', 'средний')}
+статус: open
+постановщик: агент-менеджер (tdl-plan)
+исполнитель: subagent
+дата: {now()}
+wbs: {wbs}
+module: {module}
+class_name: {class_name}
+layer: {layer}
+---
+
+# ЗАДАЧА: {name} (WBS {wbs})
+
+## Контекст
+{goal}
+
+## Модуль / Класс / Слой
+- Модуль: {module or '—'}
+- Класс: {class_name or '—'}
+- Слой: {layer or '—'}
+
+## Требования (критерии приёмки)
+"""
+    for i, c in enumerate(criteria, 1):
+        content += f"{i}. {c}\n"
+    content += f"""
+## Границы (что НЕ делать)
+- Не менять архитектуру сверх задачи; не трогать файлы вне своей части.
+- Не коммитить: .idea\\, .opencode\\, bin\\obj, TestResults\\.
+- Не создавать субагентов; задачу самому не закрывать (закрытие — только контролёр).
+
+## Результат (куда положить артефакты)
+Отчёт — Tasks\\Отчёты\\{task_id}_Отчёт_<дата>.md по шаблону протокола;
+коммит agent/{task_id}.
+
+## Ход работы (заполняет исполнитель)
+- (задача выдана {now()})
+"""
+    dst.parent.mkdir(parents=True, exist_ok=True)
+    dst.write_text(content, encoding="utf-8")
+
+
 def run_subagent(cfg, task_id: str, report_path: Path, log_path: Path,
                  model: str = "", agent: str = "", skill: str = "", client=None,
                  worker: str = "") -> int:
@@ -237,8 +290,15 @@ def run_subagent(cfg, task_id: str, report_path: Path, log_path: Path,
         task_file = Path(f)
         break
     if not task_file:
-        print(f"  [manager] задача {task_id} не найдена в Активные")
-        return 2
+        # фолбэк: нет Markdown — создать постановку из TDL JSON (источник истины)
+        from pipeline.tdl import store as tdl_store
+        tdl_task = tdl_store.load_task(cfg, task_id)
+        if tdl_task:
+            task_file = cfg.abs_tasks_dir("active") / f"{task_id}_{slug(tdl_task.get('name', task_id))}.md"
+            _write_task_md_from_tdl(cfg, task_id, tdl_task, task_file)
+        else:
+            print(f"  [manager] задача {task_id} не найдена в Активные и в TDL JSON")
+            return 2
 
     # open -> in_progress
     from pipeline.models import Task
