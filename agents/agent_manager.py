@@ -19,6 +19,7 @@
 from __future__ import annotations
 
 import argparse
+import datetime
 import glob
 import os
 import re
@@ -52,7 +53,8 @@ def _opencode_cmd() -> str:
 
 
 OPENCODE = _opencode_cmd()
-DEFAULT_MODEL = "opencode/deepseek-v4-flash-free"  # экономия: free-модель по умолчанию
+DEFAULT_MODEL = "opencode/deepseek-v4-flash"  # стабильная модель (2x usage); flash-free глючит на длинных промптах
+SUBAGENT_TIMEOUT = 1800  # анти-зависание: субагент без результата > 30 мин убивается
 SERVER_URL = "http://127.0.0.1:8787"
 DEV_PIPELINE_DIR = Path(__file__).resolve().parent.parent  # корень dev-pipeline (не хардкод E:\)
 
@@ -396,15 +398,32 @@ def run_subagent(cfg, task_id: str, report_path: Path, log_path: Path,
     # --auto: авто-подтверждение разрешений (иначе неинтерактивный субагент
     # останавливается на запросе записи файла и не завершает задачу)
     cmd += ["--auto"]
+    # PID-файл субагента: сторож может обнаружить и убить зависший процесс
+    pid_file = log_path.parent / f"{task_id}.pid"
+    pid_file.parent.mkdir(parents=True, exist_ok=True)
     try:
-        r = subprocess.run(cmd, cwd=str(cfg.root),
-                           capture_output=True, text=True, encoding="utf-8",
-                           errors="replace", timeout=7200)
-        log_path.write_text((r.stdout or "") + (r.stderr or ""), encoding="utf-8")
-        return r.returncode
+        proc = subprocess.Popen(cmd, cwd=str(cfg.root),
+                                stdout=subprocess.PIPE, stderr=subprocess.PIPE,
+                                text=True, encoding="utf-8", errors="replace")
+        pid_file.write_text(str(proc.pid), encoding="utf-8")
+        try:
+            out, err = proc.communicate(timeout=SUBAGENT_TIMEOUT)
+            rc = proc.returncode
+        except subprocess.TimeoutExpired:
+            # зависший субагент: убить, пометить таймаут
+            proc.kill()
+            out, err = proc.communicate(timeout=10)
+            rc = 124
+        log_path.write_text((out or "") + (err or ""), encoding="utf-8")
+        return rc
     except Exception as e:
         log_path.write_text(f"ОШИБКА ЗАПУСКА: {e}", encoding="utf-8")
         return 3
+    finally:
+        try:
+            pid_file.unlink(missing_ok=True)
+        except Exception:
+            pass
 
 
 def run_subagent_demo(cfg, task_id: str, report_path: Path):
@@ -569,7 +588,7 @@ def _run_batch(cfg, ids, args):
             rc = run_subagent(cfg, tid, report, log, model=model, agent=agent, skill=skill,
                               client=client, worker=worker)
             results[tid] = rc
-            ok = _ensure_report(cfg, tid)
+            ok = _ensure_report(cfg, tid, rc)
             _publish(cfg, client, "subagent_finished", tid,
                      {"rc": rc, "report": ok})
             print(f"  [manager] {tid}: rc={rc}, отчёт={'есть' if ok else 'НЕТ'}")
@@ -581,7 +600,7 @@ def _run_batch(cfg, ids, args):
             log = logs_dir / f"{tid}_run.log"
             rc = run_subagent(cfg, tid, report, log, model=model, agent=agent, skill=skill,
                               client=client, worker=worker)
-            ok = _ensure_report(cfg, tid)
+            ok = _ensure_report(cfg, tid, rc)
             _publish(cfg, client, "subagent_finished", tid,
                      {"rc": rc, "report": ok})
             return tid, rc, ok
@@ -604,47 +623,35 @@ def _print_summary(cfg, ids, results):
     print("Дальше: контролёр запускает verify по каждой задаче.")
 
 
-def _ensure_report(cfg, tid: str) -> bool:
-    """Если субагент не создал отчёт, но задача была взята (in_progress) —
-    сгенерировать отчёт-заглушку «работа начата, отчёт не завершён».
-    Возвращает True, если отчёт есть (создан субагентом или менеджером)."""
+def _ensure_report(cfg, tid: str, rc: int) -> bool:
+    """Проверяет наличие отчёта исполнителя. Фейковый отчёт НЕ создаёт —
+    он маскирует обрывы/зависания субагента. При rc != 0 или отсутствии
+    отчёта — помечает задачу stalled (TDL history) и возвращает False."""
     reports_dir = cfg.abs_tasks_dir("reports")
     if glob.glob(str(reports_dir / (tid + "_Отчёт_*"))):
         return True
-    # задача была взята? (in_progress / done_report)
-    task_file = None
-    for f in glob.glob(str(cfg.abs_tasks_dir("active") / (tid + "_*.md"))):
-        task_file = Path(f)
-        break
-    if not task_file:
-        return False
-    from pipeline.models import Task
-    t = Task.from_file(task_file)
-    if t.status not in ("in_progress", "done_report"):
-        return False
-    report = reports_dir / f"{tid}_Отчёт_{now()}.md"
-    report.write_text(
-        f"# ОТЧЁТ: {tid} — субагент не завершил отчёт (менеджер)\n\n"
-        f"**Дата:** {now()} | **Статус:** partial\n\n"
-        "## Что было не так\nСубагент (opencode run) не создал отчётный файл — обрыв сессии "
-        "после выполнения работы (лог в Tasks\\Конвейер\\logs\\).\n\n"
-        "## Что сделано\nЗадача была взята (статус in_progress); фактические изменения "
-        "нужно проверить по git diff и логу субагента.\n\n"
-        "## Доказательства\nЛог субагента: Tasks\\Конвейер\\logs\\%s_run.log\n\n"
-        "## Открытые вопросы\nПроверить изменения вручную (git status/diff), запустить verify.\n\n"
-        "## Как пересобрать/проверить\npython -m pipeline.cli verify <project> %s" % (tid, tid),
-        encoding="utf-8")
-    # TDL JSON-отчёт (источник истины)
-    if getattr(cfg, "tdl_enabled", True):
-        try:
-            from pipeline.tdl import cli as tdl_cli
-            from pipeline.tdl import store as tdl_store
-            if tdl_store.load_task(cfg, tid):
-                tdl_cli.tdl_report(cfg, _ap.Namespace(
-                    task=tid, final=False, from_md=str(report)))
-        except Exception as e:
-            print(f"  [manager] TDL-отчёт {tid} не создан: {e}")
-    return True
+    _mark_stalled(cfg, tid,
+                  f"субагент rc={rc} без отчёта — обрыв/зависание сессии, нужен редиспатч "
+                  f"(лог: Tasks\\Конвейер\\logs\\{tid}_run.log)")
+    return False
+
+
+def _mark_stalled(cfg, tid: str, reason: str):
+    """Пометка stalled в TDL history (источник истины) + печать."""
+    try:
+        from pipeline.tdl import store as tdl_store
+        t = tdl_store.load_task(cfg, tid)
+        if t:
+            t["history"].append({
+                "timestamp": datetime.datetime.now(datetime.timezone.utc).strftime("%Y-%m-%dT%H:%M:%SZ"),
+                "actor": "agent-manager", "action": "task_stalled",
+                "details": reason,
+            })
+            tdl_store.save_task(cfg, t)
+            tdl_store.rebuild_index(cfg)
+            print(f"  [manager] {tid}: пометка task_stalled — {reason}")
+    except Exception as e:
+        print(f"  [manager] stalled-пометка {tid} не сохранена: {e}")
 
 
 def cmd_report(args):
