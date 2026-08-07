@@ -108,6 +108,18 @@ def parse_tests_vstest(out: str) -> tuple:
     return passed, total, failed
 
 
+def failed_test_names_vstest(out: str) -> list:
+    """Имена не пройденных тестов из вывода vstest (рус/англ):
+    'Не пройден Name [123 ms]' / 'Failed Name [123 ms]'.
+    Имя может быть как 'Tests.Foo.Bar_Method', так и коротким 'Bar_Method'."""
+    names = []
+    for line in out.splitlines():
+        m = re.search(r"(?:Не пройден|Failed)\s+([A-Za-z0-9_\.]+(?:\.[A-Za-z0-9_\.]+)*)", line)
+        if m:
+            names.append(m.group(1))
+    return names
+
+
 def parse_tests_dotnet(out: str) -> tuple:
     """Парсинг `dotnet test` (NUnit/xUnit):
     'не пройдено 7, пройдено 8, пропущено 0, всего 15' -> (8, 15, 7).

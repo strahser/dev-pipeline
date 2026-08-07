@@ -15,7 +15,7 @@ sys.path.insert(0, str(Path(__file__).resolve().parent.parent))
 
 from pipeline import checks, templates            # noqa: E402
 from pipeline.config import list_projects, load_config  # noqa: E402
-from pipeline.models import Task, parse_tests_vstest   # noqa: E402
+from pipeline.models import Task, parse_tests_vstest, failed_test_names_vstest   # noqa: E402
 
 
 class TestConfig(unittest.TestCase):
@@ -56,6 +56,21 @@ class TestParseTests(unittest.TestCase):
     def test_vstest_fail(self):
         out = "Total tests: 109\nPassed: 106\nFailed: 3"
         self.assertEqual(parse_tests_vstest(out), (106, 109, 3))
+
+    def test_failed_test_names_vstest(self):
+        out = ("  Не пройден Tests.DependencyInjection.DependencyInjectionSmokeTests."
+               "AddAppServices_AllRegistrationsResolvable [509 ms]\n"
+               "  Пройден Tests.Infiltration.InfiltrationVmFilterServiceTests."
+               "NormalizeLevel_LevelPresentInList_ReturnsSameLevel [1 ms]\n"
+               "Всего тестов: 120\nПройдено: 119\nНе пройдено: 1")
+        names = failed_test_names_vstest(out)
+        self.assertEqual(len(names), 1)
+        self.assertIn("AddAppServices_AllRegistrationsResolvable", names[0])
+
+    def test_failed_test_names_vstest_english(self):
+        out = ("Failed Tests.Foo.Bar_Test [5 ms]\n"
+               "Total tests: 2\nPassed: 1\nFailed: 1")
+        self.assertEqual(failed_test_names_vstest(out), ["Tests.Foo.Bar_Test"])
 
 
 class TestTemplates(unittest.TestCase):

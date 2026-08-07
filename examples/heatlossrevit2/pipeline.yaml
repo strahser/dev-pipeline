@@ -32,6 +32,10 @@ tests:
   dll: Test\bin\Debug\Tests.dll
   baseline_passed: 109
   baseline_total: 109
+  # Известные падения окружения (подстроки имён тестов): не блокируют verify.
+  # Домашний ПК (D:): DI-тест не резолвит RevitAPI/RevitAPIUI (см. AGENTS.md проекта).
+  known_failures:
+    - AddAppServices_AllRegistrationsResolvable
 
 # Декларативные проверки задач (порты verify_checks из pipeline.py)
 checks:

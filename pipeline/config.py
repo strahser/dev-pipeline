@@ -54,6 +54,8 @@ class ProjectConfig:
     test_dll: str = ""
     baseline_passed: int | None = None
     baseline_total: int | None = None
+    # Известные падения тестов (подстроки имён) — не блокируют verify
+    known_failures: list = field(default_factory=list)
 
     # Проверки и правила слоёв (декларативно)
     checks: list = field(default_factory=list)
@@ -194,6 +196,7 @@ def load_config(project_name: str) -> ProjectConfig:
         test_dll=te.get("dll", ""),
         baseline_passed=te.get("baseline_passed"),
         baseline_total=te.get("baseline_total"),
+        known_failures=[str(x) for x in (te.get("known_failures") or [])],
         checks=c,
         layer_rules=lr,
         audit_dirs=ad,

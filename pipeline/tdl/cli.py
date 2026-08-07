@@ -10,6 +10,7 @@ import sys
 from . import store, validate
 from .migrate import migrate_project
 from .schema import REPORT_STATUSES
+from ..models import failed_test_names_vstest
 
 
 def _task_or_die(cfg, task_id: str) -> dict:
@@ -443,14 +444,25 @@ def _build_checks(cfg, task_id, report, b_rc, b_out) -> list:
         t_rc, t_out = C.run_tests(cfg)
         if cfg.test_runner == "dotnet":
             passed, total, failed = parse_tests_dotnet(t_out)
+            failed_names = []
         else:
             passed, total, failed = parse_tests_vstest(t_out)
+            failed_names = failed_test_names_vstest(t_out)
+        known = [k for k in cfg.known_failures if any(k.lower() in n.lower() for n in failed_names)]
+        unexpected = [n for n in failed_names if not any(k.lower() in n.lower() for k in cfg.known_failures)]
         ok = (cfg.baseline_passed is None or (passed is not None and passed >= cfg.baseline_passed))
+        if failed and unexpected:
+            ok = False
+        if t_rc not in (None, 0) and not (failed and not unexpected):
+            ok = False
+        note = _tail(t_out)
+        if known:
+            note = f"известные падения ({len(known)}): " + ", ".join(known) + " | " + note
         out.append({"check_id": "tests_baseline", "name": "Тесты не хуже базовых",
                     "status": "pass" if ok else "fail",
-                    "expected": f"passed>={cfg.baseline_passed}",
+                    "expected": f"passed>={cfg.baseline_passed}, failed=0 (или только known_failures)",
                     "actual": f"passed={passed},total={total},failed={failed}",
-                    "critical": True, "exit_code": t_rc, "note": _tail(t_out)})
+                    "critical": True, "exit_code": t_rc, "note": note})
     # правила слоёв
     for label, st in C.layer_rule_rows(cfg):
         ok = st.startswith("OK")
