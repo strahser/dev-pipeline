@@ -53,7 +53,7 @@ def _opencode_cmd() -> str:
 
 
 OPENCODE = _opencode_cmd()
-DEFAULT_MODEL = "opencode/deepseek-v4-flash"  # стабильная модель (2x usage); flash-free глючит на длинных промптах
+DEFAULT_MODEL = "opencode-go/deepseek-v4-flash"  # стабильная модель (2x usage); flash-free глючит на длинных промптах
 SUBAGENT_TIMEOUT = 1800  # анти-зависание: субагент без результата > 30 мин убивается
 SERVER_URL = "http://127.0.0.1:8787"
 DEV_PIPELINE_DIR = Path(__file__).resolve().parent.parent  # корень dev-pipeline (не хардкод E:\)
