@@ -52,7 +52,21 @@ def run_opencode(cfg, task: Task) -> str:
 
 
 def take_task(cfg, task_id: str):
-    """Взять задачу: open -> in_progress, вернуть Task."""
+    """Взять задачу: open -> in_progress, вернуть Task.
+    Если TDL-задача есть (JSON) со status open/workflow issued — берём её (переводим in_progress)."""
+    # TDL JSON-задача (источник истины)
+    if getattr(cfg, "tdl_enabled", True):
+        try:
+            from pipeline.tdl import store as tdl_store
+            t = tdl_store.load_task(cfg, task_id)
+            if t is not None and t.get("status") == "open":
+                t["workflow_state"] = "in_progress"
+                t["status_display"] = "Открыто"
+                tdl_store.save_task(cfg, t)
+                tdl_store.rebuild_index(cfg)
+        except Exception as e:
+            print(f"[executor] TDL-задача {task_id}: {e}")
+    # legacy Markdown
     task_path = None
     for f in glob.glob(str(cfg.abs_tasks_dir("active") / (task_id + "_*.md"))):
         task_path = Path(f)
@@ -64,6 +78,20 @@ def take_task(cfg, task_id: str):
         return None
     t.set_status("in_progress")
     return t
+
+
+def _tdl_report_if_needed(cfg, task_id: str, md_report: Path):
+    """Создать TDL JSON-отчёт из Markdown-отчёта (если TDL-задача есть)."""
+    if not getattr(cfg, "tdl_enabled", True):
+        return
+    try:
+        from pipeline.tdl import store as tdl_store, cli as tdl_cli
+        import argparse as _ap
+        if tdl_store.load_task(cfg, task_id) and md_report.exists():
+            tdl_cli.tdl_report(cfg, _ap.Namespace(task=task_id, final=False,
+                                                   from_md=str(md_report)))
+    except Exception as e:
+        print(f"[executor] TDL-отчёт {task_id}: {e}")
 
 
 def file_polling_loop(cfg, client, stop):
@@ -86,6 +114,7 @@ def handle_task(cfg, client, task: Task, via_event: bool, ack_id=None):
     report = cfg.abs_tasks_dir("reports") / f"{task.id}_Отчёт_{time.strftime('%Y-%m-%d')}.md"
     if report.exists() and report.stat().st_size > 200:
         print(f"[executor] отчёт готов: {report}")
+        _tdl_report_if_needed(cfg, task.id, report)
         client.notify("report_done", to="controller", task=task.id,
                       payload={"report": report.name, "status": "done_report"})
     else:

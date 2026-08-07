@@ -77,6 +77,48 @@ class TestDispatchChunk(unittest.TestCase):
         self.assertTrue(t["verification"]["commands"], "должны быть команды проверки")
 
 
+class TestExecutorTdl(unittest.TestCase):
+    """executor take_task / tdl-report при включённом TDL."""
+
+    def _cfg(self, tmp):
+        for sub in ("Tasks/Активные", "Tasks/Отчёты", "Tasks/Архив", "Tasks/Конвейер"):
+            (tmp / sub).mkdir(parents=True)
+        from pipeline.config import ProjectConfig
+        return ProjectConfig(name="_t", root=tmp, msbuild="dotnet",
+                             sln="X.csproj", test_runner="dotnet")
+
+    def test_take_task_marks_tdl_in_progress(self):
+        import tempfile
+        from pipeline.tdl import store as tdl_store
+        from agents import executor_client as ec
+        tmp = Path(tempfile.mkdtemp(prefix="ex_tdl_"))
+        cfg = self._cfg(tmp)
+        # создать задачу через dispatch (создаст и MD, и JSON)
+        tid = am.dispatch_chunk(cfg, "задача", 1, 1, "М")
+        # MD-задача open
+        task = ec.take_task(cfg, tid)
+        self.assertIsNotNone(task)
+        # JSON-задача переведена в in_progress
+        t = tdl_store.load_task(cfg, tid)
+        self.assertEqual(t["workflow_state"], "in_progress")
+        import shutil; shutil.rmtree(tmp, ignore_errors=True)
+
+    def test_tdl_report_created_after_execution(self):
+        import tempfile, time
+        from pipeline.tdl import store as tdl_store
+        from agents import executor_client as ec
+        tmp = Path(tempfile.mkdtemp(prefix="ex_tdl2_"))
+        cfg = self._cfg(tmp)
+        tid = am.dispatch_chunk(cfg, "задача", 1, 1, "М")
+        # имитируем отчёт, созданный субагентом
+        md = cfg.abs_tasks_dir("reports") / f"{tid}_Отчёт_2026-08-07.md"
+        md.write_text("# ОТЧЁТ\n## Что сделано\nсделал X\n## Доказательства\nлог\n", encoding="utf-8")
+        ec._tdl_report_if_needed(cfg, tid, md)
+        r = tdl_store.load_report(cfg, tid)
+        self.assertIsNotNone(r, "JSON-отчёт должен создаться из MD")
+        import shutil; shutil.rmtree(tmp, ignore_errors=True)
+
+
 class TestDumpVerify(unittest.TestCase):
     """Порт CollisionVerifier: известные случаи пересечений."""
 

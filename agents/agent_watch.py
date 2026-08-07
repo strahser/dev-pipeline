@@ -29,6 +29,30 @@ from pipeline.cli import cmd_dispatch, cmd_verify   # noqa: E402
 import argparse as _ap                              # noqa: E402
 
 
+def _verify_tdl_or_legacy(cfg, tid: str):
+    """verify: TDL (если включён и есть JSON-отчёт) или legacy Markdown."""
+    if getattr(cfg, "tdl_enabled", True):
+        try:
+            from pipeline.tdl import store as tdl_store
+            from pipeline.tdl import cli as tdl_cli
+            task = tdl_store.load_task(cfg, tid)
+            report = tdl_store.latest_report_path(cfg, tid)
+            verdict = tdl_store.latest_verdict_path(cfg, tid)
+            if task is not None and report is not None and verdict is None:
+                tdl_cli.tdl_verify(cfg, _ap.Namespace(task=tid))
+                return True
+        except Exception as e:
+            print(f"[watch] tdl-verify {tid} ошибка: {e}")
+    # legacy Markdown
+    reports = cfg.abs_tasks_dir("reports")
+    has_report = bool(glob.glob(str(reports / (tid + "_Отчёт_*"))))
+    has_verdict = bool(glob.glob(str(reports / (tid + "_Вердикт_*"))))
+    if has_report and not has_verdict:
+        cmd_verify(cfg, _ap.Namespace(task=tid))
+        return True
+    return False
+
+
 def file_polling_loop(cfg, client, stop):
     """Фолбэк: поллинг Входящие (dispatch) и отчётов без вердиктов (verify)."""
     while not (stop and stop.is_set()):
@@ -43,15 +67,31 @@ def file_polling_loop(cfg, client, stop):
                                                     remark=None, id=None))
                 except Exception as e:
                     print(f"[watch] dispatch {p.name} ошибка: {e}")
+            # TDL JSON-задачи (источник истины)
+            if getattr(cfg, "tdl_enabled", True):
+                try:
+                    from pipeline.tdl import store as tdl_store
+                    ad = tdl_store.active_dir(cfg)
+                    if ad.is_dir():
+                        for tf in sorted(ad.glob("*.task.json")):
+                            import json
+                            try:
+                                t = json.loads(tf.read_text(encoding="utf-8"))
+                            except Exception:
+                                continue
+                            tid = t.get("task_id")
+                            if not tid:
+                                continue
+                            _verify_tdl_or_legacy(cfg, tid)
+                except Exception as e:
+                    print(f"[watch] tdl-поллинг ошибка: {e}")
+            # legacy Markdown
             for f in sorted(glob.glob(str(cfg.abs_tasks_dir("active") / "A-*.md"))):
                 tid = os.path.basename(f).split("_")[0]
-                has_report = bool(glob.glob(str(cfg.abs_tasks_dir("reports") / (tid + "_Отчёт_*"))))
-                has_verdict = bool(glob.glob(str(cfg.abs_tasks_dir("reports") / (tid + "_Вердикт_*"))))
-                if has_report and not has_verdict:
-                    try:
-                        cmd_verify(cfg, _ap.Namespace(task=tid))
-                    except Exception as e:
-                        print(f"[watch] verify {tid} ошибка: {e}")
+                try:
+                    _verify_tdl_or_legacy(cfg, tid)
+                except Exception as e:
+                    print(f"[watch] verify {tid} ошибка: {e}")
         except Exception as e:
             print(f"[watch] поллинг ошибка: {e}")
         time.sleep(30)
@@ -67,7 +107,7 @@ def sse_loop(cfg, client, watch_dispatch):
             if tid:
                 print(f"[watch] отчёт по {tid} — запускаю verify")
                 try:
-                    cmd_verify(cfg, _ap.Namespace(task=tid))
+                    _verify_tdl_or_legacy(cfg, tid)
                     client.notify("verdict", to="executor", task=tid,
                                   payload={"action": "check verdict file"})
                 except Exception as e:
