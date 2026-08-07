@@ -28,6 +28,8 @@ from pipeline.config import load_config             # noqa: E402
 from pipeline.cli import cmd_dispatch, cmd_verify   # noqa: E402
 import argparse as _ap                              # noqa: E402
 
+_STALL_TIMEOUT = int(os.environ.get("TASK_STALL_TIMEOUT_SEC", "10800"))
+
 
 def _verify_tdl_or_legacy(cfg, tid: str):
     """verify: TDL (если включён и есть JSON-отчёт) или legacy Markdown."""
@@ -51,6 +53,80 @@ def _verify_tdl_or_legacy(cfg, tid: str):
         cmd_verify(cfg, _ap.Namespace(task=tid))
         return True
     return False
+
+
+def check_stalled(cfg, client, timeout_sec: int = 10800) -> int:
+    """Найти зависшие TDL-задачи: in_progress дольше timeout_sec без отчёта.
+
+    Каждая задача помечается в history один раз (action=stalled), публикуется
+    событие task_stalled (to=controller) и печатается предупреждение.
+    Возвращает количество вновь помеченных задач."""
+    if not getattr(cfg, "tdl_enabled", True):
+        return 0
+    import datetime
+    import json
+    from pipeline.tdl import store as tdl_store
+    from pipeline.tdl._tpl import _now_iso
+    ad = tdl_store.active_dir(cfg)
+    if not ad.is_dir():
+        return 0
+    now = datetime.datetime.now()
+    stalled = []
+    for tf in sorted(ad.glob("*.task.json")):
+        try:
+            t = json.loads(tf.read_text(encoding="utf-8"))
+        except Exception:
+            continue
+        if t.get("workflow_state") != "in_progress":
+            continue
+        tid = t.get("task_id", "")
+        if tdl_store.latest_report_path(cfg, tid):
+            continue  # отчёт есть — не завис
+        start = (t.get("dates") or {}).get("start")
+        if not start:
+            continue
+        try:
+            st = datetime.datetime.fromisoformat(str(start).replace("Z", "+00:00"))
+            if st.tzinfo is not None:
+                st = st.astimezone().replace(tzinfo=None)
+        except ValueError:
+            continue
+        elapsed = (now - st).total_seconds()
+        if elapsed < timeout_sec:
+            continue
+        hist = t.setdefault("history", [])
+        if any(h.get("action") == "stalled" for h in hist):
+            continue  # уже помечена
+        hist.append({"timestamp": _now_iso(), "actor": "watch", "action": "stalled",
+                     "details": f"Задача в работе {int(elapsed // 3600)} ч без отчёта/прогресса "
+                                f"(порог {timeout_sec // 3600} ч)."})
+        tdl_store.save_task(cfg, t)
+        stalled.append(tid)
+    if stalled:
+        try:
+            tdl_store.rebuild_index(cfg)
+        except Exception:
+            pass
+    for tid in stalled:
+        print(f"[watch] ЗАВИСАНИЕ: {tid} — нет отчёта дольше {timeout_sec // 3600} ч")
+        if client is not None:
+            try:
+                client.notify("task_stalled", to="controller", task=tid,
+                              payload={"reason": "no report/progress",
+                                       "timeout_sec": timeout_sec})
+            except Exception:
+                pass
+    return len(stalled)
+
+
+def _stall_poll(cfg, client, stop, timeout_sec: int):
+    """Фоновый детектор зависших задач (в SSE-режиме)."""
+    while not (stop and stop.is_set()):
+        try:
+            check_stalled(cfg, client, timeout_sec)
+        except Exception as e:
+            print(f"[watch] stall-поллинг ошибка: {e}")
+        time.sleep(60)
 
 
 def file_polling_loop(cfg, client, stop):
@@ -92,6 +168,8 @@ def file_polling_loop(cfg, client, stop):
                     _verify_tdl_or_legacy(cfg, tid)
                 except Exception as e:
                     print(f"[watch] verify {tid} ошибка: {e}")
+            # зависшие in_progress-задачи
+            check_stalled(cfg, client, _STALL_TIMEOUT)
         except Exception as e:
             print(f"[watch] поллинг ошибка: {e}")
         time.sleep(30)
@@ -123,6 +201,9 @@ def sse_loop(cfg, client, watch_dispatch):
     if watch_dispatch:
         # фоновый поллинг Входящие (диспатч) даже при работающем сервере
         threading.Thread(target=_dispatch_poll, args=(cfg, stop), daemon=True).start()
+    # фоновый детектор зависших задач (in_progress без отчёта)
+    threading.Thread(target=_stall_poll, args=(cfg, client, stop, _STALL_TIMEOUT),
+                     daemon=True).start()
     client.subscribe(on_event, stop_event=stop)
 
 
@@ -150,8 +231,14 @@ def main():
     ap.add_argument("--url", default="http://127.0.0.1:8787")
     ap.add_argument("--watch-dispatch", action="store_true",
                     help="автоматически оформлять Входящие в задачи")
+    ap.add_argument("--stall-timeout", type=int,
+                    default=int(os.environ.get("TASK_STALL_TIMEOUT_SEC", "10800")),
+                    help="порог зависания in_progress-задачи, сек (default 10800 = 3 ч)")
     ap.add_argument("--polling-only", action="store_true")
     a = ap.parse_args()
+
+    global _STALL_TIMEOUT
+    _STALL_TIMEOUT = a.stall_timeout
 
     cfg = load_config(a.project)
     client = Client("controller", project=cfg.name, base_url=a.url,

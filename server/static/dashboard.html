@@ -180,6 +180,16 @@ pre.json { background:var(--code); border:1px solid var(--border); border-radius
   </div>
 </div>
 
+<div class="overlay" id="durationsOverlay">
+  <div class="modal" style="max-width:1000px" id="durationsModal">
+    <header>
+      <h2>⏱ Длительность задач (план vs факт)</h2>
+      <button class="close" onclick="closeDurations()">✕ Закрыть</button>
+    </header>
+    <div id="durationsBody"><div class="empty">Загрузка…</div></div>
+  </div>
+</div>
+
 <script src="/static/vendor/jquery.min.js"></script>
 <script src="/static/vendor/dataTables.min.js"></script>
 <script>
@@ -500,6 +510,67 @@ function openTokens(){
 function closeTokens(){ $('tokenOverlay').classList.remove('show'); }
 $('tokenOverlay').addEventListener('click', e=>{ if (e.target===$('tokenOverlay')) closeTokens(); });
 
+/* --- Модальное окно: длительность задач (план vs факт) --- */
+function openDurations(){
+  $('durationsOverlay').classList.add('show');
+  $('durationsBody').innerHTML = '<div class="empty">Загрузка…</div>';
+  loadDurations();
+}
+function closeDurations(){ $('durationsOverlay').classList.remove('show'); }
+$('durationsOverlay').addEventListener('click', e=>{ if (e.target===$('durationsOverlay')) closeDurations(); });
+
+function durDeltaHtml(r){
+  if (r.delta_sec === null || r.delta_sec === undefined) return '<span class="muted">—</span>';
+  if (r.delta_sec === 0) return '<span class="badge ok">0</span>';
+  if (r.delta_sec > 0) return '<span class="badge err">+'+fmtDuration(r.delta_sec)+'</span>';
+  return '<span class="badge ok">−'+fmtDuration(Math.abs(r.delta_sec))+'</span>';
+}
+
+async function loadDurations(){
+  let d;
+  try { d = await get('/api/tdl/durations?project='+encodeURIComponent(activeProject)); }
+  catch(e){ $('durationsBody').innerHTML = '<div class="empty">ошибка: '+esc(String(e))+'</div>'; return; }
+  const rows = d.tasks || [];
+  const s = d.summary || {};
+  const head = '<div class="chart-sum" style="margin-bottom:12px">'+
+    '<div class="item"><div class="n">'+s.total+'</div><div class="l">всего задач</div></div>'+
+    '<div class="item"><div class="n">'+s.done+'</div><div class="l">выполнено</div></div>'+
+    '<div class="item"><div class="n">'+fmtDuration(s.plan_sec)+'</div><div class="l">план (сумма)</div></div>'+
+    '<div class="item"><div class="n">'+fmtDuration(s.fact_sec)+'</div><div class="l">факт (сумма)</div></div>'+
+    '<div class="item"><div class="n" style="color:var(--red)">'+s.over_plan+'</div><div class="l">превышают план</div></div>'+
+    '</div>';
+  if (!rows.length){ $('durationsBody').innerHTML = head+'<div class="empty">Нет задач</div>'; return; }
+  const body = rows.map(r=>{
+    const est = fmtDuration(r.estimate_sec);
+    let dur = fmtDuration(r.duration_sec);
+    if (r.status !== 'done' && r.duration_sec) dur += ' <span class="muted">(в работе)</span>';
+    const wf = WORKFLOW_LABEL[r.workflow_state] || r.workflow_state;
+    const st = r.is_summary
+      ? '<span class="summary-icon">📁</span>'+esc(wf)
+      : '<span class="badge '+(r.status==='done'?'ok':'warn')+'">'+esc(wf)+'</span>';
+    const over = r.over_plan ? ' style="background:rgba(220,38,38,.10)"' : '';
+    return '<tr'+over+'>'+
+      '<td>'+esc(r.wbs_code)+'</td>'+
+      '<td><b>'+esc(r.task_id)+'</b> '+esc((r.name||'').slice(0,50))+'</td>'+
+      '<td class="muted">'+esc(r.start||'—')+' → '+esc(r.finish||'…')+'</td>'+
+      '<td>'+est+'</td>'+
+      '<td>'+dur+'</td>'+
+      '<td>'+durDeltaHtml(r)+'</td>'+
+      '<td>'+st+'</td>'+
+      '</tr>';
+  }).join('');
+  $('durationsBody').innerHTML = head+
+    '<div style="max-height:55vh;overflow:auto;border:1px solid var(--border);border-radius:8px">'+
+    '<table style="width:100%;border-collapse:collapse;font-size:12.5px">'+
+    '<thead><tr style="background:var(--panel2);text-align:left">'+
+    '<th style="padding:6px 8px">WBS</th><th style="padding:6px 8px">Задача</th>'+
+    '<th style="padding:6px 8px">start → finish</th><th style="padding:6px 8px">План</th>'+
+    '<th style="padding:6px 8px">Факт</th><th style="padding:6px 8px">Δ</th>'+
+    '<th style="padding:6px 8px">Статус</th></tr></thead>'+
+    '<tbody>'+body+'</tbody></table></div>'+
+    '<div class="muted" style="margin-top:8px;font-size:11.5px">План — estimate_sec из TDL (задаётся при tdl-plan); факт — duration_sec (start→finish при tdl-verify) или время в работе. Красным — превышение плана более чем на 50%.</div>';
+}
+
 async function loadTokens(){
   const d = await get('/api/usage/tokens?period='+tokenPeriod+'&days='+tokenDays);
   let goHtml = '';
@@ -696,6 +767,7 @@ function buildShell(){
           '<button title="Развернуть все ветки" onclick="expandAll()">Развернуть</button>'+
           '<button onclick="resetFilters()">Сброс</button>'+
           '<button class="primary" onclick="openTokens()">📊 Токены</button>'+
+          '<button class="primary" onclick="openDurations()">⏱ Время</button>'+
           '<button class="primary" onclick="refreshData()">Обновить</button>'+
         '</div>'+
       '</div>'+

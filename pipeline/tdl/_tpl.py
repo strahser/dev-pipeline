@@ -16,11 +16,15 @@ def make_task(task_id: str, project: str, name: str, wbs: str,
               layer: str = "", task_kind: str = "execution",
               is_summary: bool = False, description: str = "",
               dates: dict | None = None, dependencies: list | None = None,
-              links: list | None = None) -> dict:
+              links: list | None = None, estimate_sec: int | None = None) -> dict:
     """Создать TDL-задачу. Для summary (is_summary=True) task_kind='group'."""
     depth = len([x for x in str(wbs).split(".") if x])
     if is_summary:
         task_kind = "group"
+    if dates is None:
+        dates = {"issued": datetime.date.today().isoformat(),
+                 "start": None, "finish": None,
+                 "estimate_sec": estimate_sec or None, "duration_sec": None}
     return {
         "schema_version": "1.0.0",
         "entity_type": "tdl.task",
@@ -45,8 +49,7 @@ def make_task(task_id: str, project: str, name: str, wbs: str,
         "dependencies": dependencies or [],
         "constraints": ["Не менять архитектуру сверх задачи.",
                         "Исполнитель не закрывает задачу сам; закрытие только контролёром."],
-        "dates": dates or {"issued": datetime.date.today().isoformat(),
-                           "start": None, "finish": None},
+        "dates": dates,
         "assignees": {"issued_by": "агент-менеджер", "executor": "subagent",
                       "controller": "controller"},
         "source": {"type": "mission", "name": source},

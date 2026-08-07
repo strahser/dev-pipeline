@@ -66,6 +66,40 @@ python -m pipeline.cli tdl-validate  <project>            # проверка с�
 }
 ```
 
+Оценки в спецификации: `estimate_sec` (или `estimate`) на этапе/классе/листе —
+число в секундах, `<= 24` трактуется как часы, либо строка «2ч 30м» / «3.5h» / «45м» / «1д».
+
+## Планировщик миссии (LLM-декомпозиция 1-го уровня)
+
+Наивный `split_mission` (рез по `##`) заменяется LLM-планировщиком:
+
+```bat
+python -X utf8 agents/agent_manager.py mission --project heatlossrevit2 ^
+    --mission "%HLR_MISSION%" --plan [--model opencode-go/qwen3.8-max]
+```
+
+- Запускает `opencode run` со скиллом `pipeline-planner`: миссия → этапы → классы → листовые
+  задачи с goal, acceptance_criteria и estimate_sec (первая фаза — «Анализ и подготовка»).
+- Пишет spec.json в `Tasks\Конвейер\планы\<имя>_<дата>.spec.json`, валидирует и вызывает `tdl-plan`.
+- При сбое — фолбэк на старый `split_mission` (без иерархии).
+
+## Длительность задач (план vs факт)
+
+- TDL-задача: `dates.estimate_sec` (план, задаётся при tdl-plan), `dates.duration_sec` (факт,
+  вычисляется при tdl-verify из start→finish; `tdl-start` фиксирует `start`).
+- API: `GET /api/tdl/durations?project=<p>` — план/факт/Δ по всем задачам, для summary —
+  суммирование по потомкам WBS, флаг `over_plan` (превышение >50%), сводка.
+- Dashboard: кнопка «⏱ Время» — модальное окно с таблицей (WBS/задача/start→finish/план/факт/Δ/статус).
+
+## Анти-зависание агентов
+
+- **Сервер** (heartbeat): зомби-агенты (нет heartbeat > `PIPELINE_WATCH_MAX_AGE`, default 90 с)
+  → событие `agent_offline`. Период проверки — `PIPELINE_WATCH_INTERVAL` (default 30 с).
+- **Сторож контролёра** (`agent_watch.py`): детектор `check_stalled` — задача в `in_progress`
+  дольше порога без JSON-отчёта → пометка `stalled` в history + событие `task_stalled`.
+  Порог: `--stall-timeout N` или env `TASK_STALL_TIMEOUT_SEC` (default 10800 = 3 ч).
+- Запуск: `python -X utf8 agents/agent_watch.py --project <p> [--stall-timeout 3600]`.
+
 ## Статус
 
 - [x] Шаг 1: каркас, общий пакет `pipeline/`
@@ -74,5 +108,10 @@ python -m pipeline.cli tdl-validate  <project>            # проверка с�
 - [x] Шаг 4: клиенты агентов (`agents/`): agent_watch, executor_client, browser_client
 - [x] Шаг 5: скилы (pipeline-executor/-controller/-reviewer/-browser-bridge), docs
 - [x] TDL: JSON-конвейер (task/report/verdict), иерархия миссии (tdl-plan/tdl-tree), dashboard
-- [x] Полный unit-тест: `python -X utf8 tests/run_all.py` (85 тестов: framework, CLI, server, client, TDL)
+- [x] Гибкие пути проектов: `project.root` — список кандидатов (E:\ПлагиныРевит / D:\Projects),
+      либо `DEV_PIPELINE_PROJECTS_DIR` (базовая папка проектов на ПК)
+- [x] Длительность задач: estimate/duration в TDL, `/api/tdl/durations`, модальное окно в dashboard
+- [x] Планировщик миссии `--plan` (скилл pipeline-planner) + скилл
+- [x] Анти-зависание: параметризуемый watchdog (env) + детектор task_stalled в agent_watch
+- [x] Полный unit-тест: `python -X utf8 tests/run_all.py` (92 теста)
 - [ ] Пилот на тестовой задаче через сервер

@@ -114,6 +114,32 @@ def _require(d: dict, key: str, where: str):
     return d[key]
 
 
+def _root_candidates(project_name: str, raw_project: dict) -> list[Path]:
+    """Список кандидатов корня проекта (первый существующий будет выбран).
+
+    Порядок приоритета:
+      1. Переменная окружения DEV_PIPELINE_PROJECTS_DIR (базовая папка проектов на ПК);
+      2. project.root из YAML — строка ИЛИ список путей (несколько рабочих мест);
+      3. project.roots из YAML (синоним списка).
+    """
+    candidates: list[Path] = []
+
+    env_dir = os.environ.get("DEV_PIPELINE_PROJECTS_DIR")
+    if env_dir:
+        candidates.append(Path(env_dir) / project_name)
+
+    raw_root = raw_project.get("root")
+    if isinstance(raw_root, str):
+        candidates.append(Path(raw_root))
+    elif isinstance(raw_root, list):
+        candidates.extend(Path(r) for r in raw_root)
+
+    for r in raw_project.get("roots", []) or []:
+        candidates.append(Path(r))
+
+    return [c for c in candidates if str(c)]
+
+
 def load_config(project_name: str) -> ProjectConfig:
     """Загрузить examples/<project>/pipeline.yaml."""
     cfg_path = EXAMPLES_DIR / project_name / "pipeline.yaml"
@@ -132,9 +158,19 @@ def load_config(project_name: str) -> ProjectConfig:
     ad = raw.get("audit_dirs", ["Test", "Core.Tests"])
     td = raw.get("tdl", {})
 
-    root = Path(_require(p, "root", "project.root")).resolve()
-    if not root.exists():
-        raise ConfigError(f"project.root не существует: {root}")
+    root = None
+    tried: list[str] = []
+    for cand in _root_candidates(project_name, p):
+        tried.append(str(cand))
+        if cand.exists():
+            root = cand.resolve()
+            break
+    if root is None:
+        raise ConfigError(
+            f"project.root не существует ни в одном из путей ({len(tried)}):\n"
+            + "\n".join(f"  - {pth}" for pth in tried)
+            + "\nЗадайте DEV_PIPELINE_PROJECTS_DIR (базовая папка проектов) или "
+              "укажите существующий путь в project.root/roots.")
 
     return ProjectConfig(
         name=project_name,

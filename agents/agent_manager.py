@@ -54,6 +54,29 @@ def _opencode_cmd() -> str:
 OPENCODE = _opencode_cmd()
 DEFAULT_MODEL = "opencode/deepseek-v4-flash-free"  # экономия: free-модель по умолчанию
 SERVER_URL = "http://127.0.0.1:8787"
+DEV_PIPELINE_DIR = Path(__file__).resolve().parent.parent  # корень dev-pipeline (не хардкод E:\)
+
+PLANNER_PROMPT = """Ты — планировщик конвейера dev-pipeline. Загрузи скилл планировщика:
+{skill_path} (прочитай его ПЕРВЫМ: схема выхода, правила декомпозиции).
+
+Прочитай файл миссии: {mission}
+
+ЗАДАЧА: декомпозируй миссию на иерархию «этапы → классы/пакеты → листовые задачи»
+и ЗАПИШИ спецификацию JSON строго по схеме из скилла в файл:
+  {spec_path}
+
+Требования (кратко, детали — в скилле):
+- Максимум 4 уровня WBS; листовые задачи атомарные, с goal-глаголом и 2-4 проверяемыми acceptance_criteria.
+- Первая фаза — «Анализ и подготовка» (одна листовая задача).
+- Каждая листовая задача — с estimate_sec (план, секунды; 0.5–8 ч на лист).
+- module/class_name/layer — из реальной структуры проекта ({project}); наследуй от пакета.
+- Без дублей: одна проблема = одна задача.
+- НЕ трогай код проекта, НЕ коммить, НЕ собирай.
+
+После записи файла выведи ОБЯЗАТЕЛЬНО строку:
+SPEC_OK {spec_path}
+и SUMMARY: сколько этапов, классов, листов и суммарный estimate.
+"""
 
 
 def _publish(cfg, client, type_: str, task_id: str, payload: dict | None = None):
@@ -308,7 +331,7 @@ def run_subagent(cfg, task_id: str, report_path: Path, log_path: Path,
         _publish(cfg, client, "task_started", task_id, {"file": task_file.name})
     _hb(client, f"subagent-{task_id}")
 
-    skill_line = (f"Загрузи скилл '{skill}' (E:\\ПлагиныРевит\\dev-pipeline\\skills\\{skill}\\SKILL.md),\n"
+    skill_line = (f"Загрузи скилл '{skill}' ({DEV_PIPELINE_DIR / 'skills' / skill / 'SKILL.md'}),\n"
                   if skill else "") + ""
 
     prompt = SUBPROMPT.format(
@@ -322,7 +345,7 @@ def run_subagent(cfg, task_id: str, report_path: Path, log_path: Path,
     )
     if worker == "qwen":
         qwen_skill = "pipeline-qwen-worker"
-        qwen_bridge = r"E:\ПлагиныРевит\dev-pipeline\agents\qwen_bridge.py"
+        qwen_bridge = DEV_PIPELINE_DIR / "agents" / "qwen_bridge.py"
         qwen_block = (
             "ЗАПРЕТ: НЕ загружай и НЕ используй скиллы cloud-ai-bridge, revit-api, revit-3d-export, "
             "threejs-viewer и любые ДРУГИЕ скиллы, кроме pipeline-qwen-worker. Работай строго по шагам ниже.\n"
@@ -407,18 +430,89 @@ def run_subagent_demo(cfg, task_id: str, report_path: Path):
     return 0
 
 
+def run_planner(cfg, mission_path: Path, title: str, model: str = "") -> Path | None:
+    """LLM-планировщик: миссия -> spec.json (этапы/классы/листы с оценками).
+
+    Запускает opencode run со скиллом pipeline-planner; планировщик пишет spec.json
+    в Tasks\\Конвейер\\планы\\. Возвращает путь spec или None при неудаче."""
+    plans_dir = cfg.root / "Tasks" / "Конвейер" / "планы"
+    plans_dir.mkdir(parents=True, exist_ok=True)
+    import datetime
+    spec_path = plans_dir / f"{slug(title)}_{datetime.date.today().isoformat()}.spec.json"
+    skill_path = DEV_PIPELINE_DIR / "skills" / "pipeline-planner" / "SKILL.md"
+    prompt = PLANNER_PROMPT.format(
+        skill_path=skill_path,
+        mission=mission_path,
+        spec_path=spec_path,
+        project=cfg.name,
+    )
+    cmd = [OPENCODE, "run", prompt, "-f", str(mission_path), "--auto"]
+    if model:
+        cmd += ["-m", model]
+    log_path = plans_dir / f"_planner_{slug(title)}.log"
+    print(f"  [manager] планировщик: opencode run -> {spec_path.name}"
+          + (f" (model={model})" if model else ""))
+    try:
+        r = subprocess.run(cmd, cwd=str(cfg.root),
+                           capture_output=True, text=True, encoding="utf-8",
+                           errors="replace", timeout=1800)
+        log_path.write_text((r.stdout or "") + (r.stderr or ""), encoding="utf-8")
+    except Exception as e:
+        log_path.write_text(f"ОШИБКА ЗАПУСКА ПЛАНИРОВЩИКА: {e}", encoding="utf-8")
+        return None
+    if not spec_path.exists():
+        print(f"  [manager] планировщик НЕ создал spec ({spec_path}); лог: {log_path}")
+        return None
+    # валидация JSON-структуры
+    try:
+        import json
+        spec = json.loads(spec_path.read_text(encoding="utf-8"))
+        phases = spec.get("phases", [])
+        if not phases or not all(isinstance(p, dict) and p.get("name") for p in phases):
+            print("  [manager] spec невалиден: нужны phases[].name")
+            return None
+        leaves = [l for p in phases for pk in p.get("packages", [])
+                  for l in (pk.get("tasks", []) if isinstance(pk, dict) else [])]
+        print(f"  [manager] планировщик: этапов={len(phases)}, листов={len(leaves)}")
+        return spec_path
+    except Exception as e:
+        print(f"  [manager] spec не распознан JSON: {e}")
+        return None
+
+
 def cmd_mission(args):
     cfg = load_config(args.project)
     mission = Path(args.mission)
     if not mission.exists():
         print("МИССИЯ НЕ НАЙДЕНА:", mission)
         return 1
-    text = mission.read_text(encoding="utf-8")
     for d in ("active", "reports"):
         cfg.abs_tasks_dir(d).mkdir(parents=True, exist_ok=True)
+    title = args.title or mission.stem
+
+    # Режим --plan: LLM-декомпозиция первого уровня -> tdl-plan (иерархия WBS)
+    if args.plan:
+        spec_path = run_planner(cfg, mission, title, model=args.model)
+        if spec_path is None:
+            print("[manager] планировщик не сработал — фолбэк на наивный split_mission "
+                  "(без иерархии TDL)")
+        else:
+            from pipeline.tdl.cli import tdl_plan
+            import argparse
+            pa = argparse.Namespace(file=str(spec_path), title=title)
+            rc = tdl_plan(cfg, pa)
+            if rc == 0:
+                print(f"\n[manager] план создан ({spec_path}). Дерево:")
+                from pipeline.tdl.cli import tdl_tree
+                tdl_tree(cfg, argparse.Namespace())
+                print("\nЗапуск исполнения: python -m agents.agent_manager --project "
+                      f"{args.project} --task <A-NN> [--sequential|--parallel N]")
+                return 0
+            print("[manager] tdl-plan вернул ошибку — фолбэк на split_mission")
+
+    text = mission.read_text(encoding="utf-8")
     chunks = split_mission(text, args.split)
     total = len(chunks)
-    title = args.title or mission.stem
     print(f"[manager] миссия '{title}': {total} подзадач")
 
     ids = []
@@ -602,6 +696,9 @@ def main(argv=None):
     p = sub.add_parser("mission")
     p.add_argument("--project", default="meptaggingsolution")
     p.add_argument("--mission", required=True)
+    p.add_argument("--plan", action="store_true",
+                   help="LLM-планировщик: декомпозиция миссии на этапы/классы/листы "
+                        "со спецификацией для tdl-plan (вместо наивного split_mission)")
     p.add_argument("--split", type=int, default=3)
     p.add_argument("--title")
     p.add_argument("--demo", action="store_true")

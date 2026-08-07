@@ -4,7 +4,9 @@
 
 project:
   name: MepTaggingSolution
-  root: E:\ПлагиныРевит\MepTaggingSolution
+  # Несколько рабочих мест: первый существующий путь будет выбран автоматически
+  # (также можно задать DEV_PIPELINE_PROJECTS_DIR — базовая папка проектов на ПК).
+  root: [D:\Projects\MepTaggingSolution, E:\ПлагиныРевит\MepTaggingSolution]
   branch: feature/tagging-extension-tests
 
 tasks:

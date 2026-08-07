@@ -221,5 +221,49 @@ class TestHierarchy(unittest.TestCase):
         self.assertIn("• 2.1.1.1", md)
 
 
+class TestDurations(unittest.TestCase):
+    def test_make_task_estimate(self):
+        t = make_task("A-50", "P", "Задача", "2.1", goal="ц", acceptance=["к"],
+                      commands=["b"], estimate_sec=7200)
+        self.assertEqual(t["dates"]["estimate_sec"], 7200)
+        self.assertIsNone(t["dates"]["duration_sec"])
+
+    def test_make_task_estimate_negative_not_set(self):
+        t = make_task("A-50", "P", "Задача", "2.1", goal="ц", acceptance=["к"],
+                      commands=["b"], estimate_sec=0)
+        self.assertIsNone(t["dates"]["estimate_sec"])
+
+    def test_estimate_sec_parse_hours_float(self):
+        from pipeline.tdl.cli import _estimate_sec
+        self.assertEqual(_estimate_sec(2), 7200)        # 2 -> 2 часа
+        self.assertEqual(_estimate_sec(0.5), 1800)      # 0.5 -> 30 мин
+        self.assertEqual(_estimate_sec(3600), 3600)     # >= 3600 -> сек как есть
+        self.assertEqual(_estimate_sec("2ч 30м"), 9000)
+        self.assertEqual(_estimate_sec("3.5h"), 12600)
+        self.assertEqual(_estimate_sec("45м"), 2700)
+        self.assertEqual(_estimate_sec("1д"), 86400)
+        self.assertIsNone(_estimate_sec(""))
+        self.assertIsNone(_estimate_sec(None))
+        self.assertIsNone(_estimate_sec("abc"))
+
+    def test_duration_sec_dates(self):
+        from pipeline.tdl.cli import _duration_sec
+        self.assertEqual(_duration_sec("2026-08-06", "2026-08-07"), 86400)
+        self.assertEqual(_duration_sec("2026-08-06T10:00:00Z", "2026-08-06T12:30:00Z"), 9000)
+        self.assertIsNone(_duration_sec(None, "2026-08-07"))
+        self.assertIsNone(_duration_sec("2026-08-06", "не дата"))
+
+    def test_render_task_card_durations(self):
+        from pipeline.tdl import render
+        t = make_task("A-50", "P", "Задача", "2.1", goal="ц", acceptance=["к"],
+                      commands=["b"], estimate_sec=7200)
+        t["dates"]["start"] = "2026-08-06"
+        t["dates"]["finish"] = "2026-08-07"
+        t["dates"]["duration_sec"] = 86400
+        md = render.render_task_card(t)
+        self.assertIn("Оценка (план): 2 ч", md)
+        self.assertIn("Факт (длительность): 1 дн", md)
+
+
 if __name__ == "__main__":
     unittest.main(verbosity=2)

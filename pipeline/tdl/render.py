@@ -45,6 +45,26 @@ def render_tree(tasks: list[dict]) -> str:
     return "\n".join(lines)
 
 
+def _fmt_dur(sec) -> str:
+    """Человекочитаемая длительность из секунд (или '' если нет)."""
+    if not sec:
+        return ""
+    sec = int(sec)
+    d, rem = divmod(sec, 86400)
+    h, rem = divmod(rem, 3600)
+    m = rem // 60
+    parts = []
+    if d:
+        parts.append(f"{d} дн")
+    if h:
+        parts.append(f"{h} ч")
+    if m:
+        parts.append(f"{m} мин")
+    if not parts:
+        parts.append(f"{sec} с")
+    return " ".join(parts[:2])
+
+
 def render_task_card(task: dict) -> str:
     lines = [f"# Карточка задачи {_s(task.get('wbs_code', ''))}", "",
              f"- ID: {_s(task.get('task_id'))}",
@@ -61,10 +81,17 @@ def render_task_card(task: dict) -> str:
              "## Критерии приёмки"]
     for c in task.get("acceptance_criteria", []):
         lines.append(f"- {_s(c)}")
+    dates = task.get("dates", {}) or {}
+    est = _fmt_dur(dates.get("estimate_sec"))
+    dur = _fmt_dur(dates.get("duration_sec"))
     lines += ["", "## Сроки",
-              f"- Начало: {_s(task.get('dates', {}).get('start', ''))}",
-              f"- Завершение: {_s(task.get('dates', {}).get('finish', ''))}", "",
-              "## Ссылки"]
+              f"- Начало: {_s(dates.get('start', ''))}",
+              f"- Завершение: {_s(dates.get('finish', ''))}"]
+    if est:
+        lines.append(f"- Оценка (план): {est}")
+    if dur:
+        lines.append(f"- Факт (длительность): {dur}")
+    lines += ["", "## Ссылки"]
     for l in task.get("links", []):
         href = l.get("href") or l.get("url") or l.get("ref")
         lines.append(f"- [{l.get('type')}]({href})" if href else f"- {l.get('type')}")

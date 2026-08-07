@@ -4,6 +4,7 @@ tdl-migrate, tdl-validate, tdl-index, tdl-status)."""
 from __future__ import annotations
 
 import json
+import re
 import sys
 
 from . import store, validate
@@ -63,11 +64,14 @@ def tdl_start(cfg, args) -> int:
         return 1
     t["workflow_state"] = "in_progress"
     t["status_display"] = "Открыто"
+    dates = t.setdefault("dates", {})
+    if not dates.get("start"):
+        dates["start"] = store.today()
     _append_history(t, "subagent", "workflow_state_changed", workflow_state="in_progress",
                     details="Исполнитель взял задачу.")
     store.save_task(cfg, t)
     store.rebuild_index(cfg)
-    print(f"TDL-START: {args.task} -> in_progress")
+    print(f"TDL-START: {args.task} -> in_progress (start={dates.get('start')})")
     return 0
 
 
@@ -116,6 +120,9 @@ def tdl_verify(cfg, args) -> int:
         t["status"] = "done"
         t["workflow_state"] = "verified"
         t["status_display"] = "Выполнено"
+        dates = t.setdefault("dates", {})
+        dates["finish"] = store.today()
+        dates["duration_sec"] = _duration_sec(dates.get("start"), dates["finish"])
         _append_history(t, "controller", "status_changed", from_="open", to="done",
                         details=f"Вердикт {verdict['verdict_id']}: pass")
     else:
@@ -247,15 +254,18 @@ def tdl_plan(cfg, args) -> int:
         p_name = phase.get("name") or f"Этап {ph_idx}"
         p_module = phase.get("module", "")
         p_goal = phase.get("goal", "")
+        p_est = _estimate_sec(phase.get("estimate_sec") or phase.get("estimate"))
         # Уровень 2: этап (summary, group)
         pid = store.next_task_id(cfg)
         pt = make_task(task_id=pid, project=cfg.name, name=p_name, wbs=p_wbs,
                        priority=phase.get("priority", "высокий"), goal=p_goal,
                        source=src.name, module=p_module, is_summary=True,
-                       description=phase.get("description", p_goal))
+                       description=phase.get("description", p_goal),
+                       estimate_sec=p_est)
         store.save_task(cfg, pt)
         ids_created.append(pid)
-        print(f"  ЭТАП {pid} [{p_wbs}]: {p_name} (module={p_module})")
+        print(f"  ЭТАП {pid} [{p_wbs}]: {p_name} (module={p_module}"
+              + (f", estimate={_fmt_est(p_est)}" if p_est else "") + ")")
 
         # Уровень 3: классы/пакеты (summary, group)
         packages = phase.get("packages", [])
@@ -265,6 +275,7 @@ def tdl_plan(cfg, args) -> int:
         for pk_idx, pkg in enumerate(packages, start=1):
             pk_wbs = f"{p_wbs}.{pk_idx}"
             pk_name = pkg.get("name") or pkg.get("class_name") or f"Пакет {pk_idx}"
+            pk_est = _estimate_sec(pkg.get("estimate_sec") or pkg.get("estimate")) or p_est
             cid = store.next_task_id(cfg)
             ct = make_task(task_id=cid, project=cfg.name, name=pk_name, wbs=pk_wbs,
                            priority=pkg.get("priority", "средний"),
@@ -272,10 +283,12 @@ def tdl_plan(cfg, args) -> int:
                            source=src.name, module=p_module,
                            class_name=pkg.get("class_name", ""),
                            layer=pkg.get("layer", ""), is_summary=True,
-                           description=pkg.get("description", ""))
+                           description=pkg.get("description", ""),
+                           estimate_sec=pk_est)
             store.save_task(cfg, ct)
             ids_created.append(cid)
-            print(f"    ПАКЕТ {cid} [{pk_wbs}]: {pk_name} (class={pkg.get('class_name','')} layer={pkg.get('layer','')})")
+            print(f"    ПАКЕТ {cid} [{pk_wbs}]: {pk_name} (class={pkg.get('class_name','')} layer={pkg.get('layer','')}"
+                  + (f", estimate={_fmt_est(pk_est)}" if pk_est else "") + ")")
 
             # Уровень 4: листья
             tasks = pkg.get("tasks", [])
@@ -287,12 +300,14 @@ def tdl_plan(cfg, args) -> int:
                     l_name = leaf
                     l_goal = leaf
                     l_accept = [leaf]
+                    l_est = pk_est
                 else:
                     l_name = leaf.get("name", f"Задача {lf_idx}")
                     l_goal = leaf.get("goal", leaf.get("name", ""))
                     l_accept = leaf.get("acceptance_criteria") or [l_goal]
                     l_class = leaf.get("class_name", pkg.get("class_name", ""))
                     l_layer = leaf.get("layer", pkg.get("layer", ""))
+                    l_est = _estimate_sec(leaf.get("estimate_sec") or leaf.get("estimate")) or pk_est
                 lid = store.next_task_id(cfg)
                 lt = make_task(task_id=lid, project=cfg.name, name=l_name, wbs=lf_wbs,
                                priority=leaf.get("priority", "средний") if isinstance(leaf, dict) else "средний",
@@ -301,10 +316,12 @@ def tdl_plan(cfg, args) -> int:
                                class_name=l_class if isinstance(leaf, dict) else pkg.get("class_name", ""),
                                layer=l_layer if isinstance(leaf, dict) else pkg.get("layer", ""),
                                task_kind="execution",
-                               dependencies=[pid, cid] if not isinstance(leaf, str) else [pid, cid])
+                               dependencies=[pid, cid] if not isinstance(leaf, str) else [pid, cid],
+                               estimate_sec=l_est)
                 store.save_task(cfg, lt)
                 ids_created.append(lid)
-                print(f"      ЛИСТ {lid} [{lf_wbs}]: {l_name}")
+                print(f"      ЛИСТ {lid} [{lf_wbs}]: {l_name}"
+                      + (f" (estimate={_fmt_est(l_est)})" if l_est else ""))
 
     store.rebuild_index(cfg)
     C.git(cfg.root, f"tdl: план миссии {m_name} ({len(ids_created)} задач)")
@@ -339,6 +356,66 @@ def _tdl_default_commands(cfg) -> list:
 
 
 # ---------- helpers ----------
+
+def _parse_dt(v) -> datetime.datetime | None:
+    """Распарсить дату (YYYY-MM-DD) или ISO-момент -> локальный datetime."""
+    import datetime as _dt
+    if not v:
+        return None
+    try:
+        s = str(v).strip().replace("Z", "+00:00")
+        dt = _dt.datetime.fromisoformat(s)
+        if dt.tzinfo is not None:
+            dt = dt.astimezone().replace(tzinfo=None)
+        return dt
+    except ValueError:
+        return None
+
+
+def _duration_sec(start, finish) -> int | None:
+    """Фактическая длительность (сек) между start и finish (даты или ISO)."""
+    s = _parse_dt(start)
+    f = _parse_dt(finish)
+    if s is None or f is None:
+        return None
+    return max(0, int((f - s).total_seconds()))
+
+
+def _estimate_sec(v) -> int | None:
+    """Плановая оценка в секундах: число (сек) | часы (float) | "2ч 30м" | "3.5h"."""
+    if v is None or v == "":
+        return None
+    if isinstance(v, (int, float)) and not isinstance(v, bool):
+        if 0 < v <= 24:          # «2», «0.5», «24» — часы
+            return int(v * 3600)
+        return int(v)            # иначе — секунды
+    s = str(v).strip().lower()
+    total = 0
+    for h, hh, mi, dy in re.findall(
+            r"(\d+(?:[.,]\d+)?)\s*(?:ч|час)|(\d+(?:[.,]\d+)?)\s*(?:h|hr)|(\d+)\s*(?:м|мин)|(\d+)\s*(?:д|дн)", s):
+        if dy:
+            total += int(dy) * 86400
+        elif mi:
+            total += int(mi) * 60
+        else:
+            total += int(float((h or hh).replace(",", ".")) * 3600)
+    if total:
+        return total
+    try:
+        return int(float(s.replace(",", ".")) * 3600)  # «2» -> 2 часа
+    except ValueError:
+        return None
+
+
+def _fmt_est(sec: int | None) -> str:
+    if not sec:
+        return ""
+    if sec % 3600 == 0:
+        return f"{sec // 3600}ч"
+    if sec >= 3600:
+        return f"{sec // 3600}ч {sec % 3600 // 60}м"
+    return f"{sec // 60}м"
+
 
 def _append_history(task, actor, action, **kw):
     from ._tpl import _now_iso

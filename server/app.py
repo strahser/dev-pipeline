@@ -20,6 +20,7 @@
 from __future__ import annotations
 
 import asyncio
+import datetime
 import os
 from contextlib import asynccontextmanager
 from pathlib import Path
@@ -760,6 +761,119 @@ async def api_tdl_running(project: str = ""):
     except _CE:
         return []
     return _running_tasks(cfg)
+
+
+def _parse_iso_dt(v) -> datetime.datetime | None:
+    """Дата (YYYY-MM-DD) или ISO-момент -> локальный datetime."""
+    if not v:
+        return None
+    try:
+        s = str(v).strip().replace("Z", "+00:00")
+        dt = datetime.datetime.fromisoformat(s)
+        if dt.tzinfo is not None:
+            dt = dt.astimezone().replace(tzinfo=None)
+        return dt
+    except ValueError:
+        return None
+
+
+def _duration_sec(start, finish) -> int | None:
+    s = _parse_iso_dt(start)
+    f = _parse_iso_dt(finish)
+    if s is None or f is None:
+        return None
+    return max(0, int((f - s).total_seconds()))
+
+
+@app.get("/api/tdl/durations")
+async def api_tdl_durations(project: str = ""):
+    """Таблица длительностей задач: план (estimate_sec) vs факт (duration_sec).
+    Для summary-задач план/факт = сумма по потомкам (по префиксу wbs).
+    У незавершённых задач duration_sec = время в работе (start -> now)."""
+    import datetime as _dt
+    from pipeline.tdl import store as tdl_store
+    project = project or (list_projects() or [""])[0]
+    try:
+        cfg = load_config(project)
+    except ConfigError:
+        return {"project": project, "tasks": [], "summary": {}}
+
+    idx = tdl_store.load_index(cfg) or {"tasks": []}
+    tasks = []
+    for e in idx.get("tasks", []):
+        t = tdl_store.load_task(cfg, e.get("task_id", "")) or {}
+        tasks.append(t)
+
+    by_wbs = {str(t.get("wbs_code", "")): t for t in tasks}
+    wbs_set = set(by_wbs)
+    prefix = lambda w: str(w) + "."
+
+    def children_wbs(w):
+        p = prefix(w)
+        return sorted((x for x in wbs_set if x.startswith(p)), key=lambda s: [int(v) for v in s.split(".")])
+
+    def child_sum(w, field):
+        total = 0
+        for c in children_wbs(w):
+            v = by_wbs[c].get("dates", {}).get(field)
+            if v:
+                total += v
+        return total or None
+
+    now = _dt.datetime.now()
+    rows = []
+    for t in tasks:
+        tid = t.get("task_id", "")
+        w = str(t.get("wbs_code", ""))
+        dates = t.get("dates", {}) or {}
+        is_sum = bool(t.get("is_summary"))
+        est = dates.get("estimate_sec") or (child_sum(w, "estimate_sec") if is_sum else None)
+        if t.get("status") == "done":
+            dur = dates.get("duration_sec") or (child_sum(w, "duration_sec") if is_sum else None) \
+                  or _duration_sec(dates.get("start"), dates.get("finish"))
+        else:
+            st = _parse_iso_dt(dates.get("start"))
+            if st is not None:
+                dur = int((now - st).total_seconds())
+            else:
+                dur = child_sum(w, "duration_sec") if is_sum else None
+        delta = (dur - est) if (est is not None and dur is not None) else None
+        over = bool(delta is not None and delta > 0 and est and delta > est * 0.5)
+        rows.append({
+            "task_id": tid,
+            "name": t.get("name", ""),
+            "wbs_code": w,
+            "level": t.get("level", 1),
+            "is_summary": is_sum,
+            "status": t.get("status", "open"),
+            "workflow_state": t.get("workflow_state", "issued"),
+            "issued": dates.get("issued", ""),
+            "start": dates.get("start", ""),
+            "finish": dates.get("finish", ""),
+            "estimate_sec": est,
+            "duration_sec": dur,
+            "delta_sec": delta,
+            "over_plan": over,
+            "has_report": bool(e.get("report_refs", [])) if not is_sum else None,
+            "has_verdict": bool(e.get("verdict_refs", [])) if not is_sum else None,
+        })
+
+    rows.sort(key=lambda r: (r["wbs_code"]))
+    plan_total = sum(r["estimate_sec"] or 0 for r in rows if r["is_summary"])
+    fact_total = sum(r["duration_sec"] or 0 for r in rows if r["is_summary"])
+    done_count = sum(1 for r in rows if r["status"] == "done")
+    over_count = sum(1 for r in rows if r["over_plan"])
+    return {
+        "project": project,
+        "tasks": rows,
+        "summary": {
+            "total": len(rows),
+            "done": done_count,
+            "plan_sec": plan_total,
+            "fact_sec": fact_total,
+            "over_plan": over_count,
+        },
+    }
 
 
 # --- Потребление токенов (opencode.db: session.tokens_*) ------------------

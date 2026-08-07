@@ -3,7 +3,9 @@
 
 project:
   name: HeatLossRevit2
-  root: E:\ПлагиныРевит\HeatLossRevit2
+  # Несколько рабочих мест: первый существующий путь будет выбран автоматически
+  # (также можно задать DEV_PIPELINE_PROJECTS_DIR — базовая папка проектов на ПК).
+  root: [D:\Projects\HeatLossRevit2, E:\ПлагиныРевит\HeatLossRevit2]
   branch: refactoring/architecture-cleanup
 
 tasks:

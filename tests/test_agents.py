@@ -179,5 +179,60 @@ class TestDotnetParser(unittest.TestCase):
         self.assertEqual(parse_tests_dotnet(out), (15, 15, 0))
 
 
+class TestCheckStalled(unittest.TestCase):
+    """Детектор зависших задач (agent_watch.check_stalled)."""
+
+    def _cfg(self, tmp):
+        for sub in ("Tasks/Активные", "Tasks/Отчёты", "Tasks/Архив",
+                    "Tasks/Конвейер", "Tasks/JSON/Active"):
+            (tmp / sub).mkdir(parents=True)
+        from pipeline.config import ProjectConfig
+        return ProjectConfig(name="_t", root=tmp)
+
+    def _mk_task(self, cfg, tid, start, workflow="in_progress"):
+        import datetime
+        from pipeline.tdl._tpl import make_task
+        from pipeline.tdl import store as tdl_store
+        t = make_task(tid, "_t", "Задача", "1.1", goal="ц", acceptance=["к"], commands=["b"])
+        t["workflow_state"] = workflow
+        t["dates"]["start"] = start
+        tdl_store.save_task(cfg, t)
+
+    def test_stalled_detected_and_marked_once(self):
+        import datetime
+        import tempfile
+        from agents import agent_watch as aw
+        from pipeline.tdl import store as tdl_store
+        tmp = Path(tempfile.mkdtemp(prefix="stall_"))
+        cfg = self._cfg(tmp)
+        now = datetime.datetime.now()
+        old = (now - datetime.timedelta(days=5)).isoformat()          # зависла: 5 дней
+        fresh = (now - datetime.timedelta(hours=1)).isoformat()       # свежая: час
+        self._mk_task(cfg, "A-01", old)
+        self._mk_task(cfg, "A-02", fresh)
+        n = aw.check_stalled(cfg, None, timeout_sec=10800)
+        self.assertEqual(n, 1)
+        t = tdl_store.load_task(cfg, "A-01")
+        self.assertEqual(t["workflow_state"], "in_progress")  # статус не меняем
+        self.assertTrue(any(h["action"] == "stalled" for h in t["history"]))
+        # повторный вызов не помечает второй раз
+        self.assertEqual(aw.check_stalled(cfg, None, timeout_sec=10800), 0)
+        import shutil; shutil.rmtree(tmp, ignore_errors=True)
+
+    def test_stalled_skips_with_report(self):
+        import datetime
+        import tempfile
+        from agents import agent_watch as aw
+        from pipeline.tdl import store as tdl_store
+        tmp = Path(tempfile.mkdtemp(prefix="stall2_"))
+        cfg = self._cfg(tmp)
+        old = (datetime.datetime.now() - datetime.timedelta(days=5)).isoformat()
+        self._mk_task(cfg, "A-01", old)
+        (tdl_store.reports_dir(cfg) / "A-01_2026-08-01.report.json").write_text(
+            '{"report_id":"A-01_2026-08-01"}', encoding="utf-8")
+        self.assertEqual(aw.check_stalled(cfg, None, timeout_sec=10800), 0)
+        import shutil; shutil.rmtree(tmp, ignore_errors=True)
+
+
 if __name__ == "__main__":
     unittest.main(verbosity=2)
