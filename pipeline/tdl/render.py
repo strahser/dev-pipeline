@@ -2,6 +2,17 @@
 """TDL: генерация человекочитаемых Markdown-рендеров из JSON (вторичный слой)."""
 from __future__ import annotations
 
+import json
+
+
+def _s(v) -> str:
+    """Строковое представление значения: строки как есть, dict/list -> JSON."""
+    if isinstance(v, str):
+        return v
+    if isinstance(v, (dict, list)):
+        return json.dumps(v, ensure_ascii=False)
+    return "" if v is None else str(v)
+
 
 def _wbs_depth(wbs: str) -> int:
     return len([x for x in str(wbs).split(".") if x])
@@ -25,80 +36,80 @@ def render_tree(tasks: list[dict]) -> str:
             meta.append(t["class_name"])
         if t.get("layer"):
             meta.append(t["layer"])
-        suf = f"  [{t.get('status', 'open')}" + (f"/{t.get('workflow_state')}" if t.get("workflow_state") else "") + "]"
-        suf += f"  ({t.get('task_id', '')})"
+        suffix = f"  [{_s(t.get('status', 'open'))}" + (f"/{_s(t.get('workflow_state'))}" if t.get("workflow_state") else "") + "]"
+        suffix += f"  ({_s(t.get('task_id', ''))})"
         if meta:
-            suf += f"  {'.'.join(meta)}"
-        lines.append(f"{prefix}{wbs} {t.get('name', '')}{suf}")
+            suffix += f"  {'.'.join(meta)}"
+        lines.append(f"{prefix}{wbs} {_s(t.get('name', ''))}{suffix}")
     lines.append("```")
     return "\n".join(lines)
 
 
 def render_task_card(task: dict) -> str:
-    lines = [f"# Карточка задачи {task.get('wbs_code', '')}", "",
-             f"- ID: {task.get('task_id')}",
-             f"- WBS: {task.get('wbs_code')}",
-             f"- Проект: {(task.get('project') or {}).get('name', task.get('project', ''))}",
-             f"- Статус: {task.get('status_display', task.get('status'))}",
-             f"- Workflow: {task.get('workflow_state')}",
-             f"- Приоритет: {task.get('priority')}",
-             f"- Тип: {task.get('task_kind')}",
-             f"- Модуль: {task.get('module', '')}", "",
-             "## Наименование", task.get("name", ""), "",
-             "## Цель", task.get("goal", ""), "",
-             "## Описание", task.get("description", ""), "",
+    lines = [f"# Карточка задачи {_s(task.get('wbs_code', ''))}", "",
+             f"- ID: {_s(task.get('task_id'))}",
+             f"- WBS: {_s(task.get('wbs_code'))}",
+             f"- Проект: {_s((task.get('project') or {}).get('name', task.get('project', '')))}",
+             f"- Статус: {_s(task.get('status_display', task.get('status')))}",
+             f"- Workflow: {_s(task.get('workflow_state'))}",
+             f"- Приоритет: {_s(task.get('priority'))}",
+             f"- Тип: {_s(task.get('task_kind'))}",
+             f"- Модуль: {_s(task.get('module', ''))}", "",
+             "## Наименование", _s(task.get("name", "")), "",
+             "## Цель", _s(task.get("goal", "")), "",
+             "## Описание", _s(task.get("description", "")), "",
              "## Критерии приёмки"]
     for c in task.get("acceptance_criteria", []):
-        lines.append(f"- {c}")
+        lines.append(f"- {_s(c)}")
     lines += ["", "## Сроки",
-              f"- Начало: {task.get('dates', {}).get('start', '')}",
-              f"- Завершение: {task.get('dates', {}).get('finish', '')}", "",
+              f"- Начало: {_s(task.get('dates', {}).get('start', ''))}",
+              f"- Завершение: {_s(task.get('dates', {}).get('finish', ''))}", "",
               "## Ссылки"]
     for l in task.get("links", []):
         href = l.get("href") or l.get("url") or l.get("ref")
         lines.append(f"- [{l.get('type')}]({href})" if href else f"- {l.get('type')}")
-    lines += ["", "## Блокировки", task.get("blocker") or "Нет", "", "## История"]
+    lines += ["", "## Блокировки", _s(task.get("blocker") or "Нет"), "", "## История"]
     for h in task.get("history", []):
-        lines.append(f"- {h.get('timestamp')} {h.get('action')} — {h.get('details')}")
+        lines.append(f"- {_s(h.get('timestamp'))} {_s(h.get('action'))} — {_s(h.get('details'))}")
     return "\n".join(lines)
 
 
 def render_report_md(report: dict) -> str:
-    lines = [f"# ОТЧЁТ: {report.get('report_id')}", "",
-             f"**Дата:** {report.get('date')} | **Статус:** {report.get('report_status')}", "",
-             "## Что было не так", report.get("problem", ""), "",
+    lines = [f"# ОТЧЁТ: {_s(report.get('report_id'))}", "",
+             f"**Дата:** {_s(report.get('date'))} | **Статус:** {_s(report.get('report_status'))}", "",
+             "## Что было не так", _s(report.get("problem", "")), "",
              "## Что сделано"]
     for w in report.get("work_done", []):
-        lines.append(f"- {w}")
+        lines.append(f"- {_s(w)}")
     lines += ["", "## Доказательства"]
     for e in report.get("evidence", []):
-        cmd = e.get("command") or e.get("details") or e.get("name")
-        lines.append(f"- [{e.get('type')}] {e.get('evidence_id')}: {cmd} (result={e.get('result')})")
+        cmd = _s(e.get("command") or e.get("details") or e.get("name"))
+        lines.append(f"- [{_s(e.get('type'))}] {_s(e.get('evidence_id'))}: {cmd} (result={_s(e.get('result'))})")
     lines += ["", "## Числа до/после"]
     for m in report.get("metrics", []):
-        lines.append(f"- {m.get('name')}: {m.get('before')} -> {m.get('after')}")
+        lines.append(f"- {_s(m.get('name'))}: {_s(m.get('before'))} -> {_s(m.get('after'))}")
     lines += ["", "## Открытые вопросы"]
     for q in report.get("open_questions", []):
-        lines.append(f"- {q}")
+        lines.append(f"- {_s(q)}")
     lines += ["", "## Как пересобрать/проверить"]
     for c in report.get("verification_commands", []):
-        lines.append(f"```\n{c}\n```")
+        lines.append(f"```\n{_s(c)}\n```")
     return "\n".join(lines)
 
 
 def render_verdict_md(verdict: dict) -> str:
-    lines = [f"# ВЕРДИКТ: {verdict.get('verdict_id')}", "",
-             f"**Дата:** {verdict.get('date')} | **Результат:** {verdict.get('result')}",
-             f"**Можно двигаться дальше:** {verdict.get('can_move_forward')}", "",
+    lines = [f"# ВЕРДИКТ: {_s(verdict.get('verdict_id'))}", "",
+             f"**Дата:** {_s(verdict.get('date'))} | **Результат:** {_s(verdict.get('result'))}",
+             f"**Можно двигаться дальше:** {_s(verdict.get('can_move_forward'))}", "",
              "## Проверки", "",
              "| ID | Проверка | Статус | Ожидание | Факт |"]
     for c in verdict.get("checks", []):
-        lines.append(f"| {c.get('check_id')} | {c.get('name')} | {c.get('status')} | "
-                     f"{c.get('expected')} | {c.get('actual')} |")
+        lines.append(f"| {_s(c.get('check_id'))} | {_s(c.get('name'))} | {_s(c.get('status'))} | "
+                     f"{_s(c.get('expected'))} | {_s(c.get('actual'))} |")
     lines += ["", "## Обязательные исправления"]
     for f in verdict.get("required_fixes", []):
-        lines.append(f"- {f}")
+        lines.append(f"- {_s(f)}")
     lines += ["", "## Примечания"]
     for n in verdict.get("notes", []):
-        lines.append(f"- {n}")
+        lines.append(f"- {_s(n)}")
     return "\n".join(lines)

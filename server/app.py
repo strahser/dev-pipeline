@@ -484,6 +484,16 @@ async def api_projects():
 
 # --- TDL (JSON как источник истины) ---
 
+def _wbs_level(level, wbs_code: str) -> int:
+    """Уровень вложения: явный level, иначе глубина WBS (2.1.1 -> 3)."""
+    try:
+        if level is not None:
+            return int(level)
+    except (TypeError, ValueError):
+        pass
+    return len([p for p in str(wbs_code).split(".") if p])
+
+
 def _tdl_task_row(cfg, t: dict) -> dict:
     """Обогатить индексную строку TDL-задачи данными из JSON-файла задачи
     (module/class_name/layer/is_summary/task_kind/dates) + счётчиками из отчёта."""
@@ -500,10 +510,11 @@ def _tdl_task_row(cfg, t: dict) -> dict:
         "path": t.get("path", ""),
         "wbs_code": t.get("wbs_code", ""),
         "parent_wbs": t.get("parent_wbs", task.get("parent_wbs", "")) or "",
-        "level": t.get("level", task.get("level", 0)),
+        "level": _wbs_level(t.get("level", task.get("level")), t.get("wbs_code", task.get("wbs_code", ""))),
         "is_summary": bool(task.get("is_summary", t.get("is_summary", False))),
         "task_kind": task.get("task_kind", t.get("task_kind", "")),
         "name": t.get("name", task.get("name", "")),
+        "description": task.get("description", "") or t.get("description", "") or "",
         "status": t.get("status", "open"),
         "workflow_state": t.get("workflow_state", "issued"),
         "priority": t.get("priority", task.get("priority", "средний")),
@@ -682,6 +693,143 @@ async def api_tdl_activity(limit: int = 50, project: str = ""):
     evs = store.recent_events(limit=min(limit, 200), project=project)
     return [{"type": e["type"], "task": e.get("task", ""), "created_at": e["created_at"],
              "from": e["from"]} for e in evs]
+
+
+# --- Потребление токенов (opencode.db: session.tokens_*) ------------------
+
+def _opencode_db_path() -> Path | None:
+    """Путь к локальной БД opencode с токенами (session.tokens_input/output/cost)."""
+    env = os.environ.get("OPENCODE_DB")
+    if env:
+        return Path(env)
+    cand = Path.home() / ".local" / "share" / "opencode" / "opencode.db"
+    return cand if cand.exists() else None
+
+
+def _session_rows(days: int | None) -> list[dict]:
+    """Сырые сессии opencode (time_created мс, tokens_*, cost), опционально за N дней."""
+    db_path = _opencode_db_path()
+    if not db_path:
+        return []
+    import sqlite3
+    import time as _t
+    rows = []
+    try:
+        con = sqlite3.connect(f"file:{db_path}?mode=ro", uri=True)
+        con.row_factory = sqlite3.Row
+        q = "SELECT time_created, tokens_input, tokens_output, tokens_reasoning, tokens_cache_read, tokens_cache_write, cost FROM session"
+        params: tuple = ()
+        if days:
+            cutoff = int((_t.time() - days * 86400) * 1000)
+            q += " WHERE time_created >= ?"
+            params = (cutoff,)
+        q += " ORDER BY time_created"
+        for r in con.execute(q, params):
+            rows.append(dict(r))
+        con.close()
+    except Exception:
+        return []
+    return rows
+
+
+def _token_series(rows: list[dict], period: str) -> dict:
+    """Сгруппировать сессии по дням/неделям и посчитать токены + стоимость."""
+    import datetime as _dt
+    daily: dict[str, dict] = {}
+
+    def _day(ms) -> str:
+        return _dt.datetime.fromtimestamp(ms / 1000).strftime("%Y-%m-%d")
+
+    def _week(ms) -> str:
+        d = _dt.datetime.fromtimestamp(ms / 1000)
+        monday = (d - _dt.timedelta(days=d.weekday())).strftime("%Y-%m-%d")
+        return monday
+
+    for r in rows:
+        ts = r.get("time_created") or 0
+        key = _day(ts) if period == "day" else _week(ts)
+        bucket = daily.setdefault(key, {
+            "date": key, "input": 0, "output": 0, "reasoning": 0,
+            "cache_read": 0, "cache_write": 0, "cost": 0.0, "sessions": 0,
+        })
+        bucket["input"] += int(r.get("tokens_input") or 0)
+        bucket["output"] += int(r.get("tokens_output") or 0)
+        bucket["reasoning"] += int(r.get("tokens_reasoning") or 0)
+        bucket["cache_read"] += int(r.get("tokens_cache_read") or 0)
+        bucket["cache_write"] += int(r.get("tokens_cache_write") or 0)
+        bucket["cost"] += float(r.get("cost") or 0.0)
+        bucket["sessions"] += 1
+
+    series = sorted(daily.values(), key=lambda x: x["date"])
+    return {
+        "period": period,
+        "series": series,
+        "total_input": sum(b["input"] for b in series),
+        "total_output": sum(b["output"] for b in series),
+        "total_cost": round(sum(b["cost"] for b in series), 4),
+        "sessions": sum(b["sessions"] for b in series),
+    }
+
+
+@app.get("/api/usage/tokens")
+async def api_usage_tokens(period: str = "day", days: int = 30):
+    """Потребление токенов: ?period=day|week&days=30.
+    Читает локальную opencode.db (session.tokens_input/output/cost)."""
+    if period not in ("day", "week"):
+        period = "day"
+    rows = _session_rows(days)
+    return _token_series(rows, period)
+
+
+# Лимиты подписки OpenCode Go (docs/go: 5h=$12, неделя=$30, месяц=$60)
+GO_LIMITS = [
+    {"key": "rolling", "label": "Скользящее использование", "window_h": 5, "limit": 12.0},
+    {"key": "weekly", "label": "Недельное использование", "window_h": 7 * 24, "limit": 30.0},
+    {"key": "monthly", "label": "Ежемесячное использование", "window_h": 30 * 24, "limit": 60.0},
+]
+
+
+def _go_reset_in(window_h: float) -> int:
+    """Секунд до сброса окна Go-лимита: 5h/неделя/месяц от начала текущего окна."""
+    import time as _t
+    now = _t.time()
+    if window_h == 5:
+        return int(5 * 3600 - (now % (5 * 3600)))
+    if window_h == 7 * 24:
+        # неделя: до понедельника 00:00 UTC
+        import datetime as _dt
+        now_dt = _dt.datetime.now(_dt.timezone.utc)
+        monday = (now_dt - _dt.timedelta(days=now_dt.weekday())).replace(hour=0, minute=0, second=0, microsecond=0)
+        return int((monday + _dt.timedelta(weeks=1) - now_dt).total_seconds())
+    # месяц: до 1-го числа следующего месяца 00:00 UTC
+    import datetime as _dt
+    now_dt = _dt.datetime.now(_dt.timezone.utc)
+    nxt = (now_dt.replace(day=1) + _dt.timedelta(days=32)).replace(day=1, hour=0, minute=0, second=0, microsecond=0)
+    return int((nxt - now_dt).total_seconds())
+
+
+@app.get("/api/usage/go")
+async def api_usage_go():
+    """Локальный расчёт использования подписки OpenCode Go (лимиты из docs/go).
+    Проценты: потрачено $ за окно / лимит. Источник — opencode.db session.cost."""
+    import time as _t
+    now_ms = int(_t.time() * 1000)
+    rows = _session_rows(days=None)  # все сессии с cost
+    out = []
+    for lim in GO_LIMITS:
+        cutoff = now_ms - int(lim["window_h"] * 3600 * 1000)
+        used = sum(float(r.get("cost") or 0.0) for r in rows
+                   if (r.get("time_created") or 0) >= cutoff)
+        pct = min(100.0, round(used / lim["limit"] * 100, 1))
+        out.append({
+            "key": lim["key"],
+            "label": lim["label"],
+            "used": round(used, 2),
+            "limit": lim["limit"],
+            "percent": pct,
+            "reset_in_sec": _go_reset_in(lim["window_h"]),
+        })
+    return {"provider": "OpenCode Go", "items": out}
 
 
 @app.get("/api/inbox")
