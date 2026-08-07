@@ -1,22 +1,28 @@
 # -*- coding: utf-8 -*-
 """Qwen-мост для локального агента (deepseek free) + облачный Qwen.
 
-Локальный агент (opencode deepseek free) — «тонкий»: он формулирует запрос, а
-тяжёлую генерацию (код/файлы/анализ) делает облачный Qwen. Этот мост:
-  1. собирает контекст (задача + запрошенные файлы);
-  2. отправляет в Qwen через LocalAssitent (send_to_cloud);
-  3. сохраняет полный ответ;
-  4. (опция --apply) применяет файлы из ответа: блоки ```FILE: path``` пишутся на диск.
+Использует ГОТОВЫЙ конвейер LocalAssitent (сценарий 'text'): читает файл
+(questions.txt) построчно, отправляет каждый вопрос в облачный ИИ, получает
+ответ, сохраняет в answers.md. Это проверенный путь (тестировался на DeepSeek,
+работает и на Qwen), в отличие от нестабильного send_to_cloud с копированием.
+
+Локальный агент (opencode deepseek free) — «тонкий»: формулирует запрос, а
+облачный Qwen пишет файлы (возвращает ```FILE: путь``` блоки). Мост:
+  1. собирает контекст (задача + файлы) в questions.txt;
+  2. запускает LocalAssitent pipeline (--scenario text --provider qwen);
+  3. (--apply) применяет FILE:-блоки из ответа на диск.
 
 Использование (из субагента):
-  python -X utf8 agents/qwen_bridge.py --task A-01 --context <файл> --out Tasks/00_Референсы/Qwen_A-01.md
-  python -X utf8 agents/qwen_bridge.py --task A-01 --context <файл> --out ... --apply --dir <корень проекта>
-  python -X utf8 agents/qwen_bridge.py --prompt "текст" --out ... --apply
+  python -X utf8 "E:\ПлагиныРевит\dev-pipeline\agents\qwen_bridge.py" \
+      --task <файл задачи> --context <файлы> --out Tasks/00_Референсы/Qwen_X.md
+  python -X utf8 "E:\ПлагиныРевит\dev-pipeline\agents\qwen_bridge.py" \
+      --task <файл> --out Tasks/00_Референсы/Qwen_X.md --apply --dir <корень>
+  python -X utf8 "E:\ПлагиныРевит\dev-pipeline\agents\qwen_bridge.py" \
+      --prompt "текст" --out ... --apply --dir ...
 """
 from __future__ import annotations
 
 import argparse
-import os
 import re
 import subprocess
 import sys
@@ -26,11 +32,13 @@ QWEN_DIR = r"E:\ПлагиныРевит\LocalAssitent"
 QWEN_MODEL = "Qwen3.8-Max-Preview"
 
 
-def _build_prompt(task_file: str | None, context_files: list[str], prompt: str) -> str:
+def _build_question(task_file: str | None, context_files: list[str], prompt: str) -> str:
     parts = []
     if task_file:
-        parts.append("### ЗАДАЧА (прочитай и выполни)\n" +
-                     Path(task_file).read_text(encoding="utf-8", errors="replace"))
+        p = Path(task_file)
+        if p.exists():
+            parts.append("### ЗАДАЧА (выполни)\n" +
+                         p.read_text(encoding="utf-8", errors="replace"))
     for cf in context_files:
         p = Path(cf)
         if p.exists():
@@ -44,7 +52,7 @@ def _build_prompt(task_file: str | None, context_files: list[str], prompt: str) 
    ```FILE: <относительный путь>
    <содержимое файла>
    ```
-   Кодировка UTF-8. Пути — относительные от корня проекта.
+   Кодировка UTF-8. Пути — относительно корня проекта.
 2. Если это анализ — структурируй секциями (A/B/C) и в конце ### SUMMARY.
 3. Не выдумывай результаты сборки/тестов — только факты из контекста.
 4. В конце — маркер: END OF RESPONSE.
@@ -52,23 +60,41 @@ def _build_prompt(task_file: str | None, context_files: list[str], prompt: str) 
     return "\n\n".join(parts)
 
 
-def _send(prompt: str, out: str) -> str:
+def _run_localassitent(question: str, out: str, input_file: Path, answers_file: Path) -> tuple[str, str]:
+    """Запустить готовый сценарий 'text' LocalAssitent. Возвращает (stdout, ответ).
+
+    ВАЖНО: TextScenario читает input_file ПОСТРОЧНО и каждую строку отправляет
+    отдельным вопросом. Поэтому весь промпт пишем в ОДНУ строку (переносы -> пробелы).
+    """
+    one_line = " ".join(question.splitlines())
+    input_file.write_text(one_line, encoding="utf-8")
+    cmd = ["python", "-X", "utf8", "main.py", "--scenario", "text",
+           "--provider", "qwen", "--model", QWEN_MODEL,
+           "--input", str(input_file), "--output", str(answers_file)]
+    r = subprocess.run(cmd, cwd=QWEN_DIR, capture_output=True, text=True,
+                       encoding="utf-8", errors="replace", timeout=1200)
+    response = ""
+    if answers_file.exists():
+        response = answers_file.read_text(encoding="utf-8", errors="replace")
+    # сохранить полный ответ моста (с заголовком)
     out_path = Path(out)
     out_path.parent.mkdir(parents=True, exist_ok=True)
-    tmp = out_path.with_suffix(".tmp_prompt.md")
-    tmp.write_text(prompt, encoding="utf-8")
-    cmd = ["python", "-X", "utf8", "-m", "tools.send_to_cloud", str(tmp),
-           "--provider", "qwen", "--model", QWEN_MODEL, "--output", str(out_path)]
-    r = subprocess.run(cmd, cwd=QWEN_DIR, capture_output=True, text=True,
-                       encoding="utf-8", errors="replace", timeout=900)
-    return (r.stdout or "") + (r.stderr or "")
+    out_path.write_text(response, encoding="utf-8")
+    return (r.stdout or "") + (r.stderr or ""), response
+
+
+def _strip_question_prefix(response: str) -> str:
+    """TextScenario возвращает '**Вопрос:** ... **Ответ:** <текст>'. Убрать вопрос."""
+    m = re.search(r"\*\*Ответ:\*\*\s*([\s\S]*)", response)
+    return m.group(1).strip() if m else response
 
 
 def _apply_files(response_text: str, root: Path) -> list[str]:
-    """Применить файлы из ответа: блоки ```FILE: path ... ``` -> на диск."""
+    """Применить файлы из ответа: блоки ```FILE: путь ... ``` -> на диск."""
+    body = _strip_question_prefix(response_text)
     applied = []
-    pattern = re.compile(r"```FILE:\s*([^\n]+)\n(.*?)```", re.S)
-    for m in pattern.finditer(response_text):
+    pattern = re.compile(r"```FILE:\s*([^\s`]+)\s*\n(.*?)```", re.S)
+    for m in pattern.finditer(body):
         rel = m.group(1).strip().strip('"').strip("'")
         content = m.group(2).strip("\n")
         target = root / rel
@@ -86,29 +112,29 @@ def main() -> int:
     ap.add_argument("--out", required=True, help="куда сохранить ответ Qwen")
     ap.add_argument("--apply", action="store_true", help="применить FILE:-блоки на диск")
     ap.add_argument("--dir", default=".", help="корень проекта для --apply")
+    ap.add_argument("--retries", type=int, default=3, help="повторных попыток (если ответ без FILE)")
     args = ap.parse_args()
 
-    prompt = _build_prompt(args.task, args.context, args.prompt)
-    print(f"[qwen-bridge] отправка в Qwen ({QWEN_MODEL}) ...", flush=True)
-    log = _send(prompt, args.out)
-    print(log[-400:], flush=True)
+    question = _build_question(args.task, args.context, args.prompt)
+    work = Path(args.out).parent
+    work.mkdir(parents=True, exist_ok=True)
+    input_file = work / "qwen_questions.txt"
+    answers_file = work / "qwen_answers.md"
 
-    out_path = Path(args.out)
-    if not out_path.exists():
-        print("ОТВЕТ QWEN НЕ ПОЛУЧЕН")
-        return 1
-    text = out_path.read_text(encoding="utf-8", errors="replace")
-    print(f"[qwen-bridge] ответ: {len(text)} символов -> {out_path}")
+    print(f"[qwen-bridge] отправка в Qwen через LocalAssitent (сценарий text) ...", flush=True)
+    log, response = _run_localassitent(question, args.out, input_file, answers_file)
+    print(log[-500:], flush=True)
+    print(f"[qwen-bridge] ответ: {len(response)} символов -> {args.out}")
 
     if args.apply:
         root = Path(args.dir)
-        applied = _apply_files(text, root)
+        applied = _apply_files(response, root)
         if applied:
             print(f"[qwen-bridge] применено файлов: {len(applied)}")
             for a in applied:
                 print(f"   + {a}")
         else:
-            print("[qwen-bridge] FILE:-блоков в ответе нет (только сохранён текст)")
+            print("[qwen-bridge] FILE:-блоков нет (проверь ответ; повтори при необходимости)")
     return 0
 
 

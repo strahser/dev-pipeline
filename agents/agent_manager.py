@@ -189,11 +189,13 @@ def subagent_env(cfg):
 
 
 def run_subagent(cfg, task_id: str, report_path: Path, log_path: Path,
-                 model: str = "", agent: str = "", skill: str = "", client=None) -> int:
+                 model: str = "", agent: str = "", skill: str = "", client=None,
+                 worker: str = "") -> int:
     """Запустить субагента (opencode run) в отдельной сессии. Возвращает rc.
     model — провайдер/модель (напр. opencode/deepseek-v4-flash-free);
     agent — роль opencode (--agent); skill — скилл, который субагент обязан загрузить;
-    client — Client сервера (опционально) для публикации событий."""
+    client — Client сервера (опционально) для публикации событий;
+    worker — 'qwen': субагент-рабочий, тяжёлую генерацию делает облачный Qwen через qwen_bridge."""
     task_file = None
     for f in glob.glob(str(cfg.abs_tasks_dir("active") / (task_id + "_*.md"))):
         task_file = Path(f)
@@ -221,13 +223,33 @@ def run_subagent(cfg, task_id: str, report_path: Path, log_path: Path,
         report=report_path,
         task_id=task_id,
     )
+    if worker == "qwen":
+        qwen_skill = "pipeline-qwen-worker"
+        qwen_bridge = r"E:\ПлагиныРевит\dev-pipeline\agents\qwen_bridge.py"
+        qwen_block = (
+            "ДОПОЛНИТЕЛЬНО (режим бесплатного рабочего): тяжёлую генерацию файлов делает "
+            "облачный Qwen через мост. Порядок:\n"
+            "  0. ТВОЯ ЗАДАЧА УЖЕ ВЫДАНА — файл: "
+            f"{task_file}. НЕ ищи задачи со статусом open в Tasks\\Активные, работай ТОЛЬКО с этим файлом.\n"
+            f"  1. python -X utf8 \"{qwen_bridge}\" --task \"{task_file}\" "
+            "--context <нужные файлы> --out Tasks\\00_Референсы\\Qwen_<тема>.md\n"
+            f"  2. python -X utf8 \"{qwen_bridge}\" --task \"{task_file}\" "
+            "--out Tasks\\00_Референсы\\Qwen_<тема>.md --apply --dir \"<корень проекта>\"\n"
+            "  3. Qwen возвращает файлы блоками ```FILE: путь``` — мост применяет их на диск.\n"
+            "  4. Проверь сборку/тесты; при ошибках отправь лог Qwen на исправление (повторный вызов).\n"
+            "Загрузи скилл pipeline-qwen-worker (E:\\ПлагиныРевит\\dev-pipeline\\skills\\pipeline-qwen-worker\\SKILL.md).\n"
+        )
+        prompt = qwen_block + prompt
+        if not skill:
+            skill = qwen_skill
     if skill_line:
         prompt = skill_line + prompt
     log_path.parent.mkdir(parents=True, exist_ok=True)
     print(f"  [manager] субагент {task_id}: opencode run"
           + (f" (model={model})" if model else "")
           + (f" (agent={agent})" if agent else "")
-          + (f" (skill={skill})" if skill else ""))
+          + (f" (skill={skill})" if skill else "")
+          + (f" (worker={worker})" if worker else ""))
     cmd = [OPENCODE, "run", prompt]
     if model:
         cmd += ["-m", model]
@@ -313,6 +335,7 @@ def _run_batch(cfg, ids, args):
     model = getattr(args, "model", "") or DEFAULT_MODEL
     agent = getattr(args, "agent", "")
     skill = getattr(args, "skill", "")
+    worker = getattr(args, "worker", "")
     # Публикация событий в сервер (опционально): позволяет панели показывать ход задач.
     client = None
     try:
@@ -334,7 +357,8 @@ def _run_batch(cfg, ids, args):
         for tid in ids:
             report = reports_dir / f"{tid}_Отчёт_{now()}.md"
             log = logs_dir / f"{tid}_run.log"
-            rc = run_subagent(cfg, tid, report, log, model=model, agent=agent, skill=skill, client=client)
+            rc = run_subagent(cfg, tid, report, log, model=model, agent=agent, skill=skill,
+                              client=client, worker=worker)
             results[tid] = rc
             ok = _ensure_report(cfg, tid)
             _publish(cfg, client, "subagent_finished", tid,
@@ -346,7 +370,8 @@ def _run_batch(cfg, ids, args):
         def _one(tid):
             report = reports_dir / f"{tid}_Отчёт_{now()}.md"
             log = logs_dir / f"{tid}_run.log"
-            rc = run_subagent(cfg, tid, report, log, model=model, agent=agent, skill=skill, client=client)
+            rc = run_subagent(cfg, tid, report, log, model=model, agent=agent, skill=skill,
+                              client=client, worker=worker)
             ok = _ensure_report(cfg, tid)
             _publish(cfg, client, "subagent_finished", tid,
                      {"rc": rc, "report": ok})
@@ -464,6 +489,8 @@ def main(argv=None):
     p.add_argument("--model", default="", help="opencode-модель (напр. opencode/deepseek-v4-flash-free)")
     p.add_argument("--agent", default="", help="роль opencode (--agent)")
     p.add_argument("--skill", default="", help="скилл, который субагент обязан загрузить")
+    p.add_argument("--worker", default="", choices=["", "qwen"],
+                   help="qwen — бесплатный рабочий: генерацию файлов делает облачный Qwen")
     p.set_defaults(handler=cmd_mission)
 
     p = sub.add_parser("task")
@@ -475,6 +502,8 @@ def main(argv=None):
     p.add_argument("--model", default="")
     p.add_argument("--agent", default="")
     p.add_argument("--skill", default="")
+    p.add_argument("--worker", default="", choices=["", "qwen"],
+                   help="qwen — бесплатный рабочий: генерацию файлов делает облачный Qwen")
     p.set_defaults(handler=cmd_task)
 
     p = sub.add_parser("report")
