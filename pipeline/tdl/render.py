@@ -3,6 +3,37 @@
 from __future__ import annotations
 
 
+def _wbs_depth(wbs: str) -> int:
+    return len([x for x in str(wbs).split(".") if x])
+
+
+def render_tree(tasks: list[dict]) -> str:
+    """Отрисовать дерево TDL по WBS (миссия -> этапы -> классы -> листья).
+
+    tasks — список словарей task (или index-строк) с полями wbs_code, name,
+    is_summary, status, module, class_name, layer, task_id.
+    """
+    lines = ["# Дерево TDL", "", "```text"]
+    for t in sorted(tasks, key=lambda x: [int(p) for p in str(x.get("wbs_code", "0")).split(".") if p.isdigit()]):
+        wbs = t.get("wbs_code", "")
+        depth = _wbs_depth(wbs)
+        prefix = "  " * (depth - 1) + ("• " if not t.get("is_summary") else "- ")
+        meta = []
+        if t.get("module"):
+            meta.append(t["module"])
+        if t.get("class_name"):
+            meta.append(t["class_name"])
+        if t.get("layer"):
+            meta.append(t["layer"])
+        suf = f"  [{t.get('status', 'open')}" + (f"/{t.get('workflow_state')}" if t.get("workflow_state") else "") + "]"
+        suf += f"  ({t.get('task_id', '')})"
+        if meta:
+            suf += f"  {'.'.join(meta)}"
+        lines.append(f"{prefix}{wbs} {t.get('name', '')}{suf}")
+    lines.append("```")
+    return "\n".join(lines)
+
+
 def render_task_card(task: dict) -> str:
     lines = [f"# Карточка задачи {task.get('wbs_code', '')}", "",
              f"- ID: {task.get('task_id')}",

@@ -164,6 +164,14 @@ function titleHtml(row){
   return h;
 }
 
+/* Отступ по глубине WBS: миссия(1)/этап(2) -> без отступа, класс(3) -> 16px, лист(4) -> 32px */
+function wbsHtml(row){
+  const lvl = row.level || 0;
+  const pad = lvl >= 4 ? 32 : (lvl === 3 ? 16 : 0);
+  const icon = row.is_summary ? (lvl === 1 ? '📦' : '📁') : '▸';
+  return '<span style="display:inline-block;padding-left:'+pad+'px">'+icon+' '+esc(row.wbs_code || '')+'</span>';
+}
+
 function classesHtml(row){
   if (!row.class_name) return '<span class="muted">—</span>';
   return row.class_name.split(',').map(s=>s.trim()).filter(Boolean)
@@ -187,7 +195,7 @@ function renderTable(rows){
     const deadline = dates.finish ? String(dates.finish).slice(0,10) : (dates.issued ? String(dates.issued).slice(0,10)+'…' : '—');
     cols.push([
       indicator(r),
-      r.wbs_code || '',
+      wbsHtml(r),
       r.task_id,
       titleHtml(r),
       KIND_LABEL[r.task_kind] || (r.is_summary ? 'Общая' : esc(r.task_kind||'')),

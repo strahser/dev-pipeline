@@ -121,6 +121,7 @@ class TdlTask:
     schema_version: str = "1.0.0"
     entity_type: str = "tdl.task"
     parent_wbs: str = ""
+    level: int | None = None
     is_summary: bool = False
     status_display: str = ""
     workflow_state: str = "issued"
@@ -213,6 +214,12 @@ class TdlIndexEntry:
     verdict_refs: list = field(default_factory=list)
     name: str = ""
     priority: str = ""
+    parent_wbs: str = ""
+    level: int | None = None
+    is_summary: bool = False
+    module: str = ""
+    class_name: str = ""
+    layer: str = ""
 
     def to_dict(self) -> dict:
         return asdict(self)

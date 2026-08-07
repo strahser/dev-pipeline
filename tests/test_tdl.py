@@ -175,5 +175,51 @@ class TestMigrate(unittest.TestCase):
             self.assertIn("Не делать Y.", t["constraints"][0])
 
 
+class TestHierarchy(unittest.TestCase):
+    """Иерархия миссии: level, is_summary, module/class/layer, render_tree."""
+
+    def test_make_task_level_and_meta(self):
+        t = make_task("A-31", "P", "Миссия", "2", is_summary=True,
+                      goal="цель", source="план")
+        self.assertTrue(t["is_summary"])
+        self.assertEqual(t["task_kind"], "group")
+        self.assertEqual(t["level"], 1)
+        self.assertEqual(t["parent_wbs"], "")
+
+    def test_make_task_leaf_meta(self):
+        t = make_task("A-34", "P", "Лист", "2.1.1.1", goal="ц",
+                      acceptance=["к"], commands=["b"],
+                      module="MainAppHeatLoss", class_name="ViewModel", layer="ui")
+        self.assertEqual(t["level"], 4)
+        self.assertEqual(t["parent_wbs"], "2.1.1")
+        self.assertEqual(t["module"], "MainAppHeatLoss")
+        self.assertEqual(t["class_name"], "ViewModel")
+        self.assertEqual(t["layer"], "ui")
+
+    def test_validate_level_mismatch(self):
+        t = make_task("A-01", "P", "З", "1.1", goal="ц", acceptance=["к"], commands=["b"])
+        t["level"] = 3
+        codes = {e["code"] for e in validate.validate_task(t)}
+        self.assertIn("level_mismatch", codes)
+
+    def test_render_tree_order(self):
+        from pipeline.tdl import render
+        tasks = [
+            {"wbs_code": "2", "name": "Миссия", "is_summary": True, "status": "open", "task_id": "A-31"},
+            {"wbs_code": "2.1", "name": "Этап", "is_summary": True, "status": "open", "task_id": "A-32"},
+            {"wbs_code": "2.1.1", "name": "Класс", "is_summary": True, "status": "open", "task_id": "A-33", "class_name": "X", "layer": "core"},
+            {"wbs_code": "2.1.1.1", "name": "Лист", "is_summary": False, "status": "done", "workflow_state": "verified", "task_id": "A-34"},
+        ]
+        md = render.render_tree(tasks)
+        self.assertIn("Миссия", md)
+        self.assertIn("2.1.1", md)
+        # лист с class/layer
+        self.assertIn("X", md)
+        self.assertIn("core", md)
+        # суммарная и листовая задачи отмечены по-разному
+        self.assertIn("- 2", md)
+        self.assertIn("• 2.1.1.1", md)
+
+
 if __name__ == "__main__":
     unittest.main(verbosity=2)

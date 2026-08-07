@@ -44,6 +44,11 @@ def validate_task(task: dict, ctx: dict | None = None) -> list[dict]:
             errors.append(_err(path, "missing_verification", "Для execution обязателен verification.commands"))
     if task.get("task_kind") == "execution" and task.get("is_summary"):
         errors.append(_err(path, "summary_execution", "execution-задача не может быть is_summary"))
+    # level соответствует глубине wbs (если задан)
+    if task.get("level") is not None:
+        depth = _wbs_depth(wbs)
+        if task["level"] != depth:
+            errors.append(_err(path, "level_mismatch", f"level={task['level']} != глубина wbs={depth}"))
     return errors
 
 

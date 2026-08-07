@@ -39,7 +39,10 @@ def tdl_dispatch(cfg, args) -> int:
     task = make_task(task_id=task_id, project=cfg.name, name=args.title or src.stem,
                      wbs=wbs, priority=args.priority or "средний", goal=args.goal or body,
                      acceptance=args.requirements or [body[:2000]],
-                     commands=args.result or [], source=src.name)
+                     commands=args.result or [], source=src.name,
+                     module=getattr(args, "module", "") or "",
+                     class_name=getattr(args, "class_name", "") or "",
+                     layer=getattr(args, "layer", "") or "")
     if args.requirements and args.goal:
         task["acceptance_criteria"] = [args.requirements]
     store.save_task(cfg, task)
@@ -171,6 +174,168 @@ def tdl_status(cfg, args) -> int:
         print(f"  {t.get('task_id')} [{t.get('status')}/{t.get('workflow_state')}] "
               f"wbs={t.get('wbs_code')} отчёты={len(t.get('report_refs', []))} вердикты={len(t.get('verdict_refs', []))}")
     return 0
+
+
+def tdl_plan(cfg, args) -> int:
+    """Построить иерархию миссии из спецификации: миссия(summary) -> этапы -> классы -> листья.
+
+    Формат спецификации (JSON или YAML):
+      mission: { name, goal }
+      phases:
+        - name: <этап>            # level 2
+          module: <модуль>
+          goal: ...
+          packages:
+            - name: <класс>       # level 3 (класс/пакет)
+              class_name: <ClassName>
+              layer: core|ui|infrastructure|features|tests
+              goal: ...
+              tasks: [ "текст задачи", ... ]   # level 4 листья
+        - name: ...
+          tasks: [ ... ]           # level 4 листья напрямую под этапом
+    """
+    import json
+    import pathlib
+    from ._tpl import make_task
+    from .. import checks as C
+
+    src = pathlib.Path(args.file)
+    if not src.exists():
+        print("ФАЙЛ НЕ НАЙДЕН:", src)
+        return 1
+    raw = src.read_text(encoding="utf-8", errors="replace")
+    try:
+        spec = json.loads(raw)
+    except json.JSONDecodeError:
+        try:
+            import yaml
+            spec = yaml.safe_load(raw)
+        except Exception as e:
+            print(f"СПЕЦИФИКАЦИЯ НЕ РАСПОЗНАНА (JSON/YAML): {e}")
+            return 1
+
+    store.ensure_dirs(cfg)
+    commands = _tdl_default_commands(cfg)
+    mission = spec.get("mission", {})
+    m_name = mission.get("name") or args.title or src.stem
+    m_goal = mission.get("goal") or raw[:2000]
+    ids_created = []
+
+    # Уровень 1: миссия (summary, task_kind=group) — корень WBS = свободный уровень 1
+    used_l1 = set()
+    idx = store.load_index(cfg) or {"tasks": []}
+    for t in idx.get("tasks", []):
+        w = str(t.get("wbs_code", ""))
+        seg = w.split(".")[0]
+        if seg.isdigit():
+            used_l1.add(int(seg))
+    l1 = 1
+    while l1 in used_l1:
+        l1 += 1
+    root_wbs = str(l1)
+
+    mid = store.next_task_id(cfg)
+    mt = make_task(task_id=mid, project=cfg.name, name=m_name, wbs=root_wbs,
+                   priority="высокий", goal=m_goal, source=src.name,
+                   task_kind="group", is_summary=True, description=m_goal)
+    store.save_task(cfg, mt)
+    ids_created.append(mid)
+    print(f"  МИССИЯ {mid} [{root_wbs}]: {m_name}")
+
+    for ph_idx, phase in enumerate(spec.get("phases", []), start=1):
+        p_wbs = f"{root_wbs}.{ph_idx}"
+        p_name = phase.get("name") or f"Этап {ph_idx}"
+        p_module = phase.get("module", "")
+        p_goal = phase.get("goal", "")
+        # Уровень 2: этап (summary, group)
+        pid = store.next_task_id(cfg)
+        pt = make_task(task_id=pid, project=cfg.name, name=p_name, wbs=p_wbs,
+                       priority=phase.get("priority", "высокий"), goal=p_goal,
+                       source=src.name, module=p_module, is_summary=True,
+                       description=phase.get("description", p_goal))
+        store.save_task(cfg, pt)
+        ids_created.append(pid)
+        print(f"  ЭТАП {pid} [{p_wbs}]: {p_name} (module={p_module})")
+
+        # Уровень 3: классы/пакеты (summary, group)
+        packages = phase.get("packages", [])
+        if not packages:
+            packages = [{"name": p_name, "class_name": "", "layer": "",
+                         "goal": p_goal, "tasks": phase.get("tasks", [])}]
+        for pk_idx, pkg in enumerate(packages, start=1):
+            pk_wbs = f"{p_wbs}.{pk_idx}"
+            pk_name = pkg.get("name") or pkg.get("class_name") or f"Пакет {pk_idx}"
+            cid = store.next_task_id(cfg)
+            ct = make_task(task_id=cid, project=cfg.name, name=pk_name, wbs=pk_wbs,
+                           priority=pkg.get("priority", "средний"),
+                           goal=pkg.get("goal", pkg.get("name", "")),
+                           source=src.name, module=p_module,
+                           class_name=pkg.get("class_name", ""),
+                           layer=pkg.get("layer", ""), is_summary=True,
+                           description=pkg.get("description", ""))
+            store.save_task(cfg, ct)
+            ids_created.append(cid)
+            print(f"    ПАКЕТ {cid} [{pk_wbs}]: {pk_name} (class={pkg.get('class_name','')} layer={pkg.get('layer','')})")
+
+            # Уровень 4: листья
+            tasks = pkg.get("tasks", [])
+            if not tasks:
+                tasks = [f"Выполнить {pk_name}"]
+            for lf_idx, leaf in enumerate(tasks, start=1):
+                lf_wbs = f"{pk_wbs}.{lf_idx}"
+                if isinstance(leaf, str):
+                    l_name = leaf
+                    l_goal = leaf
+                    l_accept = [leaf]
+                else:
+                    l_name = leaf.get("name", f"Задача {lf_idx}")
+                    l_goal = leaf.get("goal", leaf.get("name", ""))
+                    l_accept = leaf.get("acceptance_criteria") or [l_goal]
+                    l_class = leaf.get("class_name", pkg.get("class_name", ""))
+                    l_layer = leaf.get("layer", pkg.get("layer", ""))
+                lid = store.next_task_id(cfg)
+                lt = make_task(task_id=lid, project=cfg.name, name=l_name, wbs=lf_wbs,
+                               priority=leaf.get("priority", "средний") if isinstance(leaf, dict) else "средний",
+                               goal=l_goal, acceptance=l_accept, commands=commands,
+                               source=src.name, module=p_module,
+                               class_name=l_class if isinstance(leaf, dict) else pkg.get("class_name", ""),
+                               layer=l_layer if isinstance(leaf, dict) else pkg.get("layer", ""),
+                               task_kind="execution",
+                               dependencies=[pid, cid] if not isinstance(leaf, str) else [pid, cid])
+                store.save_task(cfg, lt)
+                ids_created.append(lid)
+                print(f"      ЛИСТ {lid} [{lf_wbs}]: {l_name}")
+
+    store.rebuild_index(cfg)
+    C.git(cfg.root, f"tdl: план миссии {m_name} ({len(ids_created)} задач)")
+    print(f"TDL-PLAN: {len(ids_created)} задач создано (миссия+этапы+классы+листья)")
+    return 0
+
+
+def tdl_tree(cfg, args) -> int:
+    """Показать дерево TDL (миссия -> этапы -> классы -> листья) по WBS."""
+    from . import render
+    idx = store.load_index(cfg) or {"tasks": []}
+    tasks = idx.get("tasks", [])
+    if not tasks:
+        print("TDL-TREE: нет задач")
+        return 0
+    print(render.render_tree(tasks))
+    return 0
+
+
+def _tdl_default_commands(cfg) -> list:
+    """Команды сборки/тестов из конфига проекта."""
+    cmds = []
+    if cfg.msbuild.lower() == "dotnet" and cfg.sln:
+        cmds.append(f"dotnet build {cfg.sln} --nologo -v q")
+        cmds.append(f"dotnet test {cfg.sln} --nologo -v q")
+    elif cfg.msbuild:
+        cmds.append(f"\"{cfg.msbuild}\" {cfg.root / cfg.sln} /t:Restore,Build "
+                    f"/p:Configuration={cfg.configuration} /p:Platform=\"{cfg.platform}\"")
+        if cfg.vstest:
+            cmds.append(f"\"{cfg.vstest}\" {cfg.root / cfg.test_dll}")
+    return cmds
 
 
 # ---------- helpers ----------

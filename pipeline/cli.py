@@ -305,12 +305,14 @@ def main(argv=None):
 
     for name, fn in [("tdl-init", tdl_cli.tdl_init),
                      ("tdl-dispatch", tdl_cli.tdl_dispatch),
+                     ("tdl-plan", tdl_cli.tdl_plan),
                      ("tdl-start", tdl_cli.tdl_start),
                      ("tdl-report", tdl_cli.tdl_report),
                      ("tdl-verify", tdl_cli.tdl_verify),
                      ("tdl-migrate", tdl_cli.tdl_migrate),
                      ("tdl-validate", tdl_cli.tdl_validate),
                      ("tdl-index", tdl_cli.tdl_index),
+                     ("tdl-tree", tdl_cli.tdl_tree),
                      ("tdl-status", tdl_cli.tdl_status)]:
         p = sub.add_parser(name); add_project(p)
         if name == "tdl-dispatch":
@@ -318,6 +320,8 @@ def main(argv=None):
             p.add_argument("--wbs"); p.add_argument("--parent-wbs"); p.add_argument("--module")
             p.add_argument("--class-name"); p.add_argument("--layer"); p.add_argument("--goal")
             p.add_argument("--requirements"); p.add_argument("--result"); p.add_argument("--remark")
+        elif name == "tdl-plan":
+            p.add_argument("file"); p.add_argument("--title")
         elif name == "tdl-report":
             p.add_argument("task"); p.add_argument("--final", action="store_true"); p.add_argument("--from-md")
         elif name in ("tdl-start", "tdl-verify"):

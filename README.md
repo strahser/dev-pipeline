@@ -32,6 +32,40 @@ dev-pipeline\
 3. Запустить CLI: `python -m pipeline.cli <команда> <project>`.
 4. Запустить сервер + агентов (шаг 3, в разработке).
 
+## TDL (JSON — источник истины)
+
+Иерархия «миссия → этап → класс → лист» (СДР до 4 уровней), только leaf-задачи
+исполняются, закрытие — только при отчёте (evidence) + вердикте (pass).
+
+```text
+python -m pipeline.cli tdl-init      <project>            # каталоги + индекс
+python -m pipeline.cli tdl-plan      <project> <spec.json> # построить иерархию миссии
+python -m pipeline.cli tdl-dispatch  <project> <файл> --title ... --module ... --class-name ... --layer ...
+python -m pipeline.cli tdl-start     <project> <A-NN>     # in_progress
+python -m pipeline.cli tdl-report    <project> <A-NN> --from-md <отчёт>  # отчёт исполнителя
+python -m pipeline.cli tdl-verify    <project> <A-NN>     # сборка+тесты → вердикт → done
+python -m pipeline.cli tdl-tree      <project>            # дерево WBS
+python -m pipeline.cli tdl-status    <project>            # статусы
+python -m pipeline.cli tdl-validate  <project>            # проверка схемы
+```
+
+Спецификация для `tdl-plan` — JSON/YAML:
+
+```json
+{
+  "mission": { "name": "Исправление HeatLossRevit2", "goal": "..." },
+  "phases": [
+    {
+      "name": "Дефекты пользователя", "module": "MainAppHeatLoss",
+      "packages": [
+        { "name": "Комбобокс уровень", "class_name": "ViewModel", "layer": "ui",
+          "tasks": ["текст листовой задачи", "..."] }
+      ]
+    }
+  ]
+}
+```
+
 ## Статус
 
 - [x] Шаг 1: каркас, общий пакет `pipeline/`
@@ -39,5 +73,6 @@ dev-pipeline\
 - [x] Шаг 3: сервер (FastAPI + SQLite + SSE, `/events`, `/messages`, `/heartbeat`, dashboard)
 - [x] Шаг 4: клиенты агентов (`agents/`): agent_watch, executor_client, browser_client
 - [x] Шаг 5: скилы (pipeline-executor/-controller/-reviewer/-browser-bridge), docs
-- [x] Полный unit-тест: `python -X utf8 tests/run_all.py` (35 тестов: framework, CLI, server, client)
+- [x] TDL: JSON-конвейер (task/report/verdict), иерархия миссии (tdl-plan/tdl-tree), dashboard
+- [x] Полный unit-тест: `python -X utf8 tests/run_all.py` (85 тестов: framework, CLI, server, client, TDL)
 - [ ] Пилот на тестовой задаче через сервер
