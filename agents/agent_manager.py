@@ -331,7 +331,11 @@ def run_subagent(cfg, task_id: str, report_path: Path, log_path: Path,
         _publish(cfg, client, "task_started", task_id, {"file": task_file.name})
     _hb(client, f"subagent-{task_id}")
 
-    skill_line = (f"Загрузи скилл '{skill}' ({DEV_PIPELINE_DIR / 'skills' / skill / 'SKILL.md'}),\n"
+    skill_line = (f"Загрузи скилл '{skill}' ({DEV_PIPELINE_DIR / 'skills' / skill / 'SKILL.md'}) "
+                  f"для ролевых правил.\n"
+                  f"ВАЖНО: твоя задача УЖЕ ВЫДАНА и прикреплена вложением: {task_file}. "
+                  f"НЕ жди указаний, НЕ спрашивай 'какую задачу выполнять' и НЕ открывай "
+                  f"Tasks\\Активные в поисках других задач — сразу приступай к шагам из промпта.\n"
                   if skill else "") + ""
 
     prompt = SUBPROMPT.format(

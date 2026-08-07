@@ -492,10 +492,15 @@ def _extract_report_from_md(report, md_path):
     txt = open(md_path, encoding="utf-8", errors="replace").read()
 
     def sec(h):
-        m = re.search(rf"##\s*{h}\s*\n(.*?)(?=\n##\s|\Z)", txt, re.S)
+        # заголовки вида "## Что сделано", "## 2. Что сделано", "## 2. Что сделано (детали)"
+        m = re.search(rf"##\s*(?:\d+\.\s*)?{re.escape(h)}[^\n]*\n(.*?)(?=\n##\s|\Z)", txt, re.S)
         return m.group(1).strip() if m else ""
 
     report["problem"] = sec("Что было не так") or report.get("problem", "")
     report["work_done"] = [l.strip() for l in sec("Что сделано").splitlines() if l.strip()] or []
     report["verification_commands"] = [l.strip() for l in sec("Как пересобрать/проверить").splitlines() if l.strip()] or []
-    report["open_questions"] = [l.strip() for l in sec("Открытые вопросы").splitlines() if l.strip()]
+    report["open_questions"] = [l.strip() for l in sec("Открытые вопросы").splitlines() if l.strip()] or []
+    evidence = [l.strip() for l in sec("Доказательства").splitlines() if l.strip()]
+    if evidence and not report.get("evidence"):
+        report["evidence"] = [{"evidence_id": f"E{i + 1}", "type": "md_section", "name": e[:120],
+                               "details": e} for i, e in enumerate(evidence)]
