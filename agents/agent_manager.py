@@ -99,7 +99,10 @@ def _hb(client, name: str):
         client._request("POST", "/heartbeat", body={"agent": name}, timeout=3.0)
     except Exception:
         pass
-SUBPROMPT = """Выполни задачу из файла: {task_file}
+SUBPROMPT = """ТЕБЕ ВЫДАНА КОНКРЕТНАЯ ЗАДАЧА: {task_file}
+
+НЕ задавай вопросов, НЕ спрашивай «какую задачу выполнять», НЕ ищи задачи в Tasks\\Активные —
+начинай работу немедленно с шага 0.
 
 ПОРЯДОК РАБОТЫ (строго):
 0. Если есть TDL-задача Tasks\\JSON\\Active\\{task_id}.task.json — прочитай её ПЕРВОЙ
