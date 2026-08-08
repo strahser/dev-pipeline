@@ -1,4 +1,4 @@
-# ОТЧЁТ: AHUCalculator Phase 3 — Десикантный осушитель + Кратность воздухообмена
+# ОТЧЁТ: AHUCalculator Phase 3 — Десикант + Кратность + EU GMP + Тесты
 
 **Дата:** 2026-08-08
 **Статус:** done
@@ -82,6 +82,8 @@
 | ProcessType | 8 | 9 (+ DesiccantDehumidification) |
 | Сервисов расчёта | 3 | 4 (+ CleanroomCalculator) |
 | Параметров чистого помещения в UI | 0 | 3 (площадь, высота, ISO класс) |
+| Шаблонов ПВУ | 7 | 8 (+ EU GMP Grade C) |
+| Тестов | 66 | 90 (+24) |
 
 ## 5. Изменённые файлы
 
@@ -91,10 +93,13 @@ M  Models/Enums.cs                        — +2 enum members
 M  Services/AHUChainService.cs            — +1 case в switch
 M  Services/AHUProject.cs                 — +сериализация
 A  Services/CleanroomCalculator.cs        — новый сервис
+M  Services/TemplateService.cs            — +EU GMP Grade C шаблон
 M  Converters/ValueConverters.cs          — +2 класса (DesiccantBrush, StringToVisibility)
 M  Views/MainWindow.xaml                  — +кнопка в палитре, +панель чистого помещения
 M  Views/Controls/ModuleEditorControl.xaml — +DataTemplate
 M  ViewModels/MainViewModel.cs            — +свойства чистого помещения, +UpdateCleanroomReport
+M  Tests/Unit/ModuleTests.cs              — +7 тестов DesiccantDehumidifierModule
+A  Tests/Unit/CleanroomCalculatorTests.cs — +17 тестов CleanroomCalculator
 ```
 
 ## 6. Как пересобрать/проверить
