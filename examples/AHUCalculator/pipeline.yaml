@@ -1,0 +1,62 @@
+# Конфигурация конвейера для проекта AHUCalculator (WPF, C# .NET 8, slnx).
+# ВНИМАНИЕ: AHUCalculator НЕ ведёт TDL-задачи и Tasks-структуру — агент-исполнитель
+# работает отдельной сессией и складывает PLAN/REPORT в dev-pipeline\pipeline_output\AHUCalculator\.
+# Регистрация здесь нужна, чтобы проект отображался в панели конвейера.
+
+project:
+  name: AHUCalculator
+  root: [D:\Projects\AHUCalculator, E:\ПлагиныРевит\AHUCalculator]
+  branch: master
+
+tasks:
+  inbox: Tasks\Входящие
+  active: Tasks\Активные
+  reports: Tasks\Отчёты
+  archive: Tasks\Архив
+  protocol: Tasks\00_Протокол_агентов.md
+  status: Tasks\Статус_конвейера.md
+  conveyor: Tasks\Конвейер
+  notif: Tasks\Конвейер\Уведомления
+
+build:
+  msbuild: dotnet
+  sln: AHUCalculator.slnx
+  configuration: Debug
+  platform: Any CPU
+  extra_args:
+    - --nologo
+    - -v
+    - q
+
+tests:
+  runner: dotnet
+  vstest: ""
+  dll: AHUCalculator.slnx
+  baseline_passed: 90
+  baseline_total: 90
+
+# TDL не используется (нет Tasks\JSON и статусов A-NN)
+tdl:
+  enabled: false
+
+# Проверки архитектуры/качества (verify-порты, применяются по задачам)
+checks:
+  - id: A-01
+    label: 'Модели не ссылаются на UI (Models чисто)'
+    kind: grep_dir
+    dir: AHUCalculator/Models
+    pattern: using\s+System\.Windows|using\s+System\.Windows\.Controls
+    expect: 0
+
+  - id: A-02
+    label: 'Тесты не содержат test-фильтров только Windows (Integration есть)'
+    kind: dir_exists
+    dir: AHUCalculator.Tests/Integration
+
+layer_rules:
+  - label: Модули не ссылаются на Views (MVVM-граница)
+    pattern: using\s+AHUCalculator\.Views
+    expect: 0
+    dirs: [AHUCalculator/Modules]
+
+audit_dirs: [AHUCalculator.Tests]

@@ -256,6 +256,7 @@ def cmd_status(cfg, _args):
     for f in v[-8:]:
         lines.append(f"- {os.path.basename(f)}")
     status_file = cfg.resolve(cfg.status)
+    status_file.parent.mkdir(parents=True, exist_ok=True)
     status_file.write_text("\n".join(lines), encoding="utf-8")
     print("\n".join(lines))
     return 0
