@@ -1072,6 +1072,37 @@ async def api_usage_sessions(project: str = "", days: int = 30):
     return _session_durations(project or "", days)
 
 
+@app.get("/api/sessions/live")
+async def api_sessions_live(minutes: int = 15):
+    """Открытые сессии opencode: обновлявшиеся за последние minutes минут
+    (не архивированные). Источник — opencode.db (session.time_updated)."""
+    import sqlite3
+    import time as _t
+    db_path = _opencode_db_path()
+    if not db_path:
+        return []
+    minutes = min(max(minutes, 1), 1440)
+    cutoff = int((_t.time() - minutes * 60) * 1000)
+    out = []
+    try:
+        con = sqlite3.connect(f"file:{db_path}?mode=ro", uri=True)
+        con.row_factory = sqlite3.Row
+        q = ("SELECT id, slug, title, directory, path, agent, model, "
+             "time_created, time_updated, time_archived, "
+             "tokens_input, tokens_output, cost FROM session "
+             "WHERE time_updated IS NOT NULL AND time_updated >= ? "
+             "AND time_archived IS NULL ORDER BY time_updated DESC")
+        for r in con.execute(q, (cutoff,)):
+            d = dict(r)
+            d["live"] = True
+            d["age_sec"] = max(0, int((_t.time() * 1000 - d["time_updated"]) / 1000))
+            out.append(d)
+        con.close()
+    except Exception:
+        return []
+    return out
+
+
 @app.get("/api/inbox")
 async def api_inbox(limit: int = 200):
     msgs = []

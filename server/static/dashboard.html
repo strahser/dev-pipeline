@@ -1099,41 +1099,72 @@ async function sessionKill(sid){
     loadSessions();
   } catch(e){ alert('kill: '+e); }
 }
-function loadSessions(){
-  fetch('/api/sessions?project='+encodeURIComponent(currentProject||''))
+function liveBadge(ageSec){
+  if (ageSec === undefined || ageSec === null) return '<span class="badge warn">?</span>';
+  if (ageSec < 300) return '<span class="badge ok">live</span>';
+  if (ageSec < 3600) return '<span class="badge warn">idle '+(ageSec/60).toFixed(0)+' мин</span>';
+  return '<span class="badge">idle '+(ageSec/3600).toFixed(1)+' ч</span>';
+}
+function loadLiveSessions(){
+  return fetch('/api/sessions/live?minutes=60')
     .then(r=>r.json())
-    .then(list=>{
-      $('sessionsInfo').textContent = 'сессий: '+(list||[]).length;
-      if (!(list||[]).length){
-        $('sessionsBody').innerHTML = '<div class="empty">Сессий нет. Менеджер создаёт их при dispatch (task/mission).</div>';
-        return;
-      }
-      let html = '<table style="width:100%;border-collapse:collapse;font-size:13px"><thead><tr>'+
+    .catch(()=>[]);
+}
+function renderSessionTable(list, withKill){
+  if (!(list||[]).length) return '<div class="empty">Нет сессий</div>';
+  let html = '<table style="width:100%;border-collapse:collapse;font-size:13px"><thead><tr>'+
+    '<th style="text-align:left;padding:6px 8px;color:var(--muted)">Сессия</th>'+
+    '<th style="text-align:left;padding:6px 8px;color:var(--muted)">Задача</th>'+
+    '<th style="text-align:left;padding:6px 8px;color:var(--muted)">Статус</th>'+
+    '<th style="text-align:left;padding:6px 8px;color:var(--muted)">PID</th>'+
+    '<th style="text-align:left;padding:6px 8px;color:var(--muted)">Возраст</th>'+
+    '<th style="text-align:left;padding:6px 8px;color:var(--muted)">Заметка</th>'+
+    '<th style="padding:6px 8px"></th></tr></thead><tbody>';
+  for (const s of list){
+    html += '<tr>'+
+      '<td style="padding:6px 8px;border-top:1px solid var(--border);font-family:Consolas,monospace;font-size:12px">'+esc(s.id||s.slug||'')+'</td>'+
+      '<td style="padding:6px 8px;border-top:1px solid var(--border)">'+(s.task?esc(s.task):'<span class="muted">—</span>')+'</td>'+
+      '<td style="padding:6px 8px;border-top:1px solid var(--border)">'+sessionBadge(s.status)+'</td>'+
+      '<td style="padding:6px 8px;border-top:1px solid var(--border);font-family:Consolas,monospace;font-size:12px">'+(s.pid||'')+'</td>'+
+      '<td style="padding:6px 8px;border-top:1px solid var(--border)">'+sessionAge(s.created_at)+'</td>'+
+      '<td style="padding:6px 8px;border-top:1px solid var(--border);color:var(--muted);max-width:280px;overflow:hidden;text-overflow:ellipsis;white-space:nowrap" title="'+esc(s.note||s.error||'')+'">'+esc((s.note||s.error||'').slice(0,60))+'</td>'+
+      '<td style="padding:6px 8px;border-top:1px solid var(--border);text-align:right">'+
+        (withKill && (s.status==='running'||s.status==='created') ? '<button class="danger" style="padding:3px 8px;font-size:12px" onclick="sessionKill(\''+s.id+'\')">⛔ Убить</button>' : '')+
+      '</td></tr>';
+  }
+  html += '</tbody></table>';
+  return html;
+}
+function loadSessions(){
+  Promise.all([
+    loadLiveSessions(),
+    fetch('/api/sessions?project='+encodeURIComponent(activeProject||'')).then(r=>r.json()).catch(()=>[])
+  ]).then(([live, subs])=>{
+    const liveCount = (live||[]).length;
+    const subCount = (subs||[]).length;
+    $('sessionsInfo').textContent = 'opencode: '+liveCount+', субагентов: '+subCount;
+    let html = '';
+    if (liveCount){
+      html += '<div class="rl-title" style="margin:10px 0 6px">🟢 Открытые сессии opencode (активные за 60 мин)</div>'+
+        '<table style="width:100%;border-collapse:collapse;font-size:13px"><thead><tr>'+
         '<th style="text-align:left;padding:6px 8px;color:var(--muted)">Сессия</th>'+
-        '<th style="text-align:left;padding:6px 8px;color:var(--muted)">Задача</th>'+
-        '<th style="text-align:left;padding:6px 8px;color:var(--muted)">Роль</th>'+
-        '<th style="text-align:left;padding:6px 8px;color:var(--muted)">Статус</th>'+
-        '<th style="text-align:left;padding:6px 8px;color:var(--muted)">PID</th>'+
-        '<th style="text-align:left;padding:6px 8px;color:var(--muted)">Возраст</th>'+
-        '<th style="text-align:left;padding:6px 8px;color:var(--muted)">Заметка</th>'+
-        '<th style="padding:6px 8px"></th></tr></thead><tbody>';
-      for (const s of list){
+        '<th style="text-align:left;padding:6px 8px;color:var(--muted)">Каталог</th>'+
+        '<th style="text-align:left;padding:6px 8px;color:var(--muted)">Состояние</th>'+
+        '<th style="text-align:left;padding:6px 8px;color:var(--muted)">Обновлена</th></tr></thead><tbody>';
+      for (const s of live){
+        const dir = (s.directory||'').split('/').slice(-2).join('/');
         html += '<tr>'+
-          '<td style="padding:6px 8px;border-top:1px solid var(--border);font-family:Consolas,monospace;font-size:12px">'+esc(s.id)+'</td>'+
-          '<td style="padding:6px 8px;border-top:1px solid var(--border)">'+(s.task?esc(s.task):'<span class="muted">—</span>')+'</td>'+
-          '<td style="padding:6px 8px;border-top:1px solid var(--border)">'+esc(s.role||'')+'</td>'+
-          '<td style="padding:6px 8px;border-top:1px solid var(--border)">'+sessionBadge(s.status)+'</td>'+
-          '<td style="padding:6px 8px;border-top:1px solid var(--border);font-family:Consolas,monospace;font-size:12px">'+(s.pid||'')+'</td>'+
-          '<td style="padding:6px 8px;border-top:1px solid var(--border)">'+sessionAge(s.created_at)+'</td>'+
-          '<td style="padding:6px 8px;border-top:1px solid var(--border);color:var(--muted);max-width:280px;overflow:hidden;text-overflow:ellipsis;white-space:nowrap" title="'+esc(s.note||s.error||'')+'">'+esc((s.note||s.error||'').slice(0,60))+'</td>'+
-          '<td style="padding:6px 8px;border-top:1px solid var(--border);text-align:right">'+
-            (s.status==='running'||s.status==='created' ? '<button class="danger" style="padding:3px 8px;font-size:12px" onclick="sessionKill(\''+s.id+'\')">⛔ Убить</button>' : '')+
-          '</td></tr>';
+          '<td style="padding:6px 8px;border-top:1px solid var(--border)">'+esc((s.title||s.slug||s.id||'')+'').slice(0,60)+'</td>'+
+          '<td style="padding:6px 8px;border-top:1px solid var(--border);color:var(--muted)">'+esc(dir)+'</td>'+
+          '<td style="padding:6px 8px;border-top:1px solid var(--border)">'+liveBadge(s.age_sec)+'</td>'+
+          '<td style="padding:6px 8px;border-top:1px solid var(--border);color:var(--muted)">'+sessionAge(new Date((s.time_updated||Date.now())).toISOString())+'</td></tr>';
       }
       html += '</tbody></table>';
-      $('sessionsBody').innerHTML = html;
-    })
-    .catch(e=>{ $('sessionsBody').innerHTML = '<div class="empty">Ошибка: '+esc(String(e))+'</div>'; });
+    }
+    html += '<div class="rl-title" style="margin:14px 0 6px">🗂 Сессии субагентов конвейера</div>'+
+      renderSessionTable(subs, true);
+    $('sessionsBody').innerHTML = html;
+  }).catch(e=>{ $('sessionsBody').innerHTML = '<div class="empty">Ошибка: '+esc(String(e))+'</div>'; });
 }
 
 function chatInitResize(){  const p = $('chatPanel'), rz = $('chatResize');

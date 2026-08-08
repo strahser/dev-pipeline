@@ -339,6 +339,46 @@ class TestAppAPI(unittest.TestCase):
         self.assertEqual(self.client.post("/api/sessions/NOPE/start", json={}).status_code, 404)
         self.assertEqual(self.client.post("/api/sessions/NOPE/kill").status_code, 404)
 
+    def test_sessions_live_endpoint(self):
+        """/api/sessions/live — открытые opencode-сессии (тест на фейковой БД)."""
+        import sqlite3
+        fake = os.path.join(tempfile.mkdtemp(prefix="live_"), "opencode.db")
+        con = sqlite3.connect(fake)
+        con.execute("CREATE TABLE session (id TEXT, slug TEXT, title TEXT, directory TEXT,"
+                    " path TEXT, agent TEXT, model TEXT, time_created INTEGER,"
+                    " time_updated INTEGER, time_archived INTEGER,"
+                    " tokens_input INTEGER, tokens_output INTEGER, cost REAL)")
+        now_ms = int(time.time() * 1000)
+        con.executemany(
+            "INSERT INTO session VALUES (?,?,?,?,?,?,?,?,?,?,?,?,?)",
+            [("s1", "s1", "Живая сессия", "D:/Projects/X", "", "executor", "m", now_ms - 60000, now_ms - 5000, None, 1, 1, 0.0),
+             ("s2", "s2", "Старая сессия", "D:/Projects/X", "", "", "m", now_ms - 7200000, now_ms - 3600000, None, 1, 1, 0.0),
+             ("s3", "s3", "Архив", "D:/Projects/X", "", "", "m", now_ms - 60000, now_ms - 4000, now_ms - 1000, 1, 1, 0.0)])
+        con.commit()
+        con.close()
+        old = app_mod._opencode_db_path
+        app_mod._opencode_db_path = lambda: Path(fake)
+        try:
+            r = self.client.get("/api/sessions/live", params={"minutes": 60})
+            self.assertEqual(r.status_code, 200)
+            rows = r.json()
+            self.assertEqual(len(rows), 1)
+            self.assertEqual(rows[0]["title"], "Живая сессия")
+            self.assertTrue(rows[0]["live"])
+            self.assertIn("age_sec", rows[0])
+        finally:
+            app_mod._opencode_db_path = old
+
+    def test_sessions_live_empty_without_db(self):
+        old = app_mod._opencode_db_path
+        app_mod._opencode_db_path = lambda: None
+        try:
+            r = self.client.get("/api/sessions/live")
+            self.assertEqual(r.status_code, 200)
+            self.assertEqual(r.json(), [])
+        finally:
+            app_mod._opencode_db_path = old
+
 
 class TestSSEStream(unittest.TestCase):
     """SSE-поток через реальный uvicorn-сервер (детерминировано, как вручную)."""
