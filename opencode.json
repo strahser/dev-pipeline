@@ -4,6 +4,95 @@
   "skills": {
     "paths": ["./skills"]
   },
+  "agent": {
+    "controller": {
+      "description": "Контролёр/планировщик конвейера dev-pipeline (Агент-1): диспатч задач, вердикты, руководство процессом. Use when dispatching tasks, reviewing reports, issuing verdicts, or running pipeline automaton.",
+      "mode": "all",
+      "prompt": "Ты — Агент-1 (контролёр/планировщик) конвейера dev-pipeline. Смотри скилл pipeline-controller. Не выполняй задачи исполнителя сам: оформляй, проверяй, ставь вердикты.",
+      "permission": {
+        "skill": {
+          "*": "deny",
+          "pipeline-controller": "allow",
+          "architect-review": "allow",
+          "planning-with-files": "allow"
+        }
+      }
+    },
+    "executor": {
+      "description": "Исполнитель конвейера dev-pipeline (Агент-2): выполнение задач A-NN, правки кода, отчёты с доказательствами. Use when a task file Tasks\\Активные\\A-NN_*.md appears with статус: open, or when asked to execute a task and write a report.",
+      "mode": "all",
+      "prompt": "Ты — Агент-2 (исполнитель) конвейера dev-pipeline. Смотри скилл pipeline-executor: возьми задачу, примени изменения, собери, протестируй, напиши отчёт с доказательствами. Не коммить сам.",
+      "permission": {
+        "skill": {
+          "*": "deny",
+          "pipeline-executor": "allow",
+          "solid-principles": "allow",
+          "software-architecture": "allow",
+          "planning-with-files": "allow"
+        }
+      }
+    },
+    "reviewer": {
+      "description": "Независимый ревьюер конвейера dev-pipeline: проверка соответствия задачи факту (git diff/status/log, тесты, доказательства), вердикт PASS/NEEDS_CHANGES/FAIL. Read-only: не изменяет исходный код. Use when asked to review a completed task.",
+      "mode": "all",
+      "prompt": "Ты — независимый ревьюер конвейера dev-pipeline. Смотри скилл pipeline-reviewer: проверяй факты через git и логи, не доверяй отчёту на слово, фиксируй вердикт. Read-only.",
+      "permission": {
+        "skill": {
+          "*": "deny",
+          "pipeline-reviewer": "allow",
+          "solid-principles": "allow",
+          "architect-review": "allow"
+        }
+      }
+    },
+    "planner": {
+      "description": "Планировщик миссий dev-pipeline: декомпозиция целей в задачи, WBS, миссии. Use when asked to plan a mission, break down goals into tasks, or design task trees.",
+      "mode": "all",
+      "prompt": "Ты — планировщик миссий конвейера dev-pipeline. Смотри скилл pipeline-planner: декомпозируй цели в задачи с оценками и зависимостями.",
+      "permission": {
+        "skill": {
+          "*": "deny",
+          "pipeline-planner": "allow",
+          "planning-with-files": "allow"
+        }
+      }
+    },
+    "browser": {
+      "description": "Браузерный мост конвейера dev-pipeline (Агент-3): отправка промптов в облачный ИИ (Qwen/DeepSeek через LocalAssitent, Edge порт 9222) и сохранение ответов. Use when a browser_task event arrives or a file appears in Tasks\\Конвейер\\Браузер\\*.txt.",
+      "mode": "all",
+      "prompt": "Ты — Агент-3 (браузерный мост) конвейера dev-pipeline. Смотри скилл pipeline-browser-bridge: передавай текст туда-обратно, не принимай решений, не анализируй ответы.",
+      "permission": {
+        "skill": {
+          "*": "deny",
+          "pipeline-browser-bridge": "allow"
+        }
+      }
+    },
+    "qwen-worker": {
+      "description": "Бесплатный рабочий dev-pipeline: тонкий локальный агент + делегирование тяжёлой генерации кода облачному Qwen через qwen_bridge. Use when a task needs heavy code generation and the local model should delegate file writing to cloud Qwen.",
+      "mode": "all",
+      "prompt": "Ты — локальный рабочий dev-pipeline. Смотри скилл pipeline-qwen-worker: формулируй задачу, отправляй контекст в Qwen, применяй FILE:-блоки, собирай и проверяй.",
+      "permission": {
+        "skill": {
+          "*": "deny",
+          "pipeline-qwen-worker": "allow",
+          "solid-principles": "allow",
+          "software-architecture": "allow"
+        }
+      }
+    },
+    "placement-expert": {
+      "description": "Эксперт-аналитик расстановки марок MepTaggingSolution: вручную расставляет марки по комнатам из JSON-фикстур, сравнивает с алгоритмом, пишет отчёт о коллизиях. Use when asked to act as placement expert in MepTaggingSolution pilot.",
+      "mode": "all",
+      "prompt": "Ты — эксперт-аналитик расстановки марок MepTaggingSolution. Смотри скилл pipeline-placement-expert: расставь марки аналитически, сравни с suggestions, выдай отчёт с коллизиями.",
+      "permission": {
+        "skill": {
+          "*": "deny",
+          "pipeline-placement-expert": "allow"
+        }
+      }
+    }
+  },
   "permission": {
     "question": "allow",
     "webfetch": "allow",
@@ -14,6 +103,7 @@
     "bash": "allow",
     "grep": "allow",
     "glob": "allow",
-    "task": "allow"
+    "task": "allow",
+    "skill": "allow"
   }
 }
