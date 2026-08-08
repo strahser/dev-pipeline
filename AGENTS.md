@@ -59,6 +59,42 @@
 - Скиллы агентов: `pipeline-planner` (декомпозиция миссии), `pipeline-executor`, `pipeline-controller`
   (включая реакцию на `task_stalled`), `pipeline-reviewer`, `pipeline-browser-bridge`, `pipeline-qwen-worker`.
 
+## Подключение НОВОГО проекта (инструкция агенту — ОБЯЗАТЕЛЬНО к исполнению)
+
+Если ты (агент) получил ссылку на этот репозиторий dev-pipeline и задачу «подключить/вести
+проект <Имя>» — ты обязан зарегистрировать проект в конвейере, иначе панель и CLI его
+не увидят (панель берёт список ТОЛЬКО из `examples\<имя>\pipeline.yaml`):
+
+1. **Создай конфиг** `examples\<имя>\pipeline.yaml` (имя = папка проекта, латиницей, как у других):
+   - `project.name` — имя проекта (например, `AHUCalculator`);
+   - `project.root` — существующий путь проекта (строка или список [D:\, E:\] рабочих мест);
+   - `project.branch` — ветка git проекта (проверь `git -C <root> branch --show-current`);
+   - `tasks.*` — стандартная структура `Tasks\...` (как в heatlossrevit2);
+   - `build` — msbuild (путь к MSBuild.exe) ИЛИ `dotnet`; `sln` — файл решения/проекта
+     (поддерживается и `.slnx`); `configuration/platform`; `extra_args`;
+   - `tests` — runner (vstest|dotnet), dll/slnx, `baseline_passed`/`baseline_total`
+     (запусти тесты ДО регистрации и впиши реальные цифры);
+   - `tdl.enabled: false`, если проект НЕ ведёт TDL-задачи (Tasks\JSON и A-NN) —
+     тогда панель показывает пустые TDL-вкладки без ошибок;
+   - `checks`/`layer_rules` — декларативные проверки (grep/dir_exists/csproj_no_ref),
+     только те, что реально проходят (проверь каждую перед записью).
+2. **Проверь регистрацию**:
+   ```
+   python -m pipeline.cli list              # проект появился в списке
+   python -m pipeline.cli status <имя>      # без ошибок (статус-файл создастся сам)
+   ```
+3. **Проверь, что сборка/тесты из конфига проходят** (команды из `build`/`tests`).
+4. **Проверь панель**: `curl http://127.0.0.1:8787/api/projects` — проект в списке;
+   `curl http://127.0.0.1:8787/api/tasks?project=<имя>` — отвечает без 404.
+5. **Коммит** с префиксом `project/<имя>: ...` (например, `project/AHUCalculator: регистрация в конвейере`),
+   пуш после подтверждения.
+6. Если у проекта НЕТ структуры `Tasks\` — НЕ создавай её принудительно: конвейер терпимо
+   относится к отсутствию папок (пустые списки); отчёты/планы такого проекта могут лежать
+   в `pipeline_output\<имя>\` (внешний поток агента), а в отчётах/коммитах упоминай этот путь.
+
+Шаблон для копирования — `examples\heatlossrevit2\pipeline.yaml` (полный: TDL+checks) или
+`examples\AHUCalculator\pipeline.yaml` (лёгкий: без TDL, dotnet/slnx).
+
 ## База знаний проекта (revit-skills)
 
 - Общая база знаний по Revit-плагинам — репозиторий `strahser/revit-skills` (wiki + общие скилы),
