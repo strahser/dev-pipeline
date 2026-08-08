@@ -435,7 +435,7 @@ class Store:
         return [self._row_to_request(r) for r in self._conn.execute(q, args).fetchall()]
 
     def update_request(self, req_id: str, **fields) -> dict | None:
-        allowed = {"status", "file", "commit_sha"}
+        allowed = {"status", "file", "commit_sha", "text"}
         sets, args = [], []
         for k, v in fields.items():
             if k in allowed:

@@ -1349,7 +1349,95 @@ async def request_create(body: RequestIn):
 
 @app.get("/api/requests")
 async def request_list(project: str = "", status: str = "", limit: int = 100):
-    return store.list_requests(project=project, status=status, limit=limit)
+    rows = store.list_requests(project=project, status=status, limit=limit)
+    out = []
+    for r in rows:
+        try:
+            cfg = load_config(r.get("project") or "")
+        except ConfigError:
+            out.append(r)
+            continue
+        rel = (r.get("file") or "").replace("/", "\\")
+        r = dict(r)
+        r["path"] = str(cfg.root / rel) if rel else ""
+        out.append(r)
+    return out
+
+
+@app.get("/api/requests/{req_id}")
+async def request_get(req_id: str):
+    """Прочитать сырое задание: метаданные из БД + актуальный текст из файла."""
+    row = store.get_request(req_id)
+    if not row:
+        raise HTTPException(404, f"задание {req_id} не найдено")
+    try:
+        cfg = load_config(row["project"])
+    except ConfigError as e:
+        raise HTTPException(404, f"проект не найден: {e}")
+    rel = (row.get("file") or "").replace("/", "\\")
+    path = str(cfg.root / rel) if rel else ""
+    content = ""
+    try:
+        fpath = Path(path)
+        if fpath.exists():
+            content = fpath.read_text(encoding="utf-8")
+    except Exception:
+        content = ""
+    row = dict(row)
+    row["path"] = path
+    row["content"] = content
+    return row
+
+
+@app.patch("/api/requests/{req_id}")
+async def request_update(req_id: str, body: RequestIn = None):
+    """Обновить текст сырого задания: перезаписать файл + git-коммит + БД."""
+    row = store.get_request(req_id)
+    if not row:
+        raise HTTPException(404, f"задание {req_id} не найдено")
+    text = (body.text if body else "").strip()
+    if not text:
+        raise HTTPException(400, "пустой текст задания")
+    try:
+        cfg = load_config(row["project"])
+    except ConfigError as e:
+        raise HTTPException(404, f"проект не найден: {e}")
+    rel = (row.get("file") or "").replace("/", "\\")
+    fpath = Path(str(cfg.root / rel)) if rel else None
+    if fpath is None or not fpath.exists():
+        raise HTTPException(404, f"файл задания не найден: {rel}")
+    fpath.write_text(
+        f"# Сырое задание {req_id}\n\n"
+        f"- Источник: dashboard\n"
+        f"- Дата: {_now_iso()}\n"
+        f"- Статус: {row.get('status') or 'new'}\n\n## Задание\n\n{text}\n",
+        encoding="utf-8")
+    commit = _git_commit(cfg.root, f"inbox: обновлено задание {req_id} ({fpath.name})")
+    store.update_request(req_id, text=text, commit_sha=commit)
+    ev = store.add_event("request_updated", "dashboard", "controller",
+                         project=row["project"], task="",
+                         payload={"request_id": req_id, "file": row["file"],
+                                  "commit_sha": commit})
+    hub.publish(ev)
+    row = store.get_request(req_id)
+    row = dict(row)
+    row["path"] = str(fpath)
+    row["content"] = fpath.read_text(encoding="utf-8")
+    return row
+
+
+def _git_commit(root, message: str) -> str:
+    """git add -A + commit в корне проекта; возвращает короткий хеш (или '')."""
+    import subprocess as _sp
+    from pipeline.proc import no_window_flags as _nwf
+    try:
+        _sp.run(["git", "-C", str(root), "add", "-A"],
+                capture_output=True, timeout=30, creationflags=_nwf())
+        r = _sp.run(["git", "-C", str(root), "commit", "-m", message],
+                    capture_output=True, text=True, timeout=30, creationflags=_nwf())
+        return (r.stdout or "").strip().splitlines()[-1][:80] if r.returncode == 0 else ""
+    except Exception:
+        return ""
 
 
 @app.post("/api/requests/{req_id}/dispatch")

@@ -7,6 +7,21 @@
 <link rel="stylesheet" href="/static/vendor/dataTables.min.css">
 <style>
 :root { --bg:#0f1117; --panel:#171a23; --panel2:#1d2130; --border:#2a2f42; --text:#e6e8ef; --muted:#9aa2b5; --accent:#6ea8ff; --green:#4ade80; --yellow:#facc15; --red:#f87171; --orange:#fb923c; --code:#0b0e14; --summary-bg:rgba(250,204,21,0.08); --summary-border:#b8860b; }
+/* Markdown-предпросмотр сырых заданий (из LocalAssitent webui) */
+.md-body { font-family:"Segoe UI",system-ui,sans-serif; }
+.md-body pre.code { background:#0b0d12; border:1px solid var(--border); border-radius:8px; padding:10px 12px; overflow:auto; font-family:Consolas,monospace; font-size:12.5px; line-height:1.5; }
+.md-body pre.code code { font-family:inherit; background:none; padding:0; }
+.md-body code { background:rgba(79,140,255,0.12); border:1px solid rgba(79,140,255,0.25); border-radius:4px; padding:1px 5px; font-family:Consolas,monospace; font-size:12px; }
+.md-body h1,.md-body h2,.md-body h3,.md-body h4 { margin:14px 0 6px; color:var(--text); line-height:1.3; }
+.md-body h1 { font-size:19px; } .md-body h2 { font-size:16px; } .md-body h3 { font-size:14px; } .md-body h4 { font-size:13px; }
+.md-body p { margin:6px 0; }
+.md-body ul,.md-body ol { margin:6px 0 6px 20px; padding:0; }
+.md-body li { margin:3px 0; }
+.md-body blockquote { margin:8px 0; padding:6px 12px; border-left:3px solid var(--accent); background:rgba(79,140,255,0.08); border-radius:0 6px 6px 0; }
+.md-body blockquote p { margin:0; }
+.md-body table { border-collapse:collapse; margin:8px 0; font-size:12.5px; max-width:100%; }
+.md-body th,.md-body td { border:1px solid var(--border); padding:5px 10px; text-align:left; }
+.md-body th { background:var(--panel2); color:var(--muted); }
 * { box-sizing:border-box; }
 html,body { height:100%; }
 body { margin:0; font:14px/1.55 system-ui,Segoe UI,sans-serif; background:var(--bg); color:var(--text); }
@@ -316,7 +331,7 @@ pre.json { background:var(--code); border:1px solid var(--border); border-radius
 </div>
 
 <div class="overlay" id="requestsOverlay">
-  <div class="modal" style="max-width:900px" id="requestsModal">
+  <div class="modal" style="max-width:960px" id="requestsModal">
     <header>
       <h2>📥 Сырые задания (Входящие)</h2>
       <button class="close" onclick="closeRequests()">✕ Закрыть</button>
@@ -326,10 +341,33 @@ pre.json { background:var(--code); border:1px solid var(--border); border-radius
       <span style="margin-left:auto;font-size:11.5px;color:var(--muted)" id="requestsInfo"></span>
     </div>
     <div style="display:flex;gap:8px;padding:10px 4px 4px;border-bottom:1px solid var(--border);margin-bottom:8px">
-      <textarea id="newRequestText" placeholder="Новое сырое задание… (фиксируется в БД + файл Tasks\Входящие\ + git-коммит)" style="flex:1;min-height:54px;background:var(--panel2);color:var(--text);border:1px solid var(--border);border-radius:6px;padding:6px 8px;font-size:13px;resize:vertical"></textarea>
-      <button class="primary" onclick="createRequest()" style="align-self:flex-end">➕ Добавить</button>
+      <textarea id="newRequestText" placeholder="Новое сырое задание (Markdown). После сохранения появится путь к файлу — его можно скопировать." style="flex:1;min-height:54px;background:var(--panel2);color:var(--text);border:1px solid var(--border);border-radius:6px;padding:6px 8px;font-size:13px;resize:vertical"></textarea>
+      <button class="primary" onclick="createRequest()" style="align-self:flex-end">➕ Создать и сохранить</button>
     </div>
     <div id="requestsBody"><div class="empty">Загрузка…</div></div>
+  </div>
+</div>
+
+<div class="overlay" id="reqEditorOverlay">
+  <div class="modal" style="max-width:1100px;width:94vw;height:90vh;display:flex;flex-direction:column" id="reqEditorModal">
+    <header>
+      <h2>📄 Сырое задание <span id="reqEditorId" style="font-family:Consolas,monospace;font-size:13px;color:var(--accent)"></span></h2>
+      <button class="close" onclick="closeReqEditor()">✕ Закрыть</button>
+    </header>
+    <div style="display:flex;gap:6px;align-items:center;padding:6px 4px;flex-wrap:wrap;border-bottom:1px solid var(--border)">
+      <code id="reqEditorPath" style="flex:1;min-width:220px;font-size:11.5px;color:var(--muted);overflow:hidden;text-overflow:ellipsis;white-space:nowrap" title=""></code>
+      <button onclick="copyReqPath()" title="Скопировать полный путь к файлу задания">📋 Копировать путь</button>
+      <button onclick="copyReqContent()" title="Скопировать текст задания">📄 Копировать текст</button>
+      <button class="primary" onclick="saveRequest()">💾 Сохранить</button>
+    </div>
+    <div style="display:flex;flex:1;gap:8px;min-height:0;padding:8px 0">
+      <textarea id="reqEditorText" placeholder="Текст задания (Markdown). Справа — живой предпросмотр." oninput="reqPreview()" style="flex:1;width:50%;background:var(--panel2);color:var(--text);border:1px solid var(--border);border-radius:6px;padding:8px;font-size:13px;resize:none;font-family:Consolas,monospace"></textarea>
+      <div id="reqEditorPreview" class="md-body" style="flex:1;width:50%;overflow:auto;background:var(--panel2);border:1px solid var(--border);border-radius:6px;padding:8px;font-size:13px"></div>
+    </div>
+    <div style="padding:6px 0 0;display:flex;gap:8px;justify-content:flex-end">
+      <span id="reqSaveInfo" style="margin-right:auto;font-size:11.5px;color:var(--muted)"></span>
+      <button onclick="closeReqEditor()">Закрыть</button>
+    </div>
   </div>
 </div>
 
@@ -345,6 +383,145 @@ const collapsed = new Set(); // свёрнутые WBS-коды (дерево)
 
 function esc(s){ return String(s??'').replace(/[&<>"']/g, c=>({'&':'&amp;','<':'&lt;','>':'&gt;','"':'&quot;',"'":'&#39;'}[c])); }
 async function get(path){ const r = await fetch(path); if(!r.ok) throw new Error(r.status+' '+path); return r.json(); }
+
+/* Markdown-рендер (взят из LocalAssitent webui: D:\Projects\LocalAssitent\webui\static\app.js) */
+function inlineMdInline(s) {
+  let out = esc(s);
+  out = out.replace(/`([^`\n]+)`/g, '<code>$1</code>');
+  out = out.replace(/\*\*([^*]+)\*\*/g, '<strong>$1</strong>');
+  out = out.replace(/(^|[^*\W])\*([^*\n]+)\*(?!\*)/g, '$1<em>$2</em>');
+  out = out.replace(/\[([^\]]+)\]\(([^)\s]+)\)/g, '<a href="$2" target="_blank" rel="noopener">$1</a>');
+  return out;
+}
+function isListMarker(s) {
+  return /^[-*+]\s+/.test(s) || /^\d+[.)]\s+/.test(s);
+}
+function renderMarkdown(src) {
+  if (!src) return '';
+  const lines = String(src).replace(/\r\n/g, '\n').split('\n');
+  const out = [];
+  let list = null;
+  const flushList = () => {
+    if (list) {
+      const tag = list.type === 'ul' ? 'ul' : 'ol';
+      out.push(`<${tag}>` + list.items.map((it) => `<li>${inlineMdInline(it)}</li>`).join('') + `</${tag}>`);
+      list = null;
+    }
+  };
+  let i = 0;
+  while (i < lines.length) {
+    const line = lines[i];
+    const trimmed = line.trim();
+    if (/^```/.test(trimmed)) {
+      flushList();
+      const buf = [];
+      i++;
+      while (i < lines.length && !/^```\s*$/.test(lines[i].trim())) { buf.push(lines[i]); i++; }
+      i++;
+      out.push(`<pre class="code"><code>${esc(buf.join('\n'))}</code></pre>`);
+      continue;
+    }
+    if (/^#{1,6}\s+/.test(trimmed)) {
+      flushList();
+      const level = trimmed.match(/^(#{1,6})/)[1].length;
+      const text = trimmed.replace(/^#{1,6}\s+/, '').replace(/\s+#+$/, '');
+      out.push(`<h${level}>${inlineMdInline(text)}</h${level}>`);
+      i++;
+      continue;
+    }
+    if (/^([-*_])(\s*\1){2,}\s*$/.test(trimmed)) {
+      flushList();
+      out.push('<hr>');
+      i++;
+      continue;
+    }
+    if (isListMarker(trimmed)) {
+      const type = /^[-*+]\s+/.test(trimmed) ? 'ul' : 'ol';
+      if (!list) list = { type, items: [] };
+      list.items.push(trimmed.replace(/^[-*+]\s+/, '').replace(/^\d+[.)]\s+/, ''));
+      i++;
+      continue;
+    }
+    if (/^\|/.test(trimmed) && i + 1 < lines.length &&
+        /^\s*\|?[\s:|-]+\|?\s*$/.test(lines[i + 1]) && lines[i + 1].includes('---')) {
+      flushList();
+      const header = trimmed.split('|').slice(1, -1).map((c) => c.trim());
+      i += 2;
+      const rows = [];
+      while (i < lines.length && /^\s*\|\s*.+\|/.test(lines[i].trim())) {
+        const cells = lines[i].trim().split('|').slice(1, -1).map((c) => c.trim());
+        rows.push(`<tr>${cells.map((c) => `<td>${inlineMdInline(c)}</td>`).join('')}</tr>`);
+        i++;
+      }
+      out.push(`<table><thead><tr>${header.map((c) => `<th>${inlineMdInline(c)}</th>`).join('')}</tr></thead>` +
+        `<tbody>${rows.join('')}</tbody></table>`);
+      continue;
+    }
+    if (trimmed) {
+      flushList();
+      if (trimmed.startsWith('>')) {
+        out.push(`<blockquote>${inlineMdInline(trimmed.replace(/^>\s?/, ''))}</blockquote>`);
+      } else {
+        out.push(`<p>${inlineMdInline(trimmed)}</p>`);
+      }
+    }
+    i++;
+  }
+  flushList();
+  return out.join('');
+}
+
+/* --- Сырые задания пользователя (Входящие) --- */
+let reqEditorId = '';
+function copyText(t){
+  if (navigator.clipboard && navigator.clipboard.writeText){ navigator.clipboard.writeText(t); return; }
+  const ta = document.createElement('textarea');
+  ta.value = t; document.body.appendChild(ta); ta.select();
+  try { document.execCommand('copy'); } catch(_){}
+  document.body.removeChild(ta);
+}
+async function copyReqPath(){
+  const el = $('reqEditorPath');
+  if (!el || !el.textContent){ alert('Путь не задан'); return; }
+  copyText(el.textContent);
+  $('reqSaveInfo').textContent = '✅ Путь скопирован: ' + el.textContent;
+}
+function copyReqContent(){ copyText($('reqEditorText').value); $('reqSaveInfo').textContent = '✅ Текст скопирован'; }
+function reqPreview(){ $('reqEditorPreview').innerHTML = renderMarkdown($('reqEditorText').value) || '<span class="muted">Введите текст — предпросмотр появится здесь.</span>'; }
+function openReqEditor(row){
+  reqEditorId = row.id;
+  $('reqEditorId').textContent = row.id + (row.status ? ' · ' + row.status : '');
+  $('reqEditorText').value = row.content || row.text || '';
+  $('reqEditorPath').textContent = row.path || '';
+  $('reqEditorPath').title = row.path || '';
+  $('reqSaveInfo').textContent = '';
+  reqPreview();
+  $('reqEditorOverlay').classList.add('show');
+}
+function closeReqEditor(){
+  $('reqEditorOverlay').classList.remove('show');
+  loadRequests();
+}
+$('reqEditorOverlay').addEventListener('click', e=>{ if (e.target===$('reqEditorOverlay')) closeReqEditor(); });
+async function saveRequest(){
+  const text = $('reqEditorText').value.trim();
+  if (!text){ alert('Пустой текст'); return; }
+  if (!reqEditorId){ alert('Нет id задания'); return; }
+  try {
+    const r = await (await fetch('/api/requests/'+encodeURIComponent(reqEditorId), {method:'PATCH', headers:{'Content-Type':'application/json'},
+      body: JSON.stringify({project: activeProject, text: text})})).json();
+    if (!r || !r.id){ alert('Ошибка: '+(r&&r.detail?r.detail:JSON.stringify(r))); return; }
+    $('reqSaveInfo').textContent = '✅ Сохранено · ' + (r.commit || 'без коммита');
+    $('reqEditorPath').textContent = r.path || '';
+    $('reqEditorPath').title = r.path || '';
+  } catch(e){ alert('Ошибка: '+e); }
+}
+async function openRequest(id){
+  try {
+    const r = await (await fetch('/api/requests/'+encodeURIComponent(id)+'?project='+encodeURIComponent(activeProject||''))).json();
+    openReqEditor(r);
+  } catch(e){ alert('Ошибка чтения задания: '+e); }
+}
 
 const STATUS_LABEL = { 'open':'Открыто', 'done':'Выполнено' };
 const WORKFLOW_LABEL = {
@@ -1376,7 +1553,7 @@ function loadRequests(){
         '<th style="text-align:left;padding:6px 8px;color:var(--muted)">Задание</th>'+
         '<th style="text-align:left;padding:6px 8px;color:var(--muted)">Статус</th>'+
         '<th style="text-align:left;padding:6px 8px;color:var(--muted)">Создано</th>'+
-        '<th style="text-align:left;padding:6px 8px;color:var(--muted)">Файл / коммит</th>'+
+        '<th style="text-align:left;padding:6px 8px;color:var(--muted)">Путь к файлу</th>'+
         '<th style="padding:6px 8px"></th></tr></thead><tbody>';
       for (const rq of list){
         html += '<tr>'+
@@ -1385,8 +1562,11 @@ function loadRequests(){
             '<div>'+esc(rq.text).slice(0,140)+'</div></td>'+
           '<td style="padding:6px 8px;border-top:1px solid var(--border)">'+reqBadge(rq.status)+'</td>'+
           '<td style="padding:6px 8px;border-top:1px solid var(--border);color:var(--muted);white-space:nowrap">'+esc(String(rq.created_at||'').slice(5,19).replace('T',' '))+'</td>'+
-          '<td style="padding:6px 8px;border-top:1px solid var(--border);color:var(--muted);font-size:11px;max-width:200px;overflow:hidden;text-overflow:ellipsis;white-space:nowrap" title="'+esc(rq.file||'')+'">'+esc((rq.file||'').split('\\').pop())+'<br>'+esc(rq.commit||'')+'</td>'+
-          '<td style="padding:6px 8px;border-top:1px solid var(--border);text-align:right">'+
+          '<td style="padding:6px 8px;border-top:1px solid var(--border);color:var(--muted);font-size:11px;max-width:220px;overflow:hidden;text-overflow:ellipsis;white-space:nowrap" title="'+esc(rq.path||rq.file||'')+'">'+esc((rq.file||'').split('/').pop()||'—')+
+            (rq.commit?'<br>'+esc(String(rq.commit||'').slice(0,14)):'')+'</td>'+
+          '<td style="padding:6px 8px;border-top:1px solid var(--border);text-align:right;white-space:nowrap">'+
+            '<button style="padding:3px 8px;font-size:12px" onclick="openRequest(\''+rq.id+'\')">📄 Читать</button> '+
+            '<button style="padding:3px 8px;font-size:12px" title="'+esc(rq.path||'')+'" onclick="copyText(\''+esc(rq.path||'')+'\');loadRequests()">📋 Путь</button> '+
             (rq.status==='new' ? '<button style="padding:3px 8px;font-size:12px" onclick="dispatchRequest(\''+rq.id+'\')">📋 Оформить</button>' : '')+
           '</td></tr>';
       }
@@ -1405,6 +1585,7 @@ async function createRequest(){
     if (!r || !r.id){ alert('Ошибка: '+(r&&r.detail?r.detail:JSON.stringify(r))); return; }
     $('newRequestText').value = '';
     loadRequests();
+    openRequest(r.id);
   } catch(e){ alert('Ошибка: '+e); }
 }
 async function dispatchRequest(id){
