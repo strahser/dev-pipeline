@@ -211,6 +211,7 @@ pre.json { background:var(--code); border:1px solid var(--border); border-radius
   <select id="projectSelect" style="background:var(--panel);color:var(--text);border:1px solid var(--border);border-radius:8px;padding:6px 10px;font-size:13px;"></select>
   <button onclick="openChat()" title="Чат с агентами" style="background:var(--panel);color:var(--text);border:1px solid var(--border);border-radius:8px;padding:6px 12px;font-size:13px;cursor:pointer;">💬 Чат</button>
   <button onclick="openSessions()" title="Явные сессии субагентов" style="background:var(--panel);color:var(--text);border:1px solid var(--border);border-radius:8px;padding:6px 12px;font-size:13px;cursor:pointer;">🗂 Сессии</button>
+  <button onclick="openRequests()" title="Сырые задания пользователя (Входящие)" style="background:var(--panel);color:var(--text);border:1px solid var(--border);border-radius:8px;padding:6px 12px;font-size:13px;cursor:pointer;">📥 Входящие</button>
   <span class="status" id="status">…</span>
 </header>
 <main id="content">
@@ -303,6 +304,24 @@ pre.json { background:var(--code); border:1px solid var(--border); border-radius
       <button class="primary" onclick="createAgent()" title="Создать сессию: агент получит скилл роли (методика + роль) и запустится через opencode">🚀 Создать</button>
     </div>
     <div id="sessionsBody"><div class="empty">Загрузка…</div></div>
+  </div>
+</div>
+
+<div class="overlay" id="requestsOverlay">
+  <div class="modal" style="max-width:900px" id="requestsModal">
+    <header>
+      <h2>📥 Сырые задания (Входящие)</h2>
+      <button class="close" onclick="closeRequests()">✕ Закрыть</button>
+    </header>
+    <div class="chat-actions">
+      <button onclick="loadRequests()">🔄 Обновить</button>
+      <span style="margin-left:auto;font-size:11.5px;color:var(--muted)" id="requestsInfo"></span>
+    </div>
+    <div style="display:flex;gap:8px;padding:10px 4px 4px;border-bottom:1px solid var(--border);margin-bottom:8px">
+      <textarea id="newRequestText" placeholder="Новое сырое задание… (фиксируется в БД + файл Tasks\Входящие\ + git-коммит)" style="flex:1;min-height:54px;background:var(--panel2);color:var(--text);border:1px solid var(--border);border-radius:6px;padding:6px 8px;font-size:13px;resize:vertical"></textarea>
+      <button class="primary" onclick="createRequest()" style="align-self:flex-end">➕ Добавить</button>
+    </div>
+    <div id="requestsBody"><div class="empty">Загрузка…</div></div>
   </div>
 </div>
 
@@ -977,23 +996,23 @@ async function loadChatAgents(){
   catch(e){ return; }
   chatAgentsList = list;
   const prj = $('chatProject').value;
-  const only = $('chatOnlyActive').checked;
   const shown = list.filter(a=>
-    (!prj || a.project === prj || (!a.project && a.role !== 'субагент' && prj === activeProject)) &&
-    (!only || (!a.sleeping && a.status === 'online')));
-  // подсказка «только запущенные»: скрытые агенты
-  const hidden = list.length - shown.length;
-  $('chatInfo').textContent = shown.length + ' из ' + list.length + (hidden ? ' (скрыто '+hidden+')' : '');
-  $('chatAgents').innerHTML = shown.map(a=>
-    '<div class="chat-agent'+(a.name===chatAgent?' active':'')+'" onclick="selectChatAgent(\''+esc(a.name)+'\')">'+
+    (!prj || a.project === prj || (!a.project && a.role !== 'субагент' && prj === activeProject)));
+  // сервер отдаёт только живых: подсказка «живых»
+  $('chatInfo').textContent = 'живых: ' + shown.length;
+  $('chatAgents').innerHTML = shown.map(a=>{
+    const kindIc = a.kind==='session' ? '🗂' : (a.kind==='opencode' ? '💻' : '🤖');
+    return '<div class="chat-agent'+(a.name===chatAgent?' active':'')+'" onclick="selectChatAgent(\''+esc(a.name)+'\')">'+
       chatStatusIcon(a)+
       '<div style="flex:1;min-width:0">'+
-        '<div class="nm">'+esc(a.name)+' <span class="rl">· '+esc(a.role)+'</span></div>'+
+        '<div class="nm">'+kindIc+' '+esc(a.name)+' <span class="rl">· '+esc(a.role)+'</span></div>'+
         (a.project ? '<div class="prj">📁 '+esc(a.project)+'</div>' : '')+
-        (a.current_task ? '<div class="tk">задача: '+esc(a.current_task)+'</div>' : '')+
+        (a.current_task ? '<div class="tk">'+esc(a.current_task).slice(0,60)+'</div>' : '')+
+        (a.chat_ok===false ? '<div class="tk" style="color:var(--muted);font-size:11px">(только просмотр — общение через сессию)</div>' : '')+
       '</div>'+
       '<span class="hb">'+chatHba(a)+'</span>'+
-    '</div>').join('') || '<div class="chat-empty">Нет агентов по фильтру</div>';
+    '</div>';
+  }).join('') || '<div class="chat-empty">Нет живых агентов</div>';
 }
 function selectChatAgent(name){
   chatAgent = name;
@@ -1030,6 +1049,8 @@ function appendChatMsg(m){
 async function sendChatMessage(){
   const text = $('chatText').value.trim();
   if (!text || !chatAgent) return;
+  const a = chatAgentInfo();
+  if (a.chat_ok === false){ appendChatMsg({from:'🛰 dashboard', to:chatAgent, text:'Сессия без прямого чата — общение через POST /api/sessions/{id}/instruction', created_at:new Date().toISOString()}); $('chatText').value=''; return; }
   $('chatText').value = '';
   let msg;
   try {
@@ -1046,11 +1067,19 @@ function chatAgentInfo(){
 function chatPing(){
   if (!chatAgent) return;
   const a = chatAgentInfo();
+  if (a.chat_ok === false){
+    appendChatMsg({from:'🛰 dashboard', to:chatAgent, text:'🫀 Сессия '+a.session_id+': '+a.current_task+' (role='+a.session_role+')', created_at:new Date().toISOString()});
+    return;
+  }
   sendChatMessage('ping — проверка связи (ваш heartbeat: '+(a.heartbeat_age_sec!=null?chatHba(a):'неизвестно')+', pid: '+(a.pid||'—')+')');
 }
 function chatAskReport(){
   if (!chatAgent) return;
   const a = chatAgentInfo();
+  if (a.chat_ok === false){
+    appendChatMsg({from:'🛰 dashboard', to:chatAgent, text:'📄 Сессия '+a.session_id+' — отчёт: POST /api/sessions/'+a.session_id+' (статус/заметка в панели «Сессии»)', created_at:new Date().toISOString()});
+    return;
+  }
   sendChatMessage(a.current_task
     ? 'отчёт по задаче '+a.current_task+' — пришли сводку (что сделано, доказательства, статус)'
     : 'отчёт — пришли сводку текущего состояния и последних действий');
@@ -1060,6 +1089,26 @@ function chatClear(){ $('chatDialog').innerHTML = '<div class="chat-empty">Ди�
 async function chatKill(){
   if (!chatAgent) return;
   const a = chatAgentInfo();
+  if (a.kind === 'session'){
+    // сессия субагента: kill через /api/sessions/{sid}/kill
+    if (!confirm('Убить сессию '+a.session_id+'?')) return;
+    try {
+      const r = await (await fetch('/api/sessions/'+encodeURIComponent(a.session_id)+'/kill', {method:'POST'})).json();
+      appendChatMsg({from:'🛰 dashboard', to:chatAgent, text:'⛔ Сессия убита: '+a.session_id, created_at:new Date().toISOString()});
+      loadChatAgents();
+    } catch(e){ alert('Ошибка kill: '+e); }
+    return;
+  }
+  if (a.kind === 'opencode'){
+    // opencode-сессия: kill через /api/sessions/live/{sid}/kill
+    if (!confirm('Удалить сессию opencode '+a.session_id+'?')) return;
+    try {
+      const r = await (await fetch('/api/sessions/live/'+encodeURIComponent(a.session_id)+'/kill', {method:'POST'})).json();
+      appendChatMsg({from:'🛰 dashboard', to:chatAgent, text:'🗑 opencode-сессия удалена: '+a.session_id, created_at:new Date().toISOString()});
+      loadChatAgents();
+    } catch(e){ alert('Ошибка kill: '+e); }
+    return;
+  }
   if (!a.pid){ alert('У агента '+chatAgent+' нет зарегистрированного PID — убить процесс нельзя.'); return; }
   if (!confirm('Убить процесс агента '+chatAgent+' (PID '+a.pid+')?')) return;
   try {
@@ -1209,6 +1258,79 @@ function loadSessions(){
       renderSessionTable(subs, true);
     $('sessionsBody').innerHTML = html;
   }).catch(e=>{ $('sessionsBody').innerHTML = '<div class="empty">Ошибка: '+esc(String(e))+'</div>'; });
+}
+
+/* --- Сырые задания пользователя (Входящие) --- */
+let requestsTimer = null;
+function openRequests(){
+  $('requestsOverlay').classList.add('show');
+  $('requestsBody').innerHTML = '<div class="empty">Загрузка…</div>';
+  loadRequests();
+  if (requestsTimer) clearInterval(requestsTimer);
+  requestsTimer = setInterval(loadRequests, 20000);
+}
+function closeRequests(){
+  $('requestsOverlay').classList.remove('show');
+  if (requestsTimer){ clearInterval(requestsTimer); requestsTimer = null; }
+}
+$('requestsOverlay').addEventListener('click', e=>{ if (e.target===$('requestsOverlay')) closeRequests(); });
+
+function reqBadge(st){
+  const m = {new:'badge warn', dispatched:'badge ok'};
+  return '<span class="'+(m[st]||'badge')+'">'+esc(st||'?')+'</span>';
+}
+function loadRequests(){
+  fetch('/api/requests?project='+encodeURIComponent(activeProject||''))
+    .then(r=>r.json())
+    .then(list=>{
+      $('requestsInfo').textContent = 'заданий: '+(list||[]).length;
+      if (!(list||[]).length){
+        $('requestsBody').innerHTML = '<div class="empty">Входящих нет. Добавьте сырое задание — оно попадёт в БД, файл Tasks\\Входящие\\ и git-коммит.</div>';
+        return;
+      }
+      let html = '<table style="width:100%;border-collapse:collapse;font-size:13px"><thead><tr>'+
+        '<th style="text-align:left;padding:6px 8px;color:var(--muted)">Задание</th>'+
+        '<th style="text-align:left;padding:6px 8px;color:var(--muted)">Статус</th>'+
+        '<th style="text-align:left;padding:6px 8px;color:var(--muted)">Создано</th>'+
+        '<th style="text-align:left;padding:6px 8px;color:var(--muted)">Файл / коммит</th>'+
+        '<th style="padding:6px 8px"></th></tr></thead><tbody>';
+      for (const rq of list){
+        html += '<tr>'+
+          '<td style="padding:6px 8px;border-top:1px solid var(--border);max-width:340px">'+
+            '<div style="font-family:Consolas,monospace;font-size:11px;color:var(--muted)">'+esc(rq.id)+'</div>'+
+            '<div>'+esc(rq.text).slice(0,140)+'</div></td>'+
+          '<td style="padding:6px 8px;border-top:1px solid var(--border)">'+reqBadge(rq.status)+'</td>'+
+          '<td style="padding:6px 8px;border-top:1px solid var(--border);color:var(--muted);white-space:nowrap">'+esc(String(rq.created_at||'').slice(5,19).replace('T',' '))+'</td>'+
+          '<td style="padding:6px 8px;border-top:1px solid var(--border);color:var(--muted);font-size:11px;max-width:200px;overflow:hidden;text-overflow:ellipsis;white-space:nowrap" title="'+esc(rq.file||'')+'">'+esc((rq.file||'').split('\\').pop())+'<br>'+esc(rq.commit||'')+'</td>'+
+          '<td style="padding:6px 8px;border-top:1px solid var(--border);text-align:right">'+
+            (rq.status==='new' ? '<button style="padding:3px 8px;font-size:12px" onclick="dispatchRequest(\''+rq.id+'\')">📋 Оформить</button>' : '')+
+          '</td></tr>';
+      }
+      html += '</tbody></table>';
+      $('requestsBody').innerHTML = html;
+    })
+    .catch(e=>{ $('requestsBody').innerHTML = '<div class="empty">Ошибка: '+esc(String(e))+'</div>'; });
+}
+async function createRequest(){
+  const text = $('newRequestText').value.trim();
+  if (!text){ alert('Введите текст задания'); return; }
+  if (!activeProject){ alert('Нет активного проекта'); return; }
+  try {
+    const r = await (await fetch('/api/requests', {method:'POST', headers:{'Content-Type':'application/json'},
+      body: JSON.stringify({project: activeProject, text: text})})).json();
+    if (!r || !r.id){ alert('Ошибка: '+(r&&r.detail?r.detail:JSON.stringify(r))); return; }
+    $('newRequestText').value = '';
+    loadRequests();
+  } catch(e){ alert('Ошибка: '+e); }
+}
+async function dispatchRequest(id){
+  if (!confirm('Оформить задание '+id+' в задачу (dispatch)?')) return;
+  try {
+    const r = await (await fetch('/api/requests/'+encodeURIComponent(id)+'/dispatch', {method:'POST'})).json();
+    if (!r || r.status !== 'dispatched'){ alert('Ошибка: '+(r&&r.detail?r.detail:JSON.stringify(r))); return; }
+    loadRequests();
+    refreshData();
+  } catch(e){ alert('Ошибка: '+e); }
 }
 
 function chatInitResize(){  const p = $('chatPanel'), rz = $('chatResize');

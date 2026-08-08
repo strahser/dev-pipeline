@@ -23,6 +23,8 @@ import json
 import os
 import subprocess
 import sys
+
+from pipeline.proc import no_window_flags
 from pathlib import Path
 
 sys.path.insert(0, str(Path(__file__).resolve().parent.parent))
@@ -209,7 +211,9 @@ def cmd_dump(args) -> int:
         mode = "--dxf" if args.dxf else "--dump"
         cmd = [str(exe), mode, str(fixture), str(out)]
         print("RUN:", " ".join(cmd))
-        r = subprocess.run(cmd, capture_output=True, text=True, encoding="utf-8", errors="replace", timeout=120)
+        r = subprocess.run(cmd, capture_output=True, text=True, encoding="utf-8",
+                           errors="replace", timeout=120,
+                           creationflags=no_window_flags())
         print((r.stdout or "").strip()[-500:])
         print((r.stderr or "").strip()[-500:])
         if r.returncode != 0 or not out.exists():

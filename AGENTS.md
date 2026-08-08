@@ -40,6 +40,9 @@
 - Агенты-помощники по ролям: `POST /api/agents {role, project, model?, task?}` — сессия с
   предзагруженным скиллом роли (методика+роль): controller/executor/browser/reviewer/qwen/planner;
   в панели «🗂 Сессии» — кнопка «➕ Новый агент»; kill live opencode-сессий — `POST /api/sessions/live/{sid}/kill`
+- Сырые задания пользователя: `POST /api/requests {project, text}` — БД (`requests`) + файл
+  `Tasks\Входящие\` + git-коммит `inbox: ...`; `POST /api/requests/{id}/dispatch` — оформить
+  в задачу (файл в Активные + коммит); панель «📥 Входящие»
 - Анти-зависание: сервер — `PIPELINE_WATCH_INTERVAL`/`PIPELINE_WATCH_MAX_AGE`,
   сессии — `PIPELINE_SESSION_MAX_AGE` (default 300 с, heartbeat сессии 30 с; stale → `stalled` + событие);
   сторож — `python -m agents.agent_watch --project <p> [--stall-timeout N]` (env `TASK_STALL_TIMEOUT_SEC`, default 10800);

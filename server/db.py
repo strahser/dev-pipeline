@@ -59,6 +59,15 @@ CREATE TABLE IF NOT EXISTS sessions (
   finished_at TEXT,
   heartbeat TEXT
 );
+CREATE TABLE IF NOT EXISTS requests (
+  id TEXT PRIMARY KEY,
+  project TEXT NOT NULL DEFAULT '',
+  text TEXT NOT NULL,
+  status TEXT NOT NULL DEFAULT 'new',
+  file TEXT NOT NULL DEFAULT '',
+  commit_sha TEXT NOT NULL DEFAULT '',
+  created_at TEXT NOT NULL
+);
 CREATE INDEX IF NOT EXISTS idx_events_to_delivery ON events("to", delivery);
 CREATE INDEX IF NOT EXISTS idx_messages_to_delivery ON messages("to", delivery);
 CREATE INDEX IF NOT EXISTS idx_sessions_status ON sessions(status);
@@ -386,9 +395,63 @@ class Store:
                 out.append(s)
         return out
 
+    # --- сырые задания пользователя (Входящие) --------------------------------
+
+    def add_request(self, req_id: str, project: str, text: str,
+                    status: str = "new", file: str = "", commit_msg: str = "") -> dict:
+        """Зафиксировать сырое задание пользователя: БД + файл + git-коммит
+        (как общение агентов: БД — координация, файлы+git — источник правды)."""
+        row = {"id": req_id, "project": project, "text": text, "status": status,
+               "file": file, "commit_msg": commit_msg, "created_at": now_iso()}
+        self._conn.execute(
+            "INSERT INTO requests (id,project,text,status,file,commit_sha,created_at) "
+            "VALUES (?,?,?,?,?,?,?)",
+            (req_id, project, text, status, file, commit_msg, row["created_at"]))
+        self._conn.commit()
+        return row
+
+    @staticmethod
+    def _row_to_request(r: sqlite3.Row) -> dict:
+        return {"id": r["id"], "project": r["project"], "text": r["text"],
+                "status": r["status"], "file": r["file"],
+                "commit": r["commit_sha"], "created_at": r["created_at"]}
+
+    def get_request(self, req_id: str) -> dict | None:
+        r = self._conn.execute("SELECT * FROM requests WHERE id=?", (req_id,)).fetchone()
+        return self._row_to_request(r) if r else None
+
+    def list_requests(self, project: str = "", status: str = "",
+                      limit: int = 100) -> list[dict]:
+        q = "SELECT * FROM requests WHERE 1=1"
+        args = []
+        if project:
+            q += " AND project=?"
+            args.append(project)
+        if status:
+            q += " AND status=?"
+            args.append(status)
+        q += " ORDER BY created_at DESC, id DESC LIMIT ?"
+        args.append(min(limit, 500))
+        return [self._row_to_request(r) for r in self._conn.execute(q, args).fetchall()]
+
+    def update_request(self, req_id: str, **fields) -> dict | None:
+        allowed = {"status", "file", "commit_sha"}
+        sets, args = [], []
+        for k, v in fields.items():
+            if k in allowed:
+                sets.append(f"{k}=?")
+                args.append(v)
+        if not sets:
+            return self.get_request(req_id)
+        args.append(req_id)
+        self._conn.execute(f"UPDATE requests SET {', '.join(sets)} WHERE id=?", args)
+        self._conn.commit()
+        return self.get_request(req_id)
+
     def stats(self) -> dict:
         ev = self._conn.execute("SELECT COUNT(*) AS c FROM events").fetchone()["c"]
         ms = self._conn.execute("SELECT COUNT(*) AS c FROM messages").fetchone()["c"]
         ag = self._conn.execute("SELECT COUNT(*) AS c FROM agents").fetchone()["c"]
         ss = self._conn.execute("SELECT COUNT(*) AS c FROM sessions").fetchone()["c"]
-        return {"events": ev, "messages": ms, "agents": ag, "sessions": ss}
+        rq = self._conn.execute("SELECT COUNT(*) AS c FROM requests").fetchone()["c"]
+        return {"events": ev, "messages": ms, "agents": ag, "sessions": ss, "requests": rq}

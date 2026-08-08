@@ -44,7 +44,7 @@ from pydantic import BaseModel, Field
 
 from pipeline.config import ConfigError, load_config, list_projects
 from pipeline.models import Task
-from server.db import Store
+from server.db import Store, now_iso as _now_iso
 from server.heartbeat import start_watchdog
 from server.sse import SSEHub
 
@@ -1076,31 +1076,7 @@ async def api_usage_sessions(project: str = "", days: int = 30):
 async def api_sessions_live(minutes: int = 15):
     """Открытые сессии opencode: обновлявшиеся за последние minutes минут
     (не архивированные). Источник — opencode.db (session.time_updated)."""
-    import sqlite3
-    import time as _t
-    db_path = _opencode_db_path()
-    if not db_path:
-        return []
-    minutes = min(max(minutes, 1), 1440)
-    cutoff = int((_t.time() - minutes * 60) * 1000)
-    out = []
-    try:
-        con = sqlite3.connect(f"file:{db_path}?mode=ro", uri=True)
-        con.row_factory = sqlite3.Row
-        q = ("SELECT id, slug, title, directory, path, agent, model, "
-             "time_created, time_updated, time_archived, "
-             "tokens_input, tokens_output, cost FROM session "
-             "WHERE time_updated IS NOT NULL AND time_updated >= ? "
-             "AND time_archived IS NULL ORDER BY time_updated DESC")
-        for r in con.execute(q, (cutoff,)):
-            d = dict(r)
-            d["live"] = True
-            d["age_sec"] = max(0, int((_t.time() * 1000 - d["time_updated"]) / 1000))
-            out.append(d)
-        con.close()
-    except Exception:
-        return []
-    return out
+    return _live_opencode_sessions(minutes=minutes)
 
 
 @app.post("/api/sessions/live/{sid}/kill")
@@ -1130,6 +1106,105 @@ async def api_sessions_live_kill(sid: str):
         return JSONResponse(status_code=500, content={"ok": False, "sid": sid, "error": str(e)})
 
 
+# --- Сырые задания пользователя (Входящие): БД + файл + git ------------------
+
+class RequestIn(BaseModel):
+    project: str
+    text: str
+
+
+def _req_id() -> str:
+    import uuid
+    return "R-" + uuid.uuid4().hex[:10].upper()
+
+
+@app.post("/api/requests")
+async def request_create(body: RequestIn):
+    """Зафиксировать сырое задание пользователя: запись в БД + файл
+    Tasks\\Входящие\\ + git-коммит в проекте (как общение агентов)."""
+    text = body.text.strip()
+    if not text:
+        raise HTTPException(400, "пустой текст задания")
+    try:
+        cfg = load_config(body.project)
+    except ConfigError as e:
+        raise HTTPException(404, f"проект не найден: {e}")
+    req_id = _req_id()
+    inbox = cfg.abs_tasks_dir("inbox")
+    inbox.mkdir(parents=True, exist_ok=True)
+    import re as _re
+    slug = _re.sub(r"[^\wа-яА-ЯёЁ\- ]", "", text[:50]).strip().replace(" ", "_") or "задание"
+    fname = f"{req_id}_{slug}.md"
+    fpath = inbox / fname
+    fpath.write_text(
+        f"# Сырое задание {req_id}\n\n"
+        f"- Источник: dashboard\n"
+        f"- Дата: {_now_iso()}\n"
+        f"- Статус: new\n\n## Задание\n\n{text}\n",
+        encoding="utf-8")
+    # git-фиксация (как общение агентов: файлы+git — источник правды)
+    commit = ""
+    try:
+        import subprocess as _sp
+        from pipeline.proc import no_window_flags as _nwf
+        _sp.run(["git", "-C", str(cfg.root), "add", "-A"],
+                capture_output=True, timeout=30, creationflags=_nwf())
+        r = _sp.run(["git", "-C", str(cfg.root), "commit", "-m",
+                     f"inbox: сырое задание {req_id} ({fname})"],
+                    capture_output=True, text=True, timeout=30,
+                    creationflags=_nwf())
+        commit = (r.stdout or "").strip().splitlines()[-1][:80] if r.returncode == 0 else ""
+    except Exception:
+        pass
+    row = store.add_request(req_id, project=body.project, text=text,
+                            status="new",
+                            file=str(fpath.relative_to(cfg.root)).replace("\\", "/"),
+                            commit_msg=commit)
+    ev = store.add_event("request_created", "dashboard", "controller",
+                         project=body.project, task="",
+                         payload={"request_id": req_id, "text": text[:120],
+                                  "file": row["file"], "commit_msg": commit})
+    hub.publish(ev)
+    return row
+
+
+@app.get("/api/requests")
+async def request_list(project: str = "", status: str = "", limit: int = 100):
+    return store.list_requests(project=project, status=status, limit=limit)
+
+
+@app.post("/api/requests/{req_id}/dispatch")
+async def request_dispatch(req_id: str):
+    """Оформить сырое задание в задачу (dispatch): файл уходит в Активные,
+    статус запроса -> dispatched (БД + git-коммит)."""
+    row = store.get_request(req_id)
+    if not row:
+        raise HTTPException(404, f"задание {req_id} не найдено")
+    try:
+        cfg = load_config(row["project"])
+    except ConfigError as e:
+        raise HTTPException(404, f"проект не найден: {e}")
+    import argparse as _ap
+    from pipeline.cli import cmd_dispatch
+    src = cfg.abs_tasks_dir("inbox") / Path(row["file"]).name
+    if not src.exists():
+        # фолбэк: пересоздать файл из текста
+        src.parent.mkdir(parents=True, exist_ok=True)
+        src.write_text(f"# Задание {req_id}\n\n{row['text']}\n", encoding="utf-8")
+    rc = cmd_dispatch(cfg, _ap.Namespace(file=str(src), title=None, priority=None,
+                                         requirements=None, result=None,
+                                         remark=f"из сырого задания {req_id}",
+                                         id=None))
+    if rc != 0:
+        raise HTTPException(500, f"dispatch не удался (rc={rc})")
+    store.update_request(req_id, status="dispatched")
+    ev = store.add_event("request_dispatched", "dashboard", "controller",
+                         project=row["project"], task="",
+                         payload={"request_id": req_id, "file": row["file"]})
+    hub.publish(ev)
+    return store.get_request(req_id)
+
+
 @app.get("/api/inbox")
 async def api_inbox(limit: int = 200):
     msgs = []
@@ -1152,16 +1227,27 @@ KNOWN_AGENTS = [
 
 @app.get("/api/chat/agents")
 async def chat_agents():
-    """Агенты для чата: онлайн-статус, сон, проект, текущая задача (по событиям)."""
-    import datetime as _dt
-    agents = store.agents()
-    by_name = {a["name"]: a for a in agents}
-    # известные роли, ещё не объявлявшие heartbeat
-    for k in KNOWN_AGENTS:
-        if k["name"] not in by_name:
-            by_name[k["name"]] = {"name": k["name"], "last_seen": None, "status": "offline",
-                                  "project": "", "pid": None, "cmd": ""}
+    """Агенты для чата: ТОЛЬКО ЖИВЫЕ, синхронно с панелью «🗂 Сессии».
 
+    В список попадают:
+      1. агенты-процессы со свежим heartbeat (online, age <= 90 с);
+      2. живые сессии субагентов конвейера (status = running/created);
+      3. живые opencode-сессии (time_updated за последние 15 мин, не архивные).
+    Мёртвые (offline / спящие / завершённые сессии) НЕ показываются."""
+    import datetime as _dt
+    now = _dt.datetime.now()
+    out = []
+
+    def _age_sec(ts_iso):
+        if not ts_iso:
+            return None
+        try:
+            t = _parse_iso_dt(ts_iso)
+        except ValueError:
+            return None
+        return max(0, int((now - t).total_seconds())) if t else None
+
+    # 1) живые агенты-процессы (heartbeat)
     evs = store.recent_events(limit=400)
     started: dict[str, str] = {}
     finished: set[tuple] = set()
@@ -1173,38 +1259,90 @@ async def chat_agents():
             started[src] = e.get("task", "")
         elif e["type"] == "subagent_finished":
             finished.add((src, e.get("task", "")))
-    now = _dt.datetime.now()
-    out = []
-    for name, a in by_name.items():
-        age = None
-        last = a.get("last_seen")
-        if last:
-            try:
-                t = _parse_iso_dt(last)
-                if t:
-                    age = max(0, int((now - t).total_seconds()))
-            except ValueError:
-                pass
+    for a in store.agents():
+        age = _age_sec(a.get("last_seen"))
+        if a["status"] != "online" or age is None or age > 90:
+            continue  # мёртвый — не показываем
+        name = a["name"]
         task = started.get(name, "")
         if task and (name, task) in finished:
             task = ""
         role = next((k["role"] for k in KNOWN_AGENTS if k["name"] == name), "субагент")
-        sleeping = bool(a["status"] == "offline" or (age is not None and age > 90))
         out.append({
-            "name": name,
-            "role": role,
-            "status": a["status"],
-            "project": a.get("project", ""),
-            "pid": a.get("pid"),
-            "cmd": a.get("cmd", ""),
-            "last_seen": last,
-            "heartbeat_age_sec": age,
-            "sleeping": sleeping,
-            "current_task": task,
-            "restartable": bool(a.get("cmd")),
+            "name": name, "role": role, "status": a["status"],
+            "project": a.get("project", ""), "pid": a.get("pid"),
+            "cmd": a.get("cmd", ""), "last_seen": a.get("last_seen"),
+            "heartbeat_age_sec": age, "sleeping": False,
+            "current_task": task, "restartable": bool(a.get("cmd")),
             "killable": a.get("pid") is not None,
+            "live": True, "chat_ok": True, "kind": "agent",
         })
-    out.sort(key=lambda x: (x["status"] != "online", x["name"]))
+
+    # 2) живые сессии субагентов (running/created) — как в панели «Сессии»
+    for s in store.list_sessions():
+        if s["status"] not in ("running", "created"):
+            continue
+        age = _age_sec(s.get("heartbeat") or s.get("created_at"))
+        role_cfg = AGENT_ROLES.get(s.get("role", ""), {})
+        out.append({
+            "name": s.get("agent") or f"session-{s['id']}",
+            "role": role_cfg.get("title") or s.get("role", "субагент"),
+            "status": "online", "project": s.get("project", ""),
+            "pid": s.get("pid"), "cmd": s.get("cmd", ""),
+            "last_seen": s.get("heartbeat") or s.get("created_at"),
+            "heartbeat_age_sec": age, "sleeping": False,
+            "current_task": s.get("task", ""),
+            "restartable": bool(s.get("cmd")), "killable": s.get("pid") is not None,
+            "live": True, "chat_ok": False, "kind": "session",
+            "session_id": s["id"], "session_role": s.get("role", ""),
+        })
+
+    # 3) живые opencode-сессии (time_updated за 15 мин) — как в панели «Сессии»
+    for s in _live_opencode_sessions(minutes=15):
+        age = s.get("age_sec")
+        dir_name = (s.get("directory") or "").rstrip("/").split("/")[-1]
+        out.append({
+            "name": s.get("slug") or s.get("id", ""),
+            "role": "opencode-сессия", "status": "online",
+            "project": dir_name, "pid": None, "cmd": "",
+            "last_seen": _dt.datetime.fromtimestamp(
+                (s.get("time_updated") or 0) / 1000).isoformat(timespec="seconds"),
+            "heartbeat_age_sec": age, "sleeping": False,
+            "current_task": (s.get("title") or "")[:60],
+            "restartable": False, "killable": True,
+            "live": True, "chat_ok": False, "kind": "opencode",
+            "session_id": s.get("id"), "title": s.get("title") or "",
+        })
+
+    out.sort(key=lambda x: (not x.get("current_task"), x.get("kind") != "agent", x["name"]))
+    return out
+
+
+def _live_opencode_sessions(minutes: int = 15) -> list[dict]:
+    """Открытые сессии opencode: обновлявшиеся за последние minutes минут."""
+    import sqlite3
+    import time as _t
+    db_path = _opencode_db_path()
+    if not db_path:
+        return []
+    minutes = min(max(minutes, 1), 1440)
+    cutoff = int((_t.time() - minutes * 60) * 1000)
+    out = []
+    try:
+        con = sqlite3.connect(f"file:{db_path}?mode=ro", uri=True)
+        con.row_factory = sqlite3.Row
+        q = ("SELECT id, slug, title, directory, agent, model, time_created, "
+             "time_updated, time_archived FROM session "
+             "WHERE time_updated IS NOT NULL AND time_updated >= ? "
+             "AND time_archived IS NULL ORDER BY time_updated DESC")
+        for r in con.execute(q, (cutoff,)):
+            d = dict(r)
+            d["live"] = True
+            d["age_sec"] = max(0, int((_t.time() * 1000 - d["time_updated"]) / 1000))
+            out.append(d)
+        con.close()
+    except Exception:
+        return []
     return out
 
 

@@ -24,6 +24,7 @@ sys.path.insert(0, str(Path(__file__).resolve().parent.parent))
 
 from pipeline.client import Client               # noqa: E402
 from pipeline.config import load_config           # noqa: E402
+from pipeline.proc import no_window_flags         # noqa: E402
 
 QWEN_DIR = r"E:\ПлагиныРевит\LocalAssitent"
 PROVIDER = "qwen"
@@ -34,7 +35,8 @@ def run_cloud(source_path: str, output_path: str) -> str:
     cmd = ["python", "-X", "utf8", "-m", "tools.send_to_cloud", source_path,
            "--provider", PROVIDER, "--output", output_path]
     r = subprocess.run(cmd, cwd=QWEN_DIR, capture_output=True, text=True,
-                       encoding="utf-8", errors="replace", timeout=1800)
+                       encoding="utf-8", errors="replace", timeout=1800,
+                       creationflags=no_window_flags())
     return (r.stdout or "") + (r.stderr or "")
 
 

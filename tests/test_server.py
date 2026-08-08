@@ -240,16 +240,59 @@ class TestAppAPI(unittest.TestCase):
         self.assertEqual(inbox.json()[0]["text"], "отчёт по A-12")
 
     def test_chat_agents_known_and_heartbeat(self):
-        self.client.post("/heartbeat", json={"agent": "executor"})
-        r = self.client.get("/api/chat/agents")
-        self.assertEqual(r.status_code, 200)
-        names = {a["name"] for a in r.json()}
-        self.assertIn("executor", names)
-        self.assertIn("controller", names)  # известная роль без heartbeat
-        ex = next(a for a in r.json() if a["name"] == "executor")
-        self.assertEqual(ex["status"], "online")
-        self.assertFalse(ex["sleeping"])
-        self.assertIn("heartbeat_age_sec", ex)
+        # изолируемся от реальной opencode.db (live-сессии не должны мешать)
+        old = app_mod._opencode_db_path
+        app_mod._opencode_db_path = lambda: None
+        try:
+            self.client.post("/heartbeat", json={"agent": "executor"})
+            r = self.client.get("/api/chat/agents")
+            self.assertEqual(r.status_code, 200)
+            names = {a["name"] for a in r.json()}
+            self.assertIn("executor", names)
+            self.assertNotIn("controller", names)  # без heartbeat — мёртвый, не показываем
+            ex = next(a for a in r.json() if a["name"] == "executor")
+            self.assertEqual(ex["status"], "online")
+            self.assertFalse(ex["sleeping"])
+            self.assertTrue(ex["live"])
+            self.assertTrue(ex["chat_ok"])
+            self.assertIn("heartbeat_age_sec", ex)
+        finally:
+            app_mod._opencode_db_path = old
+
+    def test_chat_agents_stale_hidden(self):
+        """Агент без свежего heartbeat (offline/stale) НЕ показывается в чате."""
+        old = app_mod._opencode_db_path
+        app_mod._opencode_db_path = lambda: None
+        try:
+            self.client.post("/heartbeat", json={"agent": "zombie"})
+            # делаем heartbeat старым
+            import datetime as _dt
+            self.store._conn.execute(
+                "UPDATE agents SET last_seen=? WHERE name='zombie'",
+                ((_dt.datetime.now() - _dt.timedelta(minutes=10)).isoformat(),))
+            self.store._conn.commit()
+            r = self.client.get("/api/chat/agents")
+            names = {a["name"] for a in r.json()}
+            self.assertNotIn("zombie", names)
+        finally:
+            app_mod._opencode_db_path = old
+
+    def test_chat_agents_live_session_shown(self):
+        """Живая сессия субагента (running) показывается в чате с chat_ok=False."""
+        old = app_mod._opencode_db_path
+        app_mod._opencode_db_path = lambda: None
+        try:
+            s = self.client.post("/api/sessions", json={"project": "P", "task": "A-5",
+                                                        "agent": "session-A-5"}).json()
+            self.client.post(f"/api/sessions/{s['id']}/start", json={"pid": 777})
+            r = self.client.get("/api/chat/agents")
+            rows = [a for a in r.json() if a["kind"] == "session"]
+            self.assertEqual(len(rows), 1)
+            self.assertEqual(rows[0]["session_id"], s["id"])
+            self.assertFalse(rows[0]["chat_ok"])
+            self.assertEqual(rows[0]["current_task"], "A-5")
+        finally:
+            app_mod._opencode_db_path = old
 
     def test_session_create_get_list(self):
         r = self.client.post("/api/sessions", json={
@@ -404,6 +447,63 @@ class TestAppAPI(unittest.TestCase):
         r = self.client.post("/api/agents", json={"role": "executor", "project": "P",
                                                   "task": "сделай X"})
         self.assertIn("сделай X", r.json()["instruction"]["prompt"])
+
+    def test_request_create_list_dispatch(self):
+        """Сырое задание: БД + файл в Tasks\\Входящие + git-коммит + dispatch."""
+        import tempfile, shutil
+        tmp = Path(tempfile.mkdtemp(prefix="req_"))
+        (tmp / "Tasks" / "Входящие").mkdir(parents=True)
+        (tmp / "Tasks" / "Активные").mkdir(parents=True)
+        (tmp / "Tasks" / "Отчёты").mkdir(parents=True)
+        (tmp / "Tasks" / "Архив").mkdir(parents=True)
+        (tmp / "Tasks" / "Конвейер").mkdir(parents=True)
+        import subprocess
+        subprocess.run(["git", "-C", str(tmp), "init", "-q"], capture_output=True)
+        subprocess.run(["git", "-C", str(tmp), "config", "user.email", "t@t"],
+                       capture_output=True)
+        subprocess.run(["git", "-C", str(tmp), "config", "user.name", "t"],
+                       capture_output=True)
+        (tmp / "pipeline.yaml").write_text("root: .\nname: reqtest\n", encoding="utf-8")
+        old = app_mod.load_config
+        from pipeline.config import ProjectConfig
+        app_mod.load_config = lambda name: ProjectConfig(name=name, root=tmp)
+        try:
+            r = self.client.post("/api/requests", json={"project": "reqtest",
+                                                        "text": "Добавить экспорт в DXF"})
+            self.assertEqual(r.status_code, 200, r.text)
+            row = r.json()
+            self.assertTrue(row["id"].startswith("R-"))
+            self.assertEqual(row["status"], "new")
+            self.assertTrue(row["file"].startswith("Tasks/Входящие/"), row["file"])
+            self.assertTrue((tmp / "Tasks" / "Входящие" / Path(row["file"]).name).exists(),
+                            "файл задания должен быть в Входящие")
+            # в БД
+            got = self.store.get_request(row["id"])
+            self.assertEqual(got["text"], "Добавить экспорт в DXF")
+            # git-коммит
+            r2 = subprocess.run(["git", "-C", str(tmp), "log", "--oneline", "-1"],
+                                capture_output=True, text=True)
+            self.assertIn("inbox:", r2.stdout)
+            # список
+            lst = self.client.get("/api/requests", params={"project": "reqtest"}).json()
+            self.assertEqual(len(lst), 1)
+            # dispatch
+            rd = self.client.post(f"/api/requests/{row['id']}/dispatch")
+            self.assertEqual(rd.status_code, 200, rd.text)
+            self.assertEqual(rd.json()["status"], "dispatched")
+            self.assertTrue(list((tmp / "Tasks" / "Активные").glob("A-*.md")),
+                            "dispatch должен создать задачу")
+        finally:
+            app_mod.load_config = old
+            shutil.rmtree(tmp, ignore_errors=True)
+
+    def test_request_empty_text(self):
+        r = self.client.post("/api/requests", json={"project": "P", "text": "   "})
+        self.assertEqual(r.status_code, 400)
+
+    def test_request_dispatch_unknown(self):
+        r = self.client.post("/api/requests/R-NOPE/dispatch")
+        self.assertEqual(r.status_code, 404)
 
 
 class TestSSEStream(unittest.TestCase):
