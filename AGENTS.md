@@ -58,3 +58,16 @@
   автоматически), либо переменная `DEV_PIPELINE_PROJECTS_DIR` (базовая папка проектов на ПК).
 - Скиллы агентов: `pipeline-planner` (декомпозиция миссии), `pipeline-executor`, `pipeline-controller`
   (включая реакцию на `task_stalled`), `pipeline-reviewer`, `pipeline-browser-bridge`, `pipeline-qwen-worker`.
+
+## База знаний проекта (revit-skills)
+
+- Общая база знаний по Revit-плагинам — репозиторий `strahser/revit-skills` (wiki + общие скилы),
+  смотри скилл `knowledge-base`. Ссылка: `references.revit-skills` в `opencode.json`.
+- Локально: `D:\Projects\revit-skills\` (рабочий ПК: `E:\ПлагиныРевит\revit-skills\`), ветка `main`.
+- Wiki: `.opencode\wiki\` — архитектура, форматы, паттерны, MCP; читай `index.md` перед Revit-задачами.
+- Общие скилы (не привязаны к агентам конвейера): `.opencode\skills\` — revit-api, revit-testing,
+  revit-3d-export, threejs-viewer, cloud-ai-bridge и др. — справочник паттернов.
+- **Правила пополнения** (обязательны для агентов): новое стабильное знание → запись в wiki
+  revit-skills (не только в отчёт по задаче); коммиты `docs:` / `agent/A-NN: wiki: ...` делает
+  контролёр; ссылки относительные; `index.md` обновлять при добавлении страницы.
+- Не дублировать: dev-pipeline — задачи/отчёты/вердикты, revit-skills — знания.

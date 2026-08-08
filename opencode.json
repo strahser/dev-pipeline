@@ -4,44 +4,54 @@
   "skills": {
     "paths": ["./skills"]
   },
+  "references": {
+    "revit-skills": {
+      "repository": "strahser/revit-skills",
+      "branch": "main",
+      "description": "Общая база знаний по Revit-плагинам: .opencode/wiki/ (clean-architecture-v10, revit-export, mcp-servers, project-structure) + общие скилы .opencode/skills/ (revit-api, revit-testing, revit-3d-export, threejs-viewer, cloud-ai-bridge). Локально: D:\\Projects\\revit-skills (рабочий ПК: E:\\ПлагиныРевит\\revit-skills). Смотри скилл knowledge-base для правил пополнения."
+    }
+  },
   "agent": {
     "controller": {
       "description": "Контролёр/планировщик конвейера dev-pipeline (Агент-1): диспатч задач, вердикты, руководство процессом. Use when dispatching tasks, reviewing reports, issuing verdicts, or running pipeline automaton.",
       "mode": "all",
-      "prompt": "Ты — Агент-1 (контролёр/планировщик) конвейера dev-pipeline. Смотри скилл pipeline-controller. Не выполняй задачи исполнителя сам: оформляй, проверяй, ставь вердикты.",
+      "prompt": "Ты — Агент-1 (контролёр/планировщик) конвейера dev-pipeline. Смотри скилл pipeline-controller. Не выполняй задачи исполнителя сам: оформляй, проверяй, ставь вердикты. Пополняй базу знаний (knowledge-base) по фактам из вердиктов.",
       "permission": {
         "skill": {
           "*": "deny",
           "pipeline-controller": "allow",
           "architect-review": "allow",
-          "planning-with-files": "allow"
+          "planning-with-files": "allow",
+          "knowledge-base": "allow"
         }
       }
     },
     "executor": {
       "description": "Исполнитель конвейера dev-pipeline (Агент-2): выполнение задач A-NN, правки кода, отчёты с доказательствами. Use when a task file Tasks\\Активные\\A-NN_*.md appears with статус: open, or when asked to execute a task and write a report.",
       "mode": "all",
-      "prompt": "Ты — Агент-2 (исполнитель) конвейера dev-pipeline. Смотри скилл pipeline-executor: возьми задачу, примени изменения, собери, протестируй, напиши отчёт с доказательствами. Не коммить сам.",
+      "prompt": "Ты — Агент-2 (исполнитель) конвейера dev-pipeline. Смотри скилл pipeline-executor: возьми задачу, примени изменения, собери, протестируй, напиши отчёт с доказательствами. Не коммить сам. Для Revit-контекста — смотри knowledge-base (wiki revit-skills); новые знания записывай туда.",
       "permission": {
         "skill": {
           "*": "deny",
           "pipeline-executor": "allow",
           "solid-principles": "allow",
           "software-architecture": "allow",
-          "planning-with-files": "allow"
+          "planning-with-files": "allow",
+          "knowledge-base": "allow"
         }
       }
     },
     "reviewer": {
       "description": "Независимый ревьюер конвейера dev-pipeline: проверка соответствия задачи факту (git diff/status/log, тесты, доказательства), вердикт PASS/NEEDS_CHANGES/FAIL. Read-only: не изменяет исходный код. Use when asked to review a completed task.",
       "mode": "all",
-      "prompt": "Ты — независимый ревьюер конвейера dev-pipeline. Смотри скилл pipeline-reviewer: проверяй факты через git и логи, не доверяй отчёту на слово, фиксируй вердикт. Read-only.",
+      "prompt": "Ты — независимый ревьюер конвейера dev-pipeline. Смотри скилл pipeline-reviewer: проверяй факты через git и логи, не доверяй отчёту на слово, фиксируй вердикт. Read-only. Проверяй соответствие знаний wiki (knowledge-base) факту кода.",
       "permission": {
         "skill": {
           "*": "deny",
           "pipeline-reviewer": "allow",
           "solid-principles": "allow",
-          "architect-review": "allow"
+          "architect-review": "allow",
+          "knowledge-base": "allow"
         }
       }
     },
@@ -53,7 +63,8 @@
         "skill": {
           "*": "deny",
           "pipeline-planner": "allow",
-          "planning-with-files": "allow"
+          "planning-with-files": "allow",
+          "knowledge-base": "allow"
         }
       }
     },
@@ -71,13 +82,14 @@
     "qwen-worker": {
       "description": "Бесплатный рабочий dev-pipeline: тонкий локальный агент + делегирование тяжёлой генерации кода облачному Qwen через qwen_bridge. Use when a task needs heavy code generation and the local model should delegate file writing to cloud Qwen.",
       "mode": "all",
-      "prompt": "Ты — локальный рабочий dev-pipeline. Смотри скилл pipeline-qwen-worker: формулируй задачу, отправляй контекст в Qwen, применяй FILE:-блоки, собирай и проверяй.",
+      "prompt": "Ты — локальный рабочий dev-pipeline. Смотри скилл pipeline-qwen-worker: формулируй задачу, отправляй контекст в Qwen, применяй FILE:-блоки, собирай и проверяй. Для Revit-контекста — смотри knowledge-base (wiki revit-skills).",
       "permission": {
         "skill": {
           "*": "deny",
           "pipeline-qwen-worker": "allow",
           "solid-principles": "allow",
-          "software-architecture": "allow"
+          "software-architecture": "allow",
+          "knowledge-base": "allow"
         }
       }
     },
