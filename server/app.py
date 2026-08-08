@@ -1103,6 +1103,33 @@ async def api_sessions_live(minutes: int = 15):
     return out
 
 
+@app.post("/api/sessions/live/{sid}/kill")
+async def api_sessions_live_kill(sid: str):
+    """Убить/удалить сессию opencode (opencode session delete <sid>).
+    Возвращает {ok, sid, error}."""
+    import shutil
+    import subprocess
+    from pipeline.proc import no_window_flags
+    oc = os.environ.get("OPENCODE_CMD") or ""
+    if oc and os.path.exists(oc):
+        pass
+    elif os.name == "nt":
+        cand = Path(os.environ.get("APPDATA", "")) / "npm" / "opencode.cmd"
+        oc = str(cand) if cand.exists() else shutil.which("opencode.cmd") or "opencode"
+    else:
+        oc = shutil.which("opencode") or "opencode"
+    try:
+        r = subprocess.run([oc, "session", "delete", sid],
+                           capture_output=True, text=True, encoding="utf-8",
+                           errors="replace", timeout=60,
+                           creationflags=no_window_flags())
+        ok = r.returncode == 0
+        return {"ok": ok, "sid": sid,
+                "error": None if ok else (r.stderr or r.stdout or f"rc={r.returncode}")[:300]}
+    except Exception as e:
+        return JSONResponse(status_code=500, content={"ok": False, "sid": sid, "error": str(e)})
+
+
 @app.get("/api/inbox")
 async def api_inbox(limit: int = 200):
     msgs = []

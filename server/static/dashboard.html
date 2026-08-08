@@ -1105,6 +1105,14 @@ function liveBadge(ageSec){
   if (ageSec < 3600) return '<span class="badge warn">idle '+(ageSec/60).toFixed(0)+' мин</span>';
   return '<span class="badge">idle '+(ageSec/3600).toFixed(1)+' ч</span>';
 }
+async function liveSessionKill(sid, title){
+  if (!confirm('Удалить сессию opencode '+sid+'?\n'+(title||'')+'\nПроцесс будет завершён, история удалена.')) return;
+  try {
+    const r = await (await fetch('/api/sessions/live/'+encodeURIComponent(sid)+'/kill', {method:'POST'})).json();
+    alert(r.ok ? 'Сессия удалена' : 'Ошибка: '+(r.error||'?'));
+    loadSessions();
+  } catch(e){ alert('Ошибка: '+e); }
+}
 function loadLiveSessions(){
   return fetch('/api/sessions/live?minutes=60')
     .then(r=>r.json())
@@ -1150,14 +1158,19 @@ function loadSessions(){
         '<th style="text-align:left;padding:6px 8px;color:var(--muted)">Сессия</th>'+
         '<th style="text-align:left;padding:6px 8px;color:var(--muted)">Каталог</th>'+
         '<th style="text-align:left;padding:6px 8px;color:var(--muted)">Состояние</th>'+
-        '<th style="text-align:left;padding:6px 8px;color:var(--muted)">Обновлена</th></tr></thead><tbody>';
+        '<th style="text-align:left;padding:6px 8px;color:var(--muted)">Обновлена</th>'+
+        '<th style="padding:6px 8px"></th></tr></thead><tbody>';
       for (const s of live){
         const dir = (s.directory||'').split('/').slice(-2).join('/');
+        const dead = (s.age_sec||0) > 600;  // > 10 мин без обновления — мёртвая
         html += '<tr>'+
           '<td style="padding:6px 8px;border-top:1px solid var(--border)">'+esc((s.title||s.slug||s.id||'')+'').slice(0,60)+'</td>'+
           '<td style="padding:6px 8px;border-top:1px solid var(--border);color:var(--muted)">'+esc(dir)+'</td>'+
           '<td style="padding:6px 8px;border-top:1px solid var(--border)">'+liveBadge(s.age_sec)+'</td>'+
-          '<td style="padding:6px 8px;border-top:1px solid var(--border);color:var(--muted)">'+sessionAge(new Date((s.time_updated||Date.now())).toISOString())+'</td></tr>';
+          '<td style="padding:6px 8px;border-top:1px solid var(--border);color:var(--muted)">'+sessionAge(new Date((s.time_updated||Date.now())).toISOString())+'</td>'+
+          '<td style="padding:6px 8px;border-top:1px solid var(--border);text-align:right">'+
+            (dead ? '<button class="danger" style="padding:3px 8px;font-size:12px" onclick="liveSessionKill(\''+s.id+'\',\''+esc((s.title||'').replace(/'/g,"\\'"))+'\')">🗑 Убить</button>' : '<span class="muted" style="font-size:11px">активна</span>')+
+          '</td></tr>';
       }
       html += '</tbody></table>';
     }
