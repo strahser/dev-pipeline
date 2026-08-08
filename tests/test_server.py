@@ -508,6 +508,40 @@ class TestAppAPI(unittest.TestCase):
         r = self.client.post("/api/requests/R-NOPE/dispatch")
         self.assertEqual(r.status_code, 404)
 
+    def test_tdl_load_periods(self):
+        """Загруженность: /api/tdl/load по периодам (day/week/month) — корректные бакеты."""
+        import tempfile, shutil
+        from pipeline.config import ProjectConfig
+        tmp = Path(tempfile.mkdtemp(prefix="load_"))
+        for sub in ("Tasks/JSON/Active", "Tasks/JSON/Reports"):
+            (tmp / sub).mkdir(parents=True)
+        from pipeline.tdl._tpl import make_task
+        from pipeline.tdl import store as tdl_store
+        cfg = ProjectConfig(name="_load", root=tmp)
+        t = make_task("A-01", "_load", "Задача", "1.1", goal="ц", acceptance=["к"],
+                      commands=["b"])
+        t["status"] = "done"
+        t["dates"]["start"] = "2026-08-06"
+        t["dates"]["finish"] = "2026-08-06"
+        t["dates"]["duration_sec"] = 4 * 3600  # 4 ч в один день
+        tdl_store.save_task(cfg, t)
+        tdl_store.rebuild_index(cfg)
+        old = app_mod.load_config
+        app_mod.load_config = lambda name: cfg
+        try:
+            for period in ("day", "week", "month"):
+                r = self.client.get("/api/tdl/load",
+                                    params={"project": "_load", "period": period,
+                                            "buckets": 14})
+                self.assertEqual(r.status_code, 200, period)
+                buckets = r.json()["buckets"]
+                self.assertTrue(buckets, period)
+                total = sum(b["fact_h"] for b in buckets)
+                self.assertAlmostEqual(total, 4.0, delta=0.2, msg=period)
+        finally:
+            app_mod.load_config = old
+            shutil.rmtree(tmp, ignore_errors=True)
+
 
 class TestSSEStream(unittest.TestCase):
     """SSE-поток через реальный uvicorn-сервер (детерминировано, как вручную)."""

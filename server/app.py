@@ -792,6 +792,12 @@ def _parse_iso_dt(v) -> datetime.datetime | None:
         return None
 
 
+def _has_time(v) -> bool:
+    """Есть ли в значении время (ISO-момент), а не только дата."""
+    s = str(v or "").strip()
+    return "T" in s or (":" in s and " " in s)
+
+
 def _duration_sec(start, finish) -> int | None:
     s = _parse_iso_dt(start)
     f = _parse_iso_dt(finish)
@@ -895,6 +901,173 @@ async def api_tdl_durations(project: str = ""):
             "over_plan": over_count,
         },
     }
+
+
+@app.get("/api/tdl/load")
+async def api_tdl_load(project: str = "", period: str = "day", buckets: int = 14):
+    """Примерная загруженность (план vs факт, в часах) по периодам.
+
+    period: day — последние N дней; week — последние N недель; month — по месяцам.
+    Факт: duration_sec задач, размазанный равномерно по дням start→finish
+    (или start→now для незавершённых). План: estimate_sec аналогично."""
+    import datetime as _dt
+    from pipeline.tdl import store as tdl_store
+    project = project or (list_projects() or [""])[0]
+    try:
+        cfg = load_config(project)
+    except ConfigError:
+        return {"project": project, "buckets": [], "period": period}
+
+    idx = tdl_store.load_index(cfg) or {"tasks": []}
+    now = _dt.datetime.now()
+
+    def norm(dt):
+        return dt if dt.tzinfo is None else dt.astimezone().replace(tzinfo=None)
+
+    def parse(v):
+        if not v:
+            return None
+        try:
+            return norm(_parse_iso_dt(v))
+        except Exception:
+            return None
+
+    # 1) собрать задачи с длительностью (done: duration_sec; в работе: start->now)
+    tasks = []
+    for e in idx.get("tasks", []):
+        t = tdl_store.load_task(cfg, e.get("task_id", "")) or {}
+        dates = t.get("dates", {}) or {}
+        start = parse(dates.get("start"))
+        finish = parse(dates.get("finish"))
+        est = dates.get("estimate_sec")
+        is_dates = not _has_time(dates.get("start"))  # start задан датой (не ISO)
+        if t.get("status") == "done":
+            dur = dates.get("duration_sec")
+            if not dur and start and finish:
+                dur = max(0, int((finish - start).total_seconds()))
+        else:
+            dur = max(0, int((now - start).total_seconds())) if start else None
+        if not dur:
+            continue
+        if not start:
+            # нет start: берём issued 09:00 (или finish-день) как начало работы
+            start = parse(dates.get("issued")) or finish
+            if start:
+                start = start.replace(hour=9, minute=0, second=0)
+                is_dates = True
+        if not start:
+            continue
+        end = finish or now
+        if is_dates and finish:
+            end = finish + _dt.timedelta(days=1)  # даты: finish = последний день работы
+        if end <= start:
+            end = start + _dt.timedelta(days=1)  # один день работы
+        tasks.append({"start": start, "end": end, "dur": dur, "est": est,
+                      "is_dates": is_dates})
+
+    # 2) бакеты по периоду
+    def day_key(dt):
+        return dt.date().isoformat()
+
+    def bucket_label(dt, period):
+        if period == "day":
+            return dt.date().isoformat()
+        if period == "week":
+            monday = dt.date() - _dt.timedelta(days=dt.date().weekday())
+            return monday.isoformat()
+        return dt.strftime("%Y-%m")
+
+    buckets_out = []
+    if period == "day":
+        dates = [(now - _dt.timedelta(days=i)) for i in range(buckets - 1, -1, -1)]
+        for d in dates:
+            buckets_out.append({"label": day_key(d), "fact_h": 0, "plan_h": 0})
+    elif period == "week":
+        # последние N недель, начиная с понедельника текущей
+        monday = now.date() - _dt.timedelta(days=now.date().weekday())
+        weeks = [(monday - _dt.timedelta(days=7 * i)) for i in range(buckets - 1, -1, -1)]
+        for w in weeks:
+            buckets_out.append({"label": w.isoformat(), "fact_h": 0, "plan_h": 0})
+    else:  # month
+        cur = _dt.date(now.year, now.month, 1)
+        months = []
+        y, m = cur.year, cur.month
+        for _ in range(buckets):
+            months.append(_dt.date(y, m, 1))
+            m -= 1
+            if m == 0:
+                m, y = 12, y - 1
+        for mo in reversed(months):
+            buckets_out.append({"label": mo.strftime("%Y-%m"), "fact_h": 0, "plan_h": 0})
+
+    # 3) размазать длительность по бакетам
+    def overlaps(t0, t1, bucket_start, bucket_end):
+        s = max(t0, bucket_start)
+        e = min(t1, bucket_end)
+        return max(0, (e - s).total_seconds()) if e > s else 0
+
+    for t in tasks:
+        if t["is_dates"]:
+            # даты без времени: duration = рабочие часы, раскидываем равномерно
+            # по календарным дням диапазона (start..end)
+            span_days = max(1, (t["end"].date() - t["start"].date()).days)
+            per_day = t["dur"] / span_days / 3600
+            for b in buckets_out:
+                if period == "day":
+                    bs = _dt.datetime.fromisoformat(b["label"] + "T00:00:00")
+                    if bs.date() < t["start"].date() or bs.date() >= t["end"].date():
+                        continue
+                    b["fact_h"] += per_day
+                    if t["est"]:
+                        b["plan_h"] += t["est"] / span_days / 3600
+                elif period == "week":
+                    bs = _dt.datetime.fromisoformat(b["label"] + "T00:00:00")
+                    be = bs + _dt.timedelta(days=7)
+                    days_in = max(0, (min(t["end"].date(), be.date())
+                                      - max(t["start"].date(), bs.date())).days)
+                    if days_in <= 0:
+                        continue
+                    b["fact_h"] += per_day * days_in
+                    if t["est"]:
+                        b["plan_h"] += t["est"] / span_days / 3600 * days_in
+                else:
+                    bs = _dt.datetime.fromisoformat(b["label"] + "-01T00:00:00")
+                    if bs.month == 12:
+                        be = _dt.datetime(bs.year + 1, 1, 1)
+                    else:
+                        be = _dt.datetime(bs.year, bs.month + 1, 1)
+                    days_in = max(0, (min(t["end"].date(), be.date())
+                                      - max(t["start"].date(), bs.date())).days)
+                    if days_in <= 0:
+                        continue
+                    b["fact_h"] += per_day * days_in
+                    if t["est"]:
+                        b["plan_h"] += t["est"] / span_days / 3600 * days_in
+            continue
+        for b in buckets_out:
+            if period == "day":
+                bs = _dt.datetime.fromisoformat(b["label"] + "T00:00:00")
+                be = bs + _dt.timedelta(days=1)
+            elif period == "week":
+                bs = _dt.datetime.fromisoformat(b["label"] + "T00:00:00")
+                be = bs + _dt.timedelta(days=7)
+            else:
+                bs = _dt.datetime.fromisoformat(b["label"] + "-01T00:00:00")
+                if bs.month == 12:
+                    be = _dt.datetime(bs.year + 1, 1, 1)
+                else:
+                    be = _dt.datetime(bs.year, bs.month + 1, 1)
+            # доля длительности, попавшая в бакет
+            total_sec = max(1, (t["end"] - t["start"]).total_seconds())
+            share = overlaps(t["start"], t["end"], bs, be) / total_sec
+            b["fact_h"] += t["dur"] * share / 3600
+            if t["est"]:
+                b["plan_h"] += t["est"] * share / 3600
+
+    for b in buckets_out:
+        b["fact_h"] = round(b["fact_h"], 1)
+        b["plan_h"] = round(b["plan_h"], 1)
+    return {"project": project, "period": period, "buckets": buckets_out}
 
 
 # --- Потребление токенов (opencode.db: session.tokens_*) ------------------

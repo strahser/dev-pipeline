@@ -244,6 +244,14 @@ pre.json { background:var(--code); border:1px solid var(--border); border-radius
       <h2>⏱ Длительность задач (план vs факт)</h2>
       <button class="close" onclick="closeDurations()">✕ Закрыть</button>
     </header>
+    <div style="display:flex;gap:8px;align-items:center;padding:10px 4px 2px">
+      <span style="font-size:12px;color:var(--muted)">📊 Загруженность:</span>
+      <button class="load-period" data-p="day" onclick="setLoadPeriod('day')" style="background:var(--accent);color:#0b0f17;border:none;border-radius:6px;padding:4px 12px;font-size:12.5px;cursor:pointer">День</button>
+      <button class="load-period" data-p="week" onclick="setLoadPeriod('week')" style="background:var(--panel2);color:var(--text);border:1px solid var(--border);border-radius:6px;padding:4px 12px;font-size:12.5px;cursor:pointer">Неделя</button>
+      <button class="load-period" data-p="month" onclick="setLoadPeriod('month')" style="background:var(--panel2);color:var(--text);border:1px solid var(--border);border-radius:6px;padding:4px 12px;font-size:12.5px;cursor:pointer">Месяц</button>
+      <span style="margin-left:auto;font-size:11.5px;color:var(--muted)" id="loadInfo"></span>
+    </div>
+    <div style="padding:4px 4px 8px"><canvas id="loadChart" width="940" height="200" style="width:100%;height:200px;background:var(--code);border:1px solid var(--border);border-radius:8px"></canvas></div>
     <div id="durationsBody"><div class="empty">Загрузка…</div></div>
   </div>
 </div>
@@ -663,10 +671,23 @@ function closeTokens(){ $('tokenOverlay').classList.remove('show'); }
 $('tokenOverlay').addEventListener('click', e=>{ if (e.target===$('tokenOverlay')) closeTokens(); });
 
 /* --- Модальное окно: длительность задач (план vs факт) --- */
+let loadPeriod = 'day';
 function openDurations(){
   $('durationsOverlay').classList.add('show');
   $('durationsBody').innerHTML = '<div class="empty">Загрузка…</div>';
+  loadPeriod = 'day';
+  setLoadPeriod('day', true);
   loadDurations();
+}
+function setLoadPeriod(p, skipDraw){
+  loadPeriod = p;
+  document.querySelectorAll('.load-period').forEach(b=>{
+    const on = b.dataset.p === p;
+    b.style.background = on ? 'var(--accent)' : 'var(--panel2)';
+    b.style.color = on ? '#0b0f17' : 'var(--text)';
+    b.style.borderColor = on ? 'var(--accent)' : 'var(--border)';
+  });
+  if (!skipDraw) loadLoadChart();
 }
 function closeDurations(){ $('durationsOverlay').classList.remove('show'); }
 $('durationsOverlay').addEventListener('click', e=>{ if (e.target===$('durationsOverlay')) closeDurations(); });
@@ -721,6 +742,58 @@ async function loadDurations(){
     '<th style="padding:6px 8px">Статус</th></tr></thead>'+
     '<tbody>'+body+'</tbody></table></div>'+
     '<div class="muted" style="margin-top:8px;font-size:11.5px">План — estimate_sec из TDL (задаётся при tdl-plan); факт — duration_sec (start→finish при tdl-verify) или время в работе. Красным — превышение плана более чем на 50%.</div>';
+}
+
+/* Загруженность: план vs факт по дням/неделям/месяцам (canvas) */
+async function loadLoadChart(){
+  const cv = $('loadChart');
+  if (!cv) return;
+  let d;
+  try {
+    const buckets = loadPeriod==='month' ? 8 : 14;
+    d = await get('/api/tdl/load?project='+encodeURIComponent(activeProject)+'&period='+loadPeriod+'&buckets='+buckets);
+  } catch(e){ return; }
+  drawLoadChart(d.buckets || [], d.period || loadPeriod);
+}
+function drawLoadChart(buckets, period){
+  const cv = $('loadChart');
+  if (!cv) return;
+  const ctx = cv.getContext('2d');
+  const W = cv.width, H = cv.height, PAD = 44, BOT = 30;
+  const cw = W - PAD*2, ch = H - PAD - BOT;
+  ctx.clearRect(0,0,W,H);
+  ctx.fillStyle = '#0b0e14'; ctx.fillRect(0,0,W,H);
+  if (!buckets.length){ ctx.fillStyle='#9aa2b5'; ctx.font='13px system-ui'; ctx.fillText('нет данных за период', PAD, H/2); return; }
+  const max = Math.max(1, ...buckets.map(b=>Math.max(b.fact_h, b.plan_h||0)));
+  const n = buckets.length;
+  const step = cw / n;
+  const bw = Math.min(34, step*0.6);
+  // сетка
+  ctx.strokeStyle = '#2a2f42'; ctx.fillStyle = '#9aa2b5'; ctx.font='11px system-ui';
+  for (let g=0; g<=4; g++){
+    const y = PAD + ch - ch*g/4;
+    ctx.beginPath(); ctx.moveTo(PAD,y); ctx.lineTo(W-PAD,y); ctx.stroke();
+    ctx.fillText(Math.round(max*g/4)+' ч', 4, y+4);
+  }
+  // легенда
+  ctx.fillStyle = '#6ea8ff'; ctx.fillRect(W-150, 12, 12, 12);
+  ctx.fillStyle = '#9aa2b5'; ctx.fillText('план', W-134, 22);
+  ctx.fillStyle = '#4ade80'; ctx.fillRect(W-94, 12, 12, 12);
+  ctx.fillStyle = '#9aa2b5'; ctx.fillText('факт', W-78, 22);
+  buckets.forEach((b,i)=>{
+    const x = PAD + i*step + (step-bw)/2;
+    const base = PAD + ch;
+    const hP = (b.plan_h||0)/max*ch, hF = b.fact_h/max*ch;
+    if (hP>0){ ctx.fillStyle='#6ea8ff'; ctx.fillRect(x, base-hP, bw, hP); }
+    if (hF>0){ ctx.fillStyle='#4ade80'; ctx.fillRect(x, base-hF, bw, hF); }
+    // подпись
+    ctx.fillStyle = '#9aa2b5'; ctx.textAlign='center';
+    const lbl = period==='month' ? b.label.slice(0,7) : (b.label.length>10 ? b.label.slice(5) : b.label);
+    ctx.fillText(lbl, x+bw/2, H-8);
+    // значение факта сверху (если больше 0)
+    if (hF>8){ ctx.fillStyle='#4ade80'; ctx.fillText(String(b.fact_h), x+bw/2, base-hF-4); }
+  });
+  $('loadInfo').textContent = 'пик: '+Math.round(max)+' ч/период';
 }
 
 async function loadTokens(){
