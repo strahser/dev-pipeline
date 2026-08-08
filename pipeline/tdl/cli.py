@@ -13,6 +13,13 @@ from .schema import REPORT_STATUSES
 from ..models import failed_test_names_vstest
 
 
+def _now_iso_local() -> str:
+    """Текущий момент (локальный, без tz) — для точной длительности задач.
+    Дата-метки (YYYY-MM-DD) дают длительность в целых днях — не годится."""
+    import datetime as _dt
+    return _dt.datetime.now().replace(microsecond=0).isoformat(sep=" ")
+
+
 def _task_or_die(cfg, task_id: str) -> dict:
     t = store.load_task(cfg, task_id)
     if not t:
@@ -100,7 +107,7 @@ def tdl_start(cfg, args) -> int:
     t["status_display"] = "Открыто"
     dates = t.setdefault("dates", {})
     if not dates.get("start"):
-        dates["start"] = store.today()
+        dates["start"] = _now_iso_local()
     _append_history(t, "subagent", "workflow_state_changed", workflow_state="in_progress",
                     details="Исполнитель взял задачу.")
     store.save_task(cfg, t)
@@ -155,7 +162,7 @@ def tdl_verify(cfg, args) -> int:
         t["workflow_state"] = "verified"
         t["status_display"] = "Выполнено"
         dates = t.setdefault("dates", {})
-        dates["finish"] = store.today()
+        dates["finish"] = _now_iso_local()
         dates["duration_sec"] = _duration_sec(dates.get("start"), dates["finish"])
         _append_history(t, "controller", "status_changed", from_="open", to="done",
                         details=f"Вердикт {verdict['verdict_id']}: pass")
@@ -236,7 +243,7 @@ def tdl_close_summaries(cfg, args) -> int:
             task["status_display"] = "Выполнено"
             dates = task.setdefault("dates", {})
             if not dates.get("finish"):
-                dates["finish"] = store.today()
+                dates["finish"] = _now_iso_local()
             store.save_task(cfg, task)
             closed += 1
             print(f"  {t['task_id']} [{t.get('wbs_code')}]: summary закрыта "
@@ -459,6 +466,52 @@ def _duration_sec(start, finish) -> int | None:
     if s is None or f is None:
         return None
     return max(0, int((f - s).total_seconds()))
+
+
+def _is_iso_moment(v) -> bool:
+    """Является ли значение моментом времени (есть время), а не просто датой."""
+    s = str(v or "").strip()
+    return "T" in s or " " in s and ":" in s
+
+
+def fix_date_durations(cfg, args=None) -> int:
+    """Пересчитать duration_sec задач, у которых start/finish записаны ДАТАМИ
+    (YYYY-MM-DD, без времени) или start отсутствует — длительность получалась
+    в целых днях (1 дн / 0 с) или вовсе пустой.
+
+    Для дат: рабочий день 8 ч, если дни разные; 4 ч — если в один день.
+    Без start: от issued 09:00 (или date файла) до finish.
+    Возвращает количество пересчитанных задач."""
+    fixed = 0
+    for t in store.list_all_tasks(cfg):
+        dates = t.get("dates") or {}
+        start, finish = dates.get("start"), dates.get("finish")
+        if t.get("status") != "done":
+            continue
+        if _is_iso_moment(start) and _is_iso_moment(finish):
+            continue  # уже моменты времени — не трогаем
+        s = _parse_dt(start)
+        f = _parse_dt(finish)
+        if f is None:
+            continue
+        if s is None:
+            # нет start: берём issued (или дату файла) с 09:00
+            base = _parse_dt(dates.get("issued")) or f
+            s = base.replace(hour=9, minute=0, second=0)
+            if s > f:
+                s = f.replace(hour=0, minute=0, second=0)
+        days = (f.date() - s.date()).days
+        if days <= 0:
+            dur = 4 * 3600          # один день — оценочно 4 ч работы
+        elif days >= 1:
+            dur = min(days, 5) * 8 * 3600   # рабочие дни по 8 ч (не календарные)
+        dates["duration_sec"] = dur
+        store.save_task(cfg, t)
+        fixed += 1
+    if fixed:
+        store.rebuild_index(cfg)
+    print(f"TDL-FIX-DURATIONS: пересчитано {fixed} задач (даты -> рабочие часы)")
+    return fixed
 
 
 def _estimate_sec(v) -> int | None:

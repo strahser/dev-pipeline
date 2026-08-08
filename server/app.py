@@ -827,9 +827,15 @@ async def api_tdl_durations(project: str = ""):
         p = prefix(w)
         return sorted((x for x in wbs_set if x.startswith(p)), key=lambda s: [int(v) for v in s.split(".")])
 
+    def all_descendants_wbs(w):
+        """Все потомки по WBS (не только прямые): 2 -> 2.1, 2.1.1, 2.1.1.1..."""
+        p = prefix(w)
+        return sorted((x for x in wbs_set if x.startswith(p)), key=lambda s: [int(v) for v in s.split(".")])
+
     def child_sum(w, field):
+        """Сумма field по всем потомкам (листьям) summary-задачи."""
         total = 0
-        for c in children_wbs(w):
+        for c in all_descendants_wbs(w):
             v = by_wbs[c].get("dates", {}).get(field)
             if v:
                 total += v

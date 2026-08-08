@@ -200,3 +200,19 @@ def load_index(cfg) -> dict | None:
     if not ip.exists():
         return None
     return _read_json(ip)
+
+
+def list_all_tasks(cfg) -> list[dict]:
+    """Все TDL-задачи проекта (Active), по возрастанию wbs."""
+    ad = active_dir(cfg)
+    if not ad.is_dir():
+        return []
+    tasks = []
+    for f in sorted(ad.glob("*.task.json")):
+        try:
+            t = _read_json(f)
+        except Exception:
+            continue
+        if t:
+            tasks.append(t)
+    return tasks

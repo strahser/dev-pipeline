@@ -317,6 +317,42 @@ class TestDurations(unittest.TestCase):
         self.assertIsNone(_duration_sec(None, "2026-08-07"))
         self.assertIsNone(_duration_sec("2026-08-06", "не дата"))
 
+    def test_now_iso_local_has_time(self):
+        """start/finish должны быть моментами (с временем), а не датами — иначе
+        длительность считается в целых днях."""
+        from pipeline.tdl.cli import _now_iso_local, _is_iso_moment
+        s = _now_iso_local()
+        self.assertIn(":", s)
+        self.assertTrue(_is_iso_moment(s))
+        self.assertFalse(_is_iso_moment("2026-08-06"))
+
+    def test_fix_date_durations(self):
+        """fix_date_durations: даты -> рабочие часы (не целые дни)."""
+        import argparse
+        from pipeline.tdl import cli as tdl_cli
+        with tempfile.TemporaryDirectory() as tmp:
+            cfg = _cfg(tmp)
+            t = make_task("A-01", "_tdl", "Задача", "1.1", goal="ц", acceptance=["к"],
+                          commands=["b"])
+            t["status"] = "done"
+            t["dates"]["start"] = "2026-08-06"
+            t["dates"]["finish"] = "2026-08-07"
+            t["dates"]["duration_sec"] = 86400
+            store.save_task(cfg, t)
+            # без start: issued -> finish
+            t2 = make_task("A-02", "_tdl", "Задача2", "1.2", goal="ц", acceptance=["к"],
+                           commands=["b"])
+            t2["status"] = "done"
+            t2["dates"]["issued"] = "2026-08-06"
+            t2["dates"]["finish"] = "2026-08-07"
+            store.save_task(cfg, t2)
+            n = tdl_cli.fix_date_durations(cfg)
+            self.assertEqual(n, 2)
+            t = store.load_task(cfg, "A-01")
+            self.assertEqual(t["dates"]["duration_sec"], 8 * 3600)  # 1 рабочий день = 8 ч
+            t2 = store.load_task(cfg, "A-02")
+            self.assertEqual(t2["dates"]["duration_sec"], 8 * 3600)
+
     def test_render_task_card_durations(self):
         from pipeline.tdl import render
         t = make_task("A-50", "P", "Задача", "2.1", goal="ц", acceptance=["к"],

@@ -314,6 +314,7 @@ def main(argv=None):
                      ("tdl-index", tdl_cli.tdl_index),
                      ("tdl-tree", tdl_cli.tdl_tree),
                      ("tdl-close-summaries", tdl_cli.tdl_close_summaries),
+                     ("tdl-fix-durations", tdl_cli.fix_date_durations),
                      ("tdl-status", tdl_cli.tdl_status)]:
         p = sub.add_parser(name); add_project(p)
         if name == "tdl-dispatch":
