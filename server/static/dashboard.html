@@ -210,6 +210,7 @@ pre.json { background:var(--code); border:1px solid var(--border); border-radius
   <h1>dev-pipeline · Панель конвейера</h1>
   <select id="projectSelect" style="background:var(--panel);color:var(--text);border:1px solid var(--border);border-radius:8px;padding:6px 10px;font-size:13px;"></select>
   <button onclick="openChat()" title="Чат с агентами" style="background:var(--panel);color:var(--text);border:1px solid var(--border);border-radius:8px;padding:6px 12px;font-size:13px;cursor:pointer;">💬 Чат</button>
+  <button onclick="openSessions()" title="Явные сессии субагентов" style="background:var(--panel);color:var(--text);border:1px solid var(--border);border-radius:8px;padding:6px 12px;font-size:13px;cursor:pointer;">🗂 Сессии</button>
   <span class="status" id="status">…</span>
 </header>
 <main id="content">
@@ -275,6 +276,20 @@ pre.json { background:var(--code); border:1px solid var(--border); border-radius
     </div>
   </div>
   <div class="chat-resize" id="chatResize" title="Изменить размер (сохраняется)"></div>
+</div>
+
+<div class="overlay" id="sessionsOverlay">
+  <div class="modal" style="max-width:1100px" id="sessionsModal">
+    <header>
+      <h2>🗂 Сессии субагентов</h2>
+      <button class="close" onclick="closeSessions()">✕ Закрыть</button>
+    </header>
+    <div class="chat-actions">
+      <button onclick="loadSessions()">🔄 Обновить</button>
+      <span style="margin-left:auto;font-size:11.5px;color:var(--muted)" id="sessionsInfo"></span>
+    </div>
+    <div id="sessionsBody"><div class="empty">Загрузка…</div></div>
+  </div>
 </div>
 
 <script src="/static/vendor/jquery.min.js"></script>
@@ -1051,8 +1066,77 @@ async function chatRestart(){
 }
 
 /* Изменение размера панели (drag за угол) + сохранение в localStorage */
-function chatInitResize(){
-  const p = $('chatPanel'), rz = $('chatResize');
+/* --- Сессии субагентов (явные, общение через сервер) --- */
+let sessionsTimer = null;
+function openSessions(){
+  $('sessionsOverlay').classList.add('show');
+  $('sessionsBody').innerHTML = '<div class="empty">Загрузка…</div>';
+  loadSessions();
+  if (sessionsTimer) clearInterval(sessionsTimer);
+  sessionsTimer = setInterval(loadSessions, 15000);
+}
+function closeSessions(){
+  $('sessionsOverlay').classList.remove('show');
+  if (sessionsTimer){ clearInterval(sessionsTimer); sessionsTimer = null; }
+}
+$('sessionsOverlay').addEventListener('click', e=>{ if (e.target===$('sessionsOverlay')) closeSessions(); });
+
+function sessionBadge(st){
+  const m = {created:'badge', running:'badge ok', done:'badge ok', failed:'badge err', killed:'badge err', stalled:'badge warn'};
+  return '<span class="'+(m[st]||'badge')+'">'+esc(st||'?')+'</span>';
+}
+function sessionAge(ts){
+  if (!ts) return '—';
+  const d = (Date.now() - new Date(ts.replace(' ','T')).getTime())/1000;
+  if (d < 60) return Math.round(d)+' с';
+  if (d < 3600) return (d/60).toFixed(1)+' мин';
+  return (d/3600).toFixed(1)+' ч';
+}
+async function sessionKill(sid){
+  if (!confirm('Убить сессию '+sid+'?')) return;
+  try {
+    await fetch('/api/sessions/'+encodeURIComponent(sid)+'/kill', {method:'POST'});
+    loadSessions();
+  } catch(e){ alert('kill: '+e); }
+}
+function loadSessions(){
+  fetch('/api/sessions?project='+encodeURIComponent(currentProject||''))
+    .then(r=>r.json())
+    .then(list=>{
+      $('sessionsInfo').textContent = 'сессий: '+(list||[]).length;
+      if (!(list||[]).length){
+        $('sessionsBody').innerHTML = '<div class="empty">Сессий нет. Менеджер создаёт их при dispatch (task/mission).</div>';
+        return;
+      }
+      let html = '<table style="width:100%;border-collapse:collapse;font-size:13px"><thead><tr>'+
+        '<th style="text-align:left;padding:6px 8px;color:var(--muted)">Сессия</th>'+
+        '<th style="text-align:left;padding:6px 8px;color:var(--muted)">Задача</th>'+
+        '<th style="text-align:left;padding:6px 8px;color:var(--muted)">Роль</th>'+
+        '<th style="text-align:left;padding:6px 8px;color:var(--muted)">Статус</th>'+
+        '<th style="text-align:left;padding:6px 8px;color:var(--muted)">PID</th>'+
+        '<th style="text-align:left;padding:6px 8px;color:var(--muted)">Возраст</th>'+
+        '<th style="text-align:left;padding:6px 8px;color:var(--muted)">Заметка</th>'+
+        '<th style="padding:6px 8px"></th></tr></thead><tbody>';
+      for (const s of list){
+        html += '<tr>'+
+          '<td style="padding:6px 8px;border-top:1px solid var(--border);font-family:Consolas,monospace;font-size:12px">'+esc(s.id)+'</td>'+
+          '<td style="padding:6px 8px;border-top:1px solid var(--border)">'+(s.task?esc(s.task):'<span class="muted">—</span>')+'</td>'+
+          '<td style="padding:6px 8px;border-top:1px solid var(--border)">'+esc(s.role||'')+'</td>'+
+          '<td style="padding:6px 8px;border-top:1px solid var(--border)">'+sessionBadge(s.status)+'</td>'+
+          '<td style="padding:6px 8px;border-top:1px solid var(--border);font-family:Consolas,monospace;font-size:12px">'+(s.pid||'')+'</td>'+
+          '<td style="padding:6px 8px;border-top:1px solid var(--border)">'+sessionAge(s.created_at)+'</td>'+
+          '<td style="padding:6px 8px;border-top:1px solid var(--border);color:var(--muted);max-width:280px;overflow:hidden;text-overflow:ellipsis;white-space:nowrap" title="'+esc(s.note||s.error||'')+'">'+esc((s.note||s.error||'').slice(0,60))+'</td>'+
+          '<td style="padding:6px 8px;border-top:1px solid var(--border);text-align:right">'+
+            (s.status==='running'||s.status==='created' ? '<button class="danger" style="padding:3px 8px;font-size:12px" onclick="sessionKill(\''+s.id+'\')">⛔ Убить</button>' : '')+
+          '</td></tr>';
+      }
+      html += '</tbody></table>';
+      $('sessionsBody').innerHTML = html;
+    })
+    .catch(e=>{ $('sessionsBody').innerHTML = '<div class="empty">Ошибка: '+esc(String(e))+'</div>'; });
+}
+
+function chatInitResize(){  const p = $('chatPanel'), rz = $('chatResize');
   if (!p || !rz || rz.dataset.ready) return;
   rz.dataset.ready = '1';
   rz.addEventListener('mousedown', (e)=>{

@@ -13,6 +13,7 @@ from pathlib import Path
 
 from .config import ProjectConfig
 from .models import parse_tests_vstest
+from .proc import no_window_flags
 
 # ---------------------------------------------------------------------------
 # Низкоуровневые помощники
@@ -21,7 +22,8 @@ from .models import parse_tests_vstest
 def sh(cmd, timeout=1800, cwd=None):
     try:
         r = subprocess.run(cmd, capture_output=True, text=True, encoding="utf-8",
-                           errors="replace", timeout=timeout, cwd=cwd)
+                           errors="replace", timeout=timeout, cwd=cwd,
+                           creationflags=no_window_flags())
         return r.returncode, (r.stdout or "") + (r.stderr or "")
     except FileNotFoundError:
         return -1, f"КОМАНДА НЕ НАЙДЕНА: {cmd[0]}"

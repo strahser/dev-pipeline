@@ -20,6 +20,7 @@ MODULES = [
     "test_agents",
     "test_tdl",
     "test_qwen_bridge",
+    "test_session_e2e",
 ]
 
 

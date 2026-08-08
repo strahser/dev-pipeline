@@ -105,7 +105,8 @@ def _run_localassitent(question: str, out: str, input_file: Path, answers_file: 
            "--provider", "qwen", "--model", QWEN_MODEL,
            "--input", str(input_file), "--output", str(answers_file)]
     r = subprocess.run(cmd, cwd=QWEN_DIR, capture_output=True, text=True,
-                       encoding="utf-8", errors="replace", timeout=1200)
+                       encoding="utf-8", errors="replace", timeout=1200,
+                       creationflags=0 if os.name != "nt" else 0x08000000)
     response = ""
     if answers_file.exists():
         response = answers_file.read_text(encoding="utf-8", errors="replace")

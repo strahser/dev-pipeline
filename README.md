@@ -47,6 +47,7 @@ python -m pipeline.cli tdl-verify    <project> <A-NN>     # сборка+тес�
 python -m pipeline.cli tdl-tree      <project>            # дерево WBS
 python -m pipeline.cli tdl-status    <project>            # статусы
 python -m pipeline.cli tdl-validate  <project>            # проверка схемы
+python -m pipeline.cli tdl-close-summaries <project>      # summary закрываются при всех done-потомках
 ```
 
 Спецификация для `tdl-plan` — JSON/YAML:
@@ -95,6 +96,8 @@ python -X utf8 agents/agent_manager.py mission --project heatlossrevit2 ^
 
 - **Сервер** (heartbeat): зомби-агенты (нет heartbeat > `PIPELINE_WATCH_MAX_AGE`, default 90 с)
   → событие `agent_offline`. Период проверки — `PIPELINE_WATCH_INTERVAL` (default 30 с).
+- **Сессии**: серверный watchdog помечает `stalled` сессии без heartbeat
+  дольше `PIPELINE_SESSION_MAX_AGE` (default 300 с) + событие `session_stalled`.
 - **Сторож контролёра** (`agent_watch.py`): детектор `check_stalled` — задача в `in_progress`
   дольше порога без JSON-отчёта → пометка `stalled` в history + событие `task_stalled`.
   Порог: `--stall-timeout N` или env `TASK_STALL_TIMEOUT_SEC` (default 10800 = 3 ч).
@@ -133,6 +136,41 @@ python -X utf8 agents/agent_manager.py mission --project heatlossrevit2 ^
 - Heartbeat агентов передаёт `project`/`pid`/`cmd` (для kill/restart и фильтра по проекту);
   старые БД мигрируются автоматически (ALTER TABLE).
 
+## Явные сессии субагентов (общение через сервер)
+
+Субагенты исполнителей больше НЕ запускаются контролёром как слепые bash-субпроцессы
+`opencode run` с гигантским промптом. Вместо этого — **явные сессии**: сервер держит
+реестр сессий (`sessions` в БД), контролёр создаёт сессию через API с инструкцией (JSON:
+task_file, report, log, prompt, model, skill), а тонкий `agents/session_worker.py`
+подхватывает её:
+
+```
+контролёр (agent_manager)                    сервер                          session_worker
+  POST /api/sessions {instruction} ──────►  session_created (SSE)
+                                            ◄── GET /api/sessions/<id>   читает инструкцию
+                                            ◄── POST .../start (pid/cmd)
+  мониторинг: GET /api/sessions/<id>  ◄──   (heartbeat 30 с, статусы) ──► opencode run
+  POST .../instruction "abort" ────────►    session_instruction → SSE-канал session-<id>
+  POST .../kill ──────────────────────►    taskkill дерева
+```
+
+- **Инструкция — с сервера**, а не из bash-аргументов: worker читает `GET /api/sessions/<id>`
+  и исполняет `opencode run` с промптом из инструкции (движок исполнения не меняется).
+- **Статусы через сервер**: `POST /api/sessions/<id>/status` (done + report / failed + error),
+  лента событий `session_created/session_started/session_status/session_stalled`.
+- **Управление**: `POST /api/sessions/<id>/instruction` — инструкция в SSE-канал `session-<id>`
+  (worker реагирует на abort/stop); `POST /api/sessions/<id>/kill` — сервер убивает дерево
+  процесса (taskkill /F /T) по зарегистрированному pid.
+- **Анти-зависание**: серверный watchdog (heartbeat.py) помечает сессии без heartbeat
+  дольше `PIPELINE_SESSION_MAX_AGE` (default 300 с) как `stalled` + событие; heartbeat
+  сессии — 30 с; таймаут исполнения — `SUBAGENT_TIMEOUT_SEC` (default 1800).
+- **Фолбэк**: сервер недоступен → `agent_manager` молча переключается на legacy
+  `opencode run` напрямую (или флаг `--legacy`); файлы+git остаются источником истины.
+- Dashboard: кнопка «🗂 Сессии» — список сессий (id, задача, роль, статус, PID, возраст,
+  заметка) с живым обновлением и кнопкой «⛔ Убить».
+- API сессий: `POST /api/sessions`, `GET /api/sessions?project=&task=&status=`,
+  `GET /api/sessions/{id}`, `POST /api/sessions/{id}/start|status|heartbeat|instruction|kill`.
+
 ## Статус
 
 - [x] Шаг 1: каркас, общий пакет `pipeline/`
@@ -148,5 +186,10 @@ python -X utf8 agents/agent_manager.py mission --project heatlossrevit2 ^
 - [x] Анти-зависание: параметризуемый watchdog (env) + детектор task_stalled в agent_watch
 - [x] Чат агентов: /api/chat/agents, /api/chat/history, /api/chat/command, панель в dashboard,
       ответы агентов (executor/agent_watch) на команды
-- [x] Полный unit-тест: `python -X utf8 tests/run_all.py` (95 тестов)
+- [x] Явные сессии субагентов: реестр сессий на сервере (/api/sessions), session_worker
+      (инструкция с сервера, heartbeat, статусы, abort), мониторинг контролёром по API,
+      watchdog stalled, панель «🗂 Сессии», фолбэк на legacy --legacy
+- [x] Summary-закрытие: tdl-verify автоматически закрывает summary-предков (этапы/классы/
+      миссию) при всех done-потомках; команда tdl-close-summaries
+- [x] Полный unit-тест: `python -X utf8 tests/run_all.py` (125 тестов)
 - [ ] Пилот на тестовой задаче через сервер

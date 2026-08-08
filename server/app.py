@@ -17,6 +17,14 @@
     POST  /heartbeat                 сердцебиение агента {agent}
     GET   /agents                    список агентов
     GET   /api/stats                 сводка для dashboard
+    POST  /api/sessions              создать сессию субагента (явная сессия)
+    GET   /api/sessions              список сессий (?project=&task=&status=)
+    GET   /api/sessions/{id}         сессия (инструкция для session_worker)
+    POST  /api/sessions/{id}/start   субагент взял сессию (pid/cmd)
+    POST  /api/sessions/{id}/status  статус (done/failed + report/error)
+    POST  /api/sessions/{id}/heartbeat
+    POST  /api/sessions/{id}/instruction  контролёр -> SSE-канал session-<id>
+    POST  /api/sessions/{id}/kill    убить процесс субагента (taskkill /T)
 """
 from __future__ import annotations
 
@@ -1162,10 +1170,12 @@ def _run_detached(cmd: list[str], cwd: str) -> None:
 
 def _kill_pid(pid: int) -> bool:
     import subprocess
+    from pipeline.proc import no_window_flags
     try:
         if os.name == "nt":
-            r = subprocess.run(["taskkill", "/PID", str(pid), "/F", "/T"],
-                               capture_output=True, timeout=10)
+            r = subprocess.run(["taskkill", "/PID", str(pid), "/F"],
+                               capture_output=True, timeout=15,
+                               creationflags=no_window_flags())
             return r.returncode == 0
         os.kill(pid, 9)
         return True
@@ -1176,35 +1186,45 @@ def _kill_pid(pid: int) -> bool:
 @app.post("/api/chat/agents/{name}/kill")
 async def chat_agent_kill(name: str):
     """Убить процесс агента (если серверу известен его PID)."""
-    a = _agent_proc(name)
-    if not a or a.get("pid") is None:
-        raise HTTPException(404, f"у агента {name} нет зарегистрированного PID")
-    ok = _kill_pid(int(a["pid"]))
-    store.mark_offline(name)
-    if ok:
-        store.add_event("agent_killed", "dashboard", "feed",
-                        payload={"agent": name, "pid": a["pid"]})
-    return {"ok": ok, "agent": name, "pid": a["pid"]}
+    try:
+        a = _agent_proc(name)
+        if not a or a.get("pid") is None:
+            raise HTTPException(404, f"у агента {name} нет зарегистрированного PID")
+        ok = _kill_pid(int(a["pid"]))
+        store.mark_offline(name)
+        if ok:
+            store.add_event("agent_killed", "dashboard", "feed",
+                            payload={"agent": name, "pid": a["pid"]})
+        return {"ok": ok, "agent": name, "pid": a["pid"]}
+    except HTTPException:
+        raise
+    except Exception as e:
+        return JSONResponse(status_code=500, content={"ok": False, "error": str(e)})
 
 
 @app.post("/api/chat/agents/{name}/restart")
 async def chat_agent_restart(name: str):
     """Перезапустить агента: убить текущий процесс и поднять заново по сохранённой команде."""
     import shlex
-    a = _agent_proc(name)
-    if not a or not a.get("cmd"):
-        raise HTTPException(404, f"у агента {name} нет команды запуска (cmd)")
-    if a.get("pid") is not None:
-        _kill_pid(int(a["pid"]))
     try:
-        cmd = shlex.split(a["cmd"])
-    except ValueError:
-        cmd = a["cmd"].split()
-    root = Path(__file__).resolve().parent.parent  # корень dev-pipeline
-    _run_detached(cmd, cwd=str(root))
-    store.add_event("agent_restarted", "dashboard", "feed",
-                    payload={"agent": name, "cmd": a["cmd"]})
-    return {"ok": True, "agent": name, "cmd": a["cmd"]}
+        a = _agent_proc(name)
+        if not a or not a.get("cmd"):
+            raise HTTPException(404, f"у агента {name} нет команды запуска (cmd)")
+        if a.get("pid") is not None:
+            _kill_pid(int(a["pid"]))
+        try:
+            cmd = shlex.split(a["cmd"])
+        except ValueError:
+            cmd = a["cmd"].split()
+        root = Path(__file__).resolve().parent.parent  # корень dev-pipeline
+        _run_detached(cmd, cwd=str(root))
+        store.add_event("agent_restarted", "dashboard", "feed",
+                        payload={"agent": name, "cmd": a["cmd"]})
+        return {"ok": True, "agent": name, "cmd": a["cmd"]}
+    except HTTPException:
+        raise
+    except Exception as e:
+        return JSONResponse(status_code=500, content={"ok": False, "error": str(e)})
 
 
 @app.get("/api/chat/history")
@@ -1232,6 +1252,159 @@ async def index():
     return {"error": "dashboard.html не найден"}
 
 
+# --- Явные сессии субагентов ------------------------------------------------
+
+SESSION_CHANNEL = "session-{sid}"   # SSE-канал сессии (агент подписывается как session-<sid>)
+
+
+class SessionIn(BaseModel):
+    id: str = ""
+    project: str
+    task: str = ""
+    agent: str = ""
+    role: str = "worker"
+    model: str = ""
+    skill: str = ""
+    instruction: dict = {}
+
+
+class SessionStatusIn(BaseModel):
+    status: str
+    note: str = ""
+    report: str = ""
+    error: str = ""
+
+
+class SessionStartIn(BaseModel):
+    pid: int | None = None
+    cmd: str = ""
+
+
+def _sess_id() -> str:
+    import uuid
+    return "S-" + uuid.uuid4().hex[:10].upper()
+
+
+@app.post("/api/sessions")
+async def session_create(body: SessionIn):
+    """Создать явную сессию субагента (id генерируется сервером).
+    Инструкция (JSON) — источник постановки: task_file, report, log, model, prompt..."""
+    sid = body.id or _sess_id()
+    if store.get_session(sid):
+        raise HTTPException(409, f"сессия {sid} уже существует")
+    s = store.create_session(sid, project=body.project, task=body.task, agent=body.agent,
+                             role=body.role, model=body.model, skill=body.skill,
+                             instruction=body.instruction)
+    ev = store.add_event("session_created", "server", "feed", project=body.project,
+                         task=body.task, payload={"session_id": sid, "agent": body.agent,
+                                                  "role": body.role})
+    hub.publish(ev)
+    return s
+
+
+@app.get("/api/sessions")
+async def session_list(project: str = "", task: str = "", status: str = ""):
+    return store.list_sessions(project=project, task=task, status=status)
+
+
+@app.get("/api/sessions/{sid}")
+async def session_get(sid: str):
+    s = store.get_session(sid)
+    if not s:
+        raise HTTPException(404, f"сессия {sid} не найдена")
+    return s
+
+
+@app.post("/api/sessions/{sid}/start")
+async def session_start(sid: str, body: SessionStartIn):
+    """Субагент взял сессию в работу (pid/cmd фиксируются для kill/restart)."""
+    s = store.get_session(sid)
+    if not s:
+        raise HTTPException(404, f"сессия {sid} не найдена")
+    fields = {"status": "running", "started_at": datetime.datetime.now().isoformat(timespec="seconds")}
+    if body.pid is not None:
+        fields["pid"] = body.pid
+    if body.cmd:
+        fields["cmd"] = body.cmd
+    store.update_session(sid, **fields)
+    store.touch_session(sid)
+    ev = store.add_event("session_started", "server", "feed", project=s["project"],
+                         task=s["task"], payload={"session_id": sid, "pid": body.pid})
+    hub.publish(ev)
+    return store.get_session(sid)
+
+
+@app.post("/api/sessions/{sid}/status")
+async def session_status(sid: str, body: SessionStatusIn):
+    """Обновить статус сессии (running/note/progress | done/failed + report/error)."""
+    s = store.get_session(sid)
+    if not s:
+        raise HTTPException(404, f"сессия {sid} не найдена")
+    allowed = {"created", "running", "done", "failed", "killed", "stalled"}
+    if body.status not in allowed:
+        raise HTTPException(400, f"статус {body.status} не из списка {sorted(allowed)}")
+    fields = {"status": body.status}
+    if body.note:
+        fields["note"] = body.note
+    if body.report:
+        fields["report"] = body.report
+    if body.error:
+        fields["error"] = body.error
+    if body.status in ("done", "failed", "killed", "stalled"):
+        fields["finished_at"] = datetime.datetime.now().isoformat(timespec="seconds")
+    store.update_session(sid, **fields)
+    store.touch_session(sid)
+    ev = store.add_event("session_status", "server", "feed", project=s["project"],
+                         task=s["task"], payload={"session_id": sid, "status": body.status,
+                                                  "note": body.note, "report": body.report,
+                                                  "error": body.error})
+    hub.publish(ev)
+    return store.get_session(sid)
+
+
+@app.post("/api/sessions/{sid}/heartbeat")
+async def session_heartbeat(sid: str):
+    if not store.get_session(sid):
+        raise HTTPException(404, f"сессия {sid} не найдена")
+    store.touch_session(sid)
+    return {"ok": True, "session_id": sid}
+
+
+@app.post("/api/sessions/{sid}/instruction")
+async def session_instruction(sid: str, body: MessageIn):
+    """Контролёр -> субагент: инструкция в канал сессии (SSE session-<sid>)."""
+    s = store.get_session(sid)
+    if not s:
+        raise HTTPException(404, f"сессия {sid} не найдена")
+    msg = store.add_message(body.from_, SESSION_CHANNEL.format(sid=sid), body.text)
+    ev = store.add_event("session_instruction", body.from_, SESSION_CHANNEL.format(sid=sid),
+                         project=s["project"], task=s["task"],
+                         payload={"session_id": sid, "chat": True})
+    hub.publish({"id": msg["id"], "type": "session_instruction", "from": msg["from"],
+                 "to": SESSION_CHANNEL.format(sid=sid), "text": msg["text"],
+                 "created_at": msg["created_at"], "delivery": msg["delivery"],
+                 "payload": {"session_id": sid, "chat": True, "event_id": ev["id"]}})
+    return msg
+
+
+@app.post("/api/sessions/{sid}/kill")
+async def session_kill(sid: str):
+    """Убить процесс субагента сессии (taskkill /F /T по зарегистрированному pid)."""
+    s = store.get_session(sid)
+    if not s:
+        raise HTTPException(404, f"сессия {sid} не найдена")
+    pid = s.get("pid")
+    ok = False
+    if pid is not None:
+        ok = _kill_pid(int(pid))
+    store.update_session(sid, status="killed",
+                         finished_at=datetime.datetime.now().isoformat(timespec="seconds"),
+                         error="убита по запросу" if ok else "не найден процесс")
+    ev = store.add_event("session_status", "server", "feed", project=s["project"],
+                         task=s["task"], payload={"session_id": sid, "status": "killed",
+                                                  "pid": pid, "killed": ok})
+    hub.publish(ev)
+    return {"ok": ok, "session_id": sid, "pid": pid}
 @app.get("/dashboard")
 async def dashboard_page():
     from fastapi.responses import FileResponse

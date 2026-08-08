@@ -236,7 +236,6 @@ class TestCheckStalled(unittest.TestCase):
 
 class TestEnsureReportNoFake(unittest.TestCase):
     """Менеджер не создаёт фейковый отчёт при rc!=0/обрыве — пометка stalled."""
-
     def _cfg(self, tmp):
         for sub in ("Tasks/Активные", "Tasks/Отчёты", "Tasks/Архив", "Tasks/Конвейер"):
             (tmp / sub).mkdir(parents=True)
@@ -285,9 +284,178 @@ class TestEnsureReportNoFake(unittest.TestCase):
         import shutil; shutil.rmtree(tmp, ignore_errors=True)
 
 
+class TestSessionMode(unittest.TestCase):
+    """Явные сессии: run_subagent_session создаёт сессию на сервере,
+    session_worker получает инструкцию через сервер; legacy — фолбэк."""
+
+    def _cfg(self, tmp):
+        for sub in ("Tasks/Активные", "Tasks/Отчёты", "Tasks/Архив", "Tasks/Конвейер"):
+            (tmp / sub).mkdir(parents=True)
+        from pipeline.config import ProjectConfig
+        return ProjectConfig(name="_t", root=tmp, msbuild="dotnet",
+                             sln="X.csproj", test_runner="dotnet")
+
+    class FakeClient:
+        """Заглушка серверного клиента: сессии живут в памяти."""
+        def __init__(self):
+            self.sessions = {}
+            self.alive = True
+            self.created = []
+
+        def server_alive(self, timeout=2.0):
+            return self.alive
+
+        def create_session(self, project, task="", agent="", role="worker", model="",
+                           skill="", instruction=None, sid=""):
+            s = {"id": sid or f"S-{len(self.sessions) + 1}", "project": project,
+                 "task": task, "agent": agent, "role": role, "model": model,
+                 "skill": skill, "status": "created", "instruction": instruction or {}}
+            self.sessions[s["id"]] = s
+            self.created.append(s)
+            return s
+
+        def get_session(self, sid):
+            return self.sessions.get(sid)
+
+        def session_start(self, sid, pid=None, cmd=""):
+            s = self.sessions.get(sid)
+            if s:
+                s["status"] = "running"
+                if pid:
+                    s["pid"] = pid
+            return s
+
+        def session_status(self, sid, status, note="", report="", error=""):
+            s = self.sessions.get(sid)
+            if s:
+                s["status"] = status
+                if note:
+                    s["note"] = note
+                if report:
+                    s["report"] = report
+                if error:
+                    s["error"] = error
+            return s
+
+        def session_heartbeat(self, sid):
+            return True
+
+        def session_kill(self, sid):
+            s = self.sessions.get(sid)
+            if s:
+                s["status"] = "killed"
+            return {"ok": True}
+
+    def _mk_task_md(self, cfg, tid, status="open"):
+        f = cfg.abs_tasks_dir("active") / f"{tid}_Задача.md"
+        f.write_text(f"""---
+id: {tid}
+статус: {status}
+---
+# ЗАДАЧА: тест
+## Цель
+## Требования
+""", encoding="utf-8")
+
+    def test_build_subprompt_contains_task_and_report(self):
+        import tempfile
+        from pathlib import Path
+        tmp = Path(tempfile.mkdtemp(prefix="sp_"))
+        cfg = self._cfg(tmp)
+        p = am._build_subprompt(cfg, "A-01", Path("A-01_x.md"), Path("rep.md"), skill="pipeline-executor")
+        self.assertIn("A-01_x.md", p)
+        self.assertIn("rep.md", p)
+        self.assertIn("pipeline-executor", p)
+        import shutil; shutil.rmtree(tmp, ignore_errors=True)
+
+    def test_run_subagent_session_done(self):
+        import tempfile
+        tmp = Path(tempfile.mkdtemp(prefix="sess_"))
+        cfg = self._cfg(tmp)
+        self._mk_task_md(cfg, "A-01")
+        fc = self.FakeClient()
+        report = cfg.abs_tasks_dir("reports") / "A-01_Отчёт_2026-08-08.md"
+        log = tmp / "Tasks" / "Конвейер" / "logs" / "A-01_run.log"
+        # субагент: стартуем в фоне, сессия переходит running -> done + отчёт
+        import threading
+        def _worker():
+            s = fc.created[0]
+            am._mark_in_progress = None  # не трогаем
+            fc.session_start(s["id"], pid=1)
+            fc.session_status(s["id"], "running", note="работаю")
+            fc.session_status(s["id"], "done", report=str(report))
+        t = threading.Timer(0.5, _worker)
+        t.start()
+        rc = am.run_subagent_session(cfg, "A-01", report, log, client=fc, poll_sec=1)
+        t.join(timeout=10)
+        self.assertEqual(rc, 0)
+        self.assertEqual(fc.created[0]["status"], "done")
+        # инструкция передана в сессию (задача/отчёт/промпт)
+        instr = fc.created[0]["instruction"]
+        self.assertEqual(instr["task_id"], "A-01")
+        self.assertIn("A-01", instr["prompt"])
+        import shutil; shutil.rmtree(tmp, ignore_errors=True)
+
+    def test_run_subagent_session_failed(self):
+        import tempfile
+        tmp = Path(tempfile.mkdtemp(prefix="sessf_"))
+        cfg = self._cfg(tmp)
+        self._mk_task_md(cfg, "A-02")
+        fc = self.FakeClient()
+        report = cfg.abs_tasks_dir("reports") / "A-02_Отчёт_2026-08-08.md"
+        log = tmp / "Tasks" / "Конвейер" / "logs" / "A-02_run.log"
+        def _worker():
+            s = fc.created[0]
+            fc.session_start(s["id"], pid=1)
+            fc.session_status(s["id"], "failed", error="rc=1, сборка упала")
+        import threading
+        t = threading.Timer(0.5, _worker)
+        t.start()
+        rc = am.run_subagent_session(cfg, "A-02", report, log, client=fc, poll_sec=1)
+        t.join(timeout=10)
+        self.assertEqual(rc, 1)
+        self.assertEqual(fc.created[0]["status"], "failed")
+        import shutil; shutil.rmtree(tmp, ignore_errors=True)
+
+    def test_run_subagent_session_killed_on_timeout(self):
+        import tempfile
+        tmp = Path(tempfile.mkdtemp(prefix="sessk_"))
+        cfg = self._cfg(tmp)
+        self._mk_task_md(cfg, "A-03")
+        fc = self.FakeClient()
+        report = cfg.abs_tasks_dir("reports") / "A-03_Отчёт_2026-08-08.md"
+        log = tmp / "Tasks" / "Конвейер" / "logs" / "A-03_run.log"
+        # субагент молчит -> менеджер убивает сессию по таймауту
+        old_timeout = am.SUBAGENT_TIMEOUT
+        am.SUBAGENT_TIMEOUT = 3
+        try:
+            rc = am.run_subagent_session(cfg, "A-03", report, log, client=fc, poll_sec=1)
+        finally:
+            am.SUBAGENT_TIMEOUT = old_timeout
+        self.assertEqual(rc, 124)
+        self.assertEqual(fc.created[0]["status"], "killed")
+        import shutil; shutil.rmtree(tmp, ignore_errors=True)
+
+    def test_run_subagent_falls_back_to_legacy_when_server_down(self):
+        import tempfile
+        tmp = Path(tempfile.mkdtemp(prefix="sessl_"))
+        cfg = self._cfg(tmp)
+        self._mk_task_md(cfg, "A-04")
+        fc = self.FakeClient()
+        fc.alive = False
+        report = cfg.abs_tasks_dir("reports") / "A-04_Отчёт_2026-08-08.md"
+        log = tmp / "Tasks" / "Конвейер" / "logs" / "A-04_run.log"
+        # legacy-режим пытается запустить opencode; с неизвестной командой — rc!=0,
+        # но главное: НЕ создаёт сессию (fc.created пуст)
+        am.OPENCODE = "python -c \"import sys; sys.exit(7)\""
+        rc = am.run_subagent(cfg, "A-04", report, log, client=fc)
+        self.assertEqual(fc.created, [], "без сервера сессия не создаётся")
+        self.assertNotEqual(rc, 0)
+        import shutil; shutil.rmtree(tmp, ignore_errors=True)
+
+
 class TestSubagentZombies(unittest.TestCase):
     """Сторож: убийство сирот-субагентов по PID-файлам менеджера."""
-
     def _cfg(self, tmp):
         for sub in ("Tasks/Активные", "Tasks/Отчёты", "Tasks/Архив",
                     "Tasks/Конвейер", "Tasks/Конвейер/logs"):

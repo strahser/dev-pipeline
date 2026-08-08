@@ -30,15 +30,12 @@ tests:
   runner: vstest
   vstest: C:\Program Files\Microsoft Visual Studio\18\Community\Common7\IDE\CommonExtensions\Microsoft\TestWindow\vstest.console.exe
   dll: Test\bin\Debug\Tests.dll
-  baseline_passed: 119
-  baseline_total: 120
+  # После A-46 (перенос UndergroundZoneCalculatorTests в Core.Tests): Tests.dll = 105 тестов.
   # Известное падение окружения (домашний ПК, D:\Projects\HeatLossRevit2):
   # AddAppServices_AllRegistrationsResolvable — DI-тест не резолвит RevitAPI/RevitAPIUI
   # (AssemblyResolve-хендлер не подхватывает), НЕ регрессия кода. На рабочем ПК (E:\) тест зелёный.
-  known_failures:
-    - AddAppServices_AllRegistrationsResolvable
-  # Известные падения окружения (подстроки имён тестов): не блокируют verify.
-  # Домашний ПК (D:): DI-тест не резолвит RevitAPI/RevitAPIUI (см. AGENTS.md проекта).
+  baseline_passed: 104
+  baseline_total: 105
   known_failures:
     - AddAppServices_AllRegistrationsResolvable
 

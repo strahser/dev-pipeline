@@ -134,6 +134,9 @@ def tdl_verify(cfg, args) -> int:
     store.save_task(cfg, t)
     store.rebuild_index(cfg)
     C.git(cfg.root, f"tdl-verify: {args.task} -> {result} ({verdict['verdict_id']})")
+    if result == "pass":
+        # summary-предки (этапы/классы/миссия): закрыть, если все потомки done
+        tdl_close_summaries(cfg, args)
     print(f"TDL-VERIFY: {args.task} -> {result}")
     return 0 if result == "pass" else 1
 
@@ -166,6 +169,45 @@ def tdl_validate(cfg, args) -> int:
 def tdl_index(cfg, args) -> int:
     ip = store.rebuild_index(cfg)
     print(f"TDL-INDEX: {ip}")
+    return 0
+
+
+def tdl_close_summaries(cfg, args) -> int:
+    """Закрыть summary-задачи (миссия/этапы/классы), у которых ВСЕ
+    execution-потомки по WBS уже done. Возвращает количество закрытых."""
+    idx = store.load_index(cfg) or {"tasks": []}
+    tasks = {t["task_id"]: t for t in idx["tasks"]}
+    # глубина WBS: потомок = wbs начинается с "prefix."
+    def descendants(tid):
+        w = tasks[tid].get("wbs_code", "")
+        return [t for t in tasks.values()
+                if str(t.get("wbs_code", "")).startswith(w + ".")]
+
+    closed = 0
+    for t in idx["tasks"]:
+        if not t.get("is_summary") or t.get("status") == "done":
+            continue
+        kids = descendants(t["task_id"])
+        if not kids:
+            continue
+        leaves = [k for k in kids if not k.get("is_summary")]
+        if leaves and all(k.get("status") == "done" for k in leaves):
+            task = store.load_task(cfg, t["task_id"])
+            if not task:
+                continue
+            task["status"] = "done"
+            task["workflow_state"] = "verified"
+            task["status_display"] = "Выполнено"
+            dates = task.setdefault("dates", {})
+            if not dates.get("finish"):
+                dates["finish"] = store.today()
+            store.save_task(cfg, task)
+            closed += 1
+            print(f"  {t['task_id']} [{t.get('wbs_code')}]: summary закрыта "
+                  f"({len(leaves)} потомков done)")
+    if closed:
+        store.rebuild_index(cfg)
+    print(f"TDL-CLOSE-SUMMARIES: закрыто summary {closed}")
     return 0
 
 

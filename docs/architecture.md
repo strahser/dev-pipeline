@@ -35,16 +35,42 @@ dev-pipeline\
 Агент-2 (executor)              FastAPI сервер                    Агент-1 (controller)
    GET /events/stream?agent=executor
    (долгое HTTP-соединение, push)
-                                   <- POST /events {task_assigned A-10}
-                                   <- запись в SQLite, публикация в SSE
+                                    <- POST /events {task_assigned A-10}
+                                    <- запись в SQLite, публикация в SSE
    data: {type:task_assigned, task:A-10}
    POST /events/{id}/ack            (взял, доставлено)
    opencode run <A-10>
    POST /events {report_done}     -> data: {report_done}
-                                  -> agent_watch -> verify A-10
-                                   <- POST /events {verdict PASS}
+                                   -> agent_watch -> verify A-10
+                                    <- POST /events {verdict PASS}
    data: {verdict PASS}
 ```
+
+### Явные сессии субагентов (общение через сервер)
+
+Контролёр (agent_manager) НЕ запускает субагентов как слепые bash-субпроцессы
+`opencode run <гигантский промпт>`. Вместо этого сессия — явный объект сервера:
+
+```
+контролёр                                сервер (sessions)              session_worker
+  POST /api/sessions {instruction} ───►  session_created (SSE)
+                                         ◄── GET /api/sessions/<id>  инструкция (JSON)
+                                         ◄── POST .../start (pid/cmd)
+  GET /api/sessions/<id> (поллинг) ◄──   (heartbeat 30 с) ──────────► opencode run (промпт из сессии)
+  POST .../instruction "abort" ──────►   session_instruction → SSE session-<id>
+  POST .../kill ────────────────────►    taskkill дерева
+```
+
+- `sessions` в БД: id, project, task, agent, role, model, skill, status
+  (created/running/done/failed/killed/stalled), pid, cmd, instruction(JSON), note,
+  report, error, created/started/finished/heartbeat.
+- Инструкция (task_file, report, log, prompt, model, skill) — на сервере, worker читает её,
+  а не получает из bash-аргументов. Статусы — через `POST /api/sessions/<id>/status`.
+- Управление: instruction в SSE-канал `session-<id>` (abort/stop), kill — сервер убивает
+  дерево процесса по pid. Watchdog: сессия без heartbeat > `PIPELINE_SESSION_MAX_AGE`
+  (default 300 с) → `stalled` + событие `session_stalled`.
+- Фолбэк: сервер недоступен → `agent_manager` переключается на legacy `opencode run`
+  напрямую (флаг `--legacy`), файлы+git остаются источником истины.
 
 ### Каналы
 
@@ -82,7 +108,8 @@ dev-pipeline\
 Таблицы:
 - `events` — id, type, from, to, project, payload(JSON), created_at, delivery.
 - `messages` — id, from, to, text, created_at, delivery (inbox агентов).
-- `agents` — name, last_seen (heartbeat), status (online/offline).
+- `agents` — name, last_seen (heartbeat), status (online/offline), project, pid, cmd.
+- `sessions` — явные сессии субагентов (см. выше).
 
 Файлы+git остаются источником правды о задачах; БД — только координация и лента.
 

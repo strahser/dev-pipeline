@@ -22,11 +22,23 @@
 - Диспатч: `python -m pipeline.cli dispatch <project> <файл> [--title ...] [--priority ...]`
 - Верификация: `python -m pipeline.cli verify <project> <A-NN>`
 - TDL: `python -m pipeline.cli tdl-status|tdl-tree|tdl-plan|tdl-verify <project> [A-NN]`
+- Summary-закрытие: tdl-verify сам закрывает summary-предков при всех done-потомках;
+  принудительно — `tdl-close-summaries <project>`
 - Длительности: `python -m pipeline.cli tdl-verify` ставит `duration_sec`; оценки — `estimate_sec`
   в spec при `tdl-plan` (число ≤24 = часы; строки «2ч 30м», «3.5h», «45м», «1д»)
 - API длительностей: `GET /api/tdl/durations?project=<p>` (план vs факт, summary-суммирование)
 - Планировщик миссии (LLM-декомпозиция 1-го уровня): `python -m agents.agent_manager mission --project <p> --mission <файл> --plan` — пишет spec в `Tasks\Конвейер\планы\` и вызывает tdl-plan; фолбэк на `split_mission`
-- Анти-зависание: сервер — `PIPELINE_WATCH_INTERVAL`/`PIPELINE_WATCH_MAX_AGE`;
+- **Явные сессии субагентов** (по умолчанию): `agent_manager task/mission` создаёт сессию на сервере
+  (`POST /api/sessions`, инструкция JSON) и запускает тонкого `agents/session_worker.py` — он читает
+  инструкцию С СЕРВЕРА, исполняет через opencode run, шлёт heartbeat/статусы через сервер
+  (`/api/sessions/{id}/status`), контролёр мониторит по API и может прервать
+  (`POST /api/sessions/{id}/instruction` → SSE-канал `session-<id>`, или kill). ВАЖНО: НЕ запускать
+  субагентов напрямую bash-`opencode run` — только через сессию; `--legacy` — фолбэк без сервера
+- API сессий: `POST /api/sessions` (создать), `GET /api/sessions` (список), `GET /api/sessions/{id}`,
+  `POST /api/sessions/{id}/start|status|heartbeat|kill|instruction`; лента событий
+  `session_created/session_started/session_status/session_stalled`
+- Анти-зависание: сервер — `PIPELINE_WATCH_INTERVAL`/`PIPELINE_WATCH_MAX_AGE`,
+  сессии — `PIPELINE_SESSION_MAX_AGE` (default 300 с, heartbeat сессии 30 с; stale → `stalled` + событие);
   сторож — `python -m agents.agent_watch --project <p> [--stall-timeout N]` (env `TASK_STALL_TIMEOUT_SEC`, default 10800);
   субагенты — таймаут 1800 с + PID-файл `logs\<A-NN>.pid` (env `SUBAGENT_MAX_AGE_SEC` для убийства сирот сторожем);
   фейковый отчёт при rc≠0 не создаётся — пометка `task_stalled` (редиспатч)

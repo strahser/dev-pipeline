@@ -39,8 +39,30 @@ CREATE TABLE IF NOT EXISTS agents (
   pid INTEGER,
   cmd TEXT NOT NULL DEFAULT ''
 );
+CREATE TABLE IF NOT EXISTS sessions (
+  id TEXT PRIMARY KEY,
+  project TEXT NOT NULL DEFAULT '',
+  task TEXT NOT NULL DEFAULT '',
+  agent TEXT NOT NULL DEFAULT '',
+  role TEXT NOT NULL DEFAULT 'worker',
+  model TEXT NOT NULL DEFAULT '',
+  skill TEXT NOT NULL DEFAULT '',
+  status TEXT NOT NULL DEFAULT 'created',
+  pid INTEGER,
+  cmd TEXT NOT NULL DEFAULT '',
+  instruction TEXT NOT NULL DEFAULT '{}',
+  note TEXT NOT NULL DEFAULT '',
+  report TEXT NOT NULL DEFAULT '',
+  error TEXT NOT NULL DEFAULT '',
+  created_at TEXT NOT NULL,
+  started_at TEXT,
+  finished_at TEXT,
+  heartbeat TEXT
+);
 CREATE INDEX IF NOT EXISTS idx_events_to_delivery ON events("to", delivery);
 CREATE INDEX IF NOT EXISTS idx_messages_to_delivery ON messages("to", delivery);
+CREATE INDEX IF NOT EXISTS idx_sessions_status ON sessions(status);
+CREATE INDEX IF NOT EXISTS idx_sessions_project ON sessions(project);
 """
 
 
@@ -260,8 +282,113 @@ class Store:
                 "project": r["project"], "task": r["task"], "payload": payload,
                 "created_at": r["created_at"], "delivery": r["delivery"]}
 
+    # --- сессии субагентов ---------------------------------------------------
+
+    _SESSION_TERMINAL = ("done", "failed", "killed", "stalled")
+
+    def create_session(self, session_id: str, project: str, task: str = "",
+                       agent: str = "", role: str = "worker", model: str = "",
+                       skill: str = "", instruction: dict | None = None) -> dict:
+        """Явная сессия субагента (id — ключ). Инструкция — JSON (задача, отчёт, параметры)."""
+        row = {"id": session_id, "project": project, "task": task, "agent": agent,
+               "role": role, "model": model, "skill": skill,
+               "status": "created", "pid": None, "cmd": "",
+               "instruction": instruction or {}, "note": "", "report": "", "error": "",
+               "created_at": now_iso(), "started_at": None, "finished_at": None,
+               "heartbeat": None}
+        self._conn.execute(
+            "INSERT INTO sessions (id,project,task,agent,role,model,skill,status,pid,cmd,"
+            "instruction,note,report,error,created_at,started_at,finished_at,heartbeat) "
+            "VALUES (?,?,?,?,?,?,?,?,?,?,?,?,?,?,?,?,?,?)",
+            (row["id"], row["project"], row["task"], row["agent"], row["role"], row["model"],
+             row["skill"], row["status"], row["pid"], row["cmd"],
+             json.dumps(row["instruction"], ensure_ascii=False), row["note"], row["report"],
+             row["error"], row["created_at"], row["started_at"], row["finished_at"],
+             row["heartbeat"]))
+        self._conn.commit()
+        return row
+
+    @staticmethod
+    def _row_to_session(r: sqlite3.Row) -> dict:
+        try:
+            instruction = json.loads(r["instruction"])
+        except (TypeError, json.JSONDecodeError):
+            instruction = {}
+        return {"id": r["id"], "project": r["project"], "task": r["task"],
+                "agent": r["agent"], "role": r["role"], "model": r["model"],
+                "skill": r["skill"], "status": r["status"], "pid": r["pid"],
+                "cmd": r["cmd"], "instruction": instruction, "note": r["note"],
+                "report": r["report"], "error": r["error"], "created_at": r["created_at"],
+                "started_at": r["started_at"], "finished_at": r["finished_at"],
+                "heartbeat": r["heartbeat"]}
+
+    def get_session(self, session_id: str) -> dict | None:
+        r = self._conn.execute("SELECT * FROM sessions WHERE id=?", (session_id,)).fetchone()
+        return self._row_to_session(r) if r else None
+
+    def list_sessions(self, project: str = "", task: str = "", status: str = "") -> list[dict]:
+        q = "SELECT * FROM sessions WHERE 1=1"
+        args = []
+        if project:
+            q += " AND project=?"
+            args.append(project)
+        if task:
+            q += " AND task=?"
+            args.append(task)
+        if status:
+            q += " AND status=?"
+            args.append(status)
+        q += " ORDER BY created_at DESC, id DESC LIMIT 200"
+        rows = self._conn.execute(q, args).fetchall()
+        return [self._row_to_session(r) for r in rows]
+
+    def update_session(self, session_id: str, **fields) -> dict | None:
+        """Обновить поля сессии (status/pid/cmd/note/report/error/heartbeat/
+        started_at/finished_at). Возвращает обновлённую сессию или None."""
+        allowed = {"status", "pid", "cmd", "note", "report", "error", "heartbeat",
+                   "started_at", "finished_at", "instruction"}
+        if fields.get("status") in ("done", "failed", "killed", "stalled"):
+            fields.setdefault("finished_at", now_iso())
+        sets, args = [], []
+        for k, v in fields.items():
+            if k not in allowed:
+                continue
+            if k == "instruction":
+                v = json.dumps(v, ensure_ascii=False)
+            sets.append(f"{k}=?")
+            args.append(v)
+        if not sets:
+            return self.get_session(session_id)
+        args.append(session_id)
+        self._conn.execute(f"UPDATE sessions SET {', '.join(sets)} WHERE id=?", args)
+        self._conn.commit()
+        return self.get_session(session_id)
+
+    def touch_session(self, session_id: str) -> None:
+        self._conn.execute("UPDATE sessions SET heartbeat=? WHERE id=?",
+                           (now_iso(), session_id))
+        self._conn.commit()
+
+    def stale_sessions(self, max_age_sec: int) -> list[dict]:
+        """Сессии в работе (running/created) с heartbeat старше max_age_sec."""
+        from datetime import datetime as dt
+        cutoff = dt.now().timestamp() - max_age_sec
+        out = []
+        for s in self.list_sessions():
+            if s["status"] not in ("created", "running"):
+                continue
+            hb = s.get("heartbeat") or s.get("created_at")
+            try:
+                t = dt.fromisoformat(hb).timestamp()
+            except (ValueError, TypeError):
+                continue
+            if t < cutoff:
+                out.append(s)
+        return out
+
     def stats(self) -> dict:
         ev = self._conn.execute("SELECT COUNT(*) AS c FROM events").fetchone()["c"]
         ms = self._conn.execute("SELECT COUNT(*) AS c FROM messages").fetchone()["c"]
         ag = self._conn.execute("SELECT COUNT(*) AS c FROM agents").fetchone()["c"]
-        return {"events": ev, "messages": ms, "agents": ag}
+        ss = self._conn.execute("SELECT COUNT(*) AS c FROM sessions").fetchone()["c"]
+        return {"events": ev, "messages": ms, "agents": ag, "sessions": ss}

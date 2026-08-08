@@ -78,6 +78,46 @@ class TestStore(unittest.TestCase):
         self.assertEqual(st["events"], 1)
         self.assertEqual(st["agents"], 1)
 
+    def test_session_lifecycle(self):
+        s = self.s.create_session("S-1", "P", task="A-1", agent="session-A-1",
+                                  model="m", skill="s", instruction={"task_file": "x.md"})
+        self.assertEqual(s["status"], "created")
+        self.assertEqual(s["task"], "A-1")
+        got = self.s.get_session("S-1")
+        self.assertEqual(got["instruction"]["task_file"], "x.md")
+        # start -> running + pid
+        self.s.update_session("S-1", status="running", pid=123, cmd="python ...")
+        self.s.touch_session("S-1")
+        r = self.s.get_session("S-1")
+        self.assertEqual(r["status"], "running")
+        self.assertEqual(r["pid"], 123)
+        # done + report
+        self.s.update_session("S-1", status="done", report="rep.md")
+        r = self.s.get_session("S-1")
+        self.assertEqual(r["status"], "done")
+        self.assertIsNotNone(r["finished_at"])
+        # список с фильтрами
+        self.s.create_session("S-2", "P", task="A-2")
+        self.assertEqual(len(self.s.list_sessions(project="P")), 2)
+        self.assertEqual(len(self.s.list_sessions(task="A-1")), 1)
+        self.assertEqual(len(self.s.list_sessions(status="done")), 1)
+
+    def test_stale_sessions(self):
+        from datetime import datetime as dt
+        self.s.create_session("S-old", "P", task="A-1")
+        # heartbeat старее 200 с
+        old_hb = dt.fromtimestamp(time.time() - 200).isoformat()
+        self.s._conn.execute("UPDATE sessions SET heartbeat=? WHERE id=?",
+                             (old_hb, "S-old"))
+        self.s._conn.commit()
+        self.s.create_session("S-fresh", "P", task="A-2")
+        self.s.touch_session("S-fresh")
+        stale = self.s.stale_sessions(max_age_sec=100)
+        self.assertEqual([s["id"] for s in stale], ["S-old"])
+        # terminal-статусы не считаются stale
+        self.s.update_session("S-old", status="done")
+        self.assertEqual(self.s.stale_sessions(max_age_sec=100), [])
+
 
 class TestAppAPI(unittest.TestCase):
     """Тесты HTTP-API через TestClient (временная БД через env PIPELINE_DB)."""
@@ -90,7 +130,7 @@ class TestAppAPI(unittest.TestCase):
     def setUp(self):
         # очистить БД между тестами
         self.store = app_mod.store
-        for t in ("events", "messages", "agents"):
+        for t in ("events", "messages", "agents", "sessions"):
             self.store._conn.execute(f"DELETE FROM {t}")
         self.store._conn.commit()
 
@@ -210,6 +250,94 @@ class TestAppAPI(unittest.TestCase):
         self.assertEqual(ex["status"], "online")
         self.assertFalse(ex["sleeping"])
         self.assertIn("heartbeat_age_sec", ex)
+
+    def test_session_create_get_list(self):
+        r = self.client.post("/api/sessions", json={
+            "project": "P", "task": "A-9", "agent": "session-A-9",
+            "role": "worker", "model": "m1", "skill": "pipeline-executor",
+            "instruction": {"task_file": "Tasks/Активные/A-9_x.md", "report": "rep.md"}})
+        self.assertEqual(r.status_code, 200)
+        s = r.json()
+        sid = s["id"]
+        self.assertTrue(sid.startswith("S-"))
+        self.assertEqual(s["status"], "created")
+        self.assertEqual(s["instruction"]["task_file"], "Tasks/Активные/A-9_x.md")
+        got = self.client.get(f"/api/sessions/{sid}").json()
+        self.assertEqual(got["task"], "A-9")
+        lst = self.client.get("/api/sessions", params={"project": "P", "task": "A-9"}).json()
+        self.assertEqual(len(lst), 1)
+        # событие session_created опубликовано
+        evs = self.client.get("/api/ledger").json()
+        self.assertTrue(any(e["type"] == "session_created" for e in evs))
+
+    def test_session_start_status_done(self):
+        s = self.client.post("/api/sessions", json={"project": "P", "task": "A-9"}).json()
+        sid = s["id"]
+        r = self.client.post(f"/api/sessions/{sid}/start", json={"pid": 4242, "cmd": "python w.py"})
+        self.assertEqual(r.status_code, 200)
+        self.assertEqual(r.json()["status"], "running")
+        self.assertEqual(r.json()["pid"], 4242)
+        r = self.client.post(f"/api/sessions/{sid}/status",
+                             json={"status": "done", "report": "rep.md", "note": "готово"})
+        self.assertEqual(r.status_code, 200)
+        s2 = r.json()
+        self.assertEqual(s2["status"], "done")
+        self.assertEqual(s2["report"], "rep.md")
+        self.assertIsNotNone(s2["finished_at"])
+        # событие session_status
+        evs = self.client.get("/api/ledger").json()
+        self.assertTrue(any(e["type"] == "session_status" and e["payload"].get("session_id") == sid
+                            for e in evs))
+
+    def test_session_invalid_status(self):
+        s = self.client.post("/api/sessions", json={"project": "P"}).json()
+        r = self.client.post(f"/api/sessions/{s['id']}/status", json={"status": "wat"})
+        self.assertEqual(r.status_code, 400)
+
+    def test_session_heartbeat_and_stale(self):
+        s = self.client.post("/api/sessions", json={"project": "P", "task": "A-9"}).json()
+        sid = s["id"]
+        self.client.post(f"/api/sessions/{sid}/start", json={"pid": 1})
+        self.client.post(f"/api/sessions/{sid}/heartbeat")
+        self.assertIsNotNone(self.store.get_session(sid)["heartbeat"])
+        # старый heartbeat -> stale_sessions находит
+        self.store._conn.execute(
+            "UPDATE sessions SET heartbeat='2000-01-01T00:00:00' WHERE id=?", (sid,))
+        self.store._conn.commit()
+        self.assertEqual(len(self.store.stale_sessions(max_age_sec=60)), 1)
+
+    def test_session_kill(self):
+        s = self.client.post("/api/sessions", json={"project": "P", "task": "A-9"}).json()
+        sid = s["id"]
+        # без pid — ok=false, статус всё равно killed
+        r = self.client.post(f"/api/sessions/{sid}/kill")
+        self.assertEqual(r.status_code, 200)
+        self.assertFalse(r.json()["ok"])
+        self.assertEqual(self.store.get_session(sid)["status"], "killed")
+        # с несуществующим pid — kill не удаётся, но статус фиксируется
+        self.client.post(f"/api/sessions/{sid}/start", json={"pid": 99999999})
+        r2 = self.client.post(f"/api/sessions/{sid}/kill")
+        self.assertFalse(r2.json()["ok"])
+
+    def test_session_instruction_published_to_channel(self):
+        s = self.client.post("/api/sessions", json={"project": "P", "task": "A-9"}).json()
+        sid = s["id"]
+        r = self.client.post(f"/api/sessions/{sid}/instruction",
+                             json={"from": "controller", "to": f"session-{sid}",
+                                   "text": "abort"})
+        self.assertEqual(r.status_code, 200)
+        inbox = self.client.get("/messages", params={"agent": f"session-{sid}"}).json()
+        self.assertEqual(len(inbox), 1)
+        self.assertEqual(inbox[0]["text"], "abort")
+        # SSE-событие session_instruction ушло в канал сессии
+        evs = self.client.get("/api/ledger").json()
+        self.assertTrue(any(e["type"] == "session_instruction" and e["to"] == f"session-{sid}"
+                            for e in evs))
+
+    def test_session_not_found(self):
+        self.assertEqual(self.client.get("/api/sessions/NOPE").status_code, 404)
+        self.assertEqual(self.client.post("/api/sessions/NOPE/start", json={}).status_code, 404)
+        self.assertEqual(self.client.post("/api/sessions/NOPE/kill").status_code, 404)
 
 
 class TestSSEStream(unittest.TestCase):

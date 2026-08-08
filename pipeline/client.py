@@ -1,7 +1,8 @@
 # -*- coding: utf-8 -*-
 """Клиент сервера координации для агентов.
 
-Единый интерфейс notify()/subscribe()/ack()/heartbeat():
+Единый интерфейс notify()/subscribe()/ack()/heartbeat() + явные сессии
+(create_session/get_session/session_status/...):
   - если сервер доступен — SSE-подписка и REST;
   - если нет — фолбэк на файловые флаги в Tasks\\Конвейер\\Уведомления\\ (как в v1).
 
@@ -12,6 +13,8 @@
     c.subscribe(callback)          # callback(event: dict) — блокирующий цикл
     c.ack(event["id"])
     c.heartbeat()
+    s = c.create_session(project, task="A-11", instruction={"task_file": "..."})
+    c.session_status(s["id"], "done", report="rep.md")
 """
 from __future__ import annotations
 
@@ -153,6 +156,75 @@ class Client:
                 if stop_event and stop_event.is_set():
                     break
                 time.sleep(2.0)  # reconnect
+
+    # --- явные сессии субагентов ---------------------------------------------
+
+    def create_session(self, project: str, task: str = "", agent: str = "",
+                       role: str = "worker", model: str = "", skill: str = "",
+                       instruction: dict | None = None, sid: str = "") -> dict | None:
+        """Создать сессию субагента на сервере. Возвращает сессию или None."""
+        try:
+            return self._request("POST", "/api/sessions", body={
+                "id": sid, "project": project, "task": task, "agent": agent,
+                "role": role, "model": model, "skill": skill,
+                "instruction": instruction or {}}, timeout=10.0)
+        except Exception:
+            return None
+
+    def get_session(self, sid: str) -> dict | None:
+        try:
+            return self._request("GET", f"/api/sessions/{sid}", timeout=10.0)
+        except Exception:
+            return None
+
+    def list_sessions(self, project: str = "", task: str = "", status: str = "") -> list:
+        try:
+            return self._request("GET", "/api/sessions",
+                                 params={"project": project, "task": task, "status": status},
+                                 timeout=10.0)
+        except Exception:
+            return []
+
+    def session_start(self, sid: str, pid: int | None = None, cmd: str = "") -> dict | None:
+        try:
+            return self._request("POST", f"/api/sessions/{sid}/start",
+                                 body={"pid": pid, "cmd": cmd}, timeout=10.0)
+        except Exception:
+            return None
+
+    def session_status(self, sid: str, status: str, note: str = "",
+                       report: str = "", error: str = "") -> dict | None:
+        try:
+            return self._request("POST", f"/api/sessions/{sid}/status",
+                                 body={"status": status, "note": note,
+                                       "report": report, "error": error}, timeout=10.0)
+        except Exception:
+            return None
+
+    def session_heartbeat(self, sid: str) -> bool:
+        try:
+            self._request("POST", f"/api/sessions/{sid}/heartbeat", timeout=3.0)
+            return True
+        except Exception:
+            return False
+
+    def session_instruction(self, sid: str, text: str, from_: str = "controller") -> dict | None:
+        """Контролёр -> субагент: инструкция в канал сессии."""
+        try:
+            return self._request("POST", f"/api/sessions/{sid}/instruction",
+                                 body={"from": from_, "to": f"session-{sid}", "text": text},
+                                 timeout=10.0)
+        except Exception:
+            return None
+
+    def session_kill(self, sid: str) -> dict | None:
+        try:
+            return self._request("POST", f"/api/sessions/{sid}/kill", timeout=10.0)
+        except Exception:
+            return None
+
+    def session_stalled(self, sid: str, reason: str = "") -> dict | None:
+        return self.session_status(sid, "stalled", error=reason)
 
     # --- фолбэк на файлы --------------------------------------------------------
 

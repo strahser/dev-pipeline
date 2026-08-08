@@ -154,6 +154,47 @@ class TestStore(unittest.TestCase):
             self.assertEqual(idx["tasks"][0]["task_id"], "A-01")
 
 
+class TestCloseSummaries(unittest.TestCase):
+    """tdl-close-summaries: summary закрывается, когда все execution-потомки done."""
+
+    def _mk_tree(self, root, leaf_done=True):
+        """Миссия(2) -> этап(2.1) -> класс(2.1.1) -> лист(2.1.1.1)."""
+        cfg = ProjectConfig(name="_tdl", root=Path(root))
+        m = make_task("A-31", "_tdl", "Миссия", "2", is_summary=True, goal="ц", source="план")
+        e = make_task("A-32", "_tdl", "Этап", "2.1", is_summary=True, goal="ц", source="план")
+        k = make_task("A-33", "_tdl", "Класс", "2.1.1", is_summary=True, goal="ц", source="план")
+        lf = make_task("A-34", "_tdl", "Лист", "2.1.1.1", goal="ц", acceptance=["к"], commands=["b"])
+        if leaf_done:
+            lf["status"] = "done"
+            lf["workflow_state"] = "verified"
+        for t in (m, e, k, lf):
+            store.save_task(cfg, t)
+        store.rebuild_index(cfg)
+        return cfg
+
+    def test_all_children_done_closes_summaries(self):
+        import argparse
+        from pipeline.tdl import cli as tdl_cli
+        with tempfile.TemporaryDirectory() as tmp:
+            cfg = self._mk_tree(tmp, leaf_done=True)
+            rc = tdl_cli.tdl_close_summaries(cfg, argparse.Namespace())
+            self.assertEqual(rc, 0)
+            for tid in ("A-31", "A-32", "A-33"):
+                t = store.load_task(cfg, tid)
+                self.assertEqual(t["status"], "done", f"{tid} должна закрыться")
+                self.assertEqual(t["workflow_state"], "verified")
+
+    def test_leaf_open_keeps_summaries(self):
+        import argparse
+        from pipeline.tdl import cli as tdl_cli
+        with tempfile.TemporaryDirectory() as tmp:
+            cfg = self._mk_tree(tmp, leaf_done=False)
+            tdl_cli.tdl_close_summaries(cfg, argparse.Namespace())
+            for tid in ("A-31", "A-32", "A-33"):
+                t = store.load_task(cfg, tid)
+                self.assertEqual(t["status"], "open", f"{tid} не должна закрыться при open-листе")
+
+
 class TestMigrate(unittest.TestCase):
     def test_migrate_conservative(self):
         with tempfile.TemporaryDirectory() as tmp:

@@ -1,13 +1,18 @@
 # -*- coding: utf-8 -*-
 """Агент-менеджер (оркестратор): приём миссии/ТЗ -> декомпозиция на подзадачи ->
-запуск субагентов (отдельные opencode-сессии) -> мониторинг -> сводка.
+запуск субагентов -> мониторинг -> сводка.
 
 Это «толкающий» слой поверх сервера/файлов: менеджер НЕ исполняет задачи сам,
-а поднимает отдельных агентов-исполнителей в отдельных opencode-сессиях
-(каждая сессия подхватывает скиллы проекта и протокол конвейера).
+а поднимает отдельных агентов-исполнителей в отдельных ЯВНЫХ СЕССИЯХ на сервере
+(каждая сессия = запись /api/sessions + тонкий session_worker.py, который читает
+инструкцию с сервера и отчитывается через сервер; скиллы проекта и протокол
+конвейера — как и раньше).
 
 Режимы запуска субагента:
-  - parallel (по умолчанию): N субагентов одновременно (каждый = `opencode run`);
+  - явная сессия (по умолчанию): POST /api/sessions + session_worker.py
+    (инструкция/статусы/kill/abort — через сервер);
+  - legacy: сервер недоступен (или --legacy) -> bash-`opencode run` напрямую;
+  - parallel (по умолчанию): N субагентов одновременно;
   - sequential: по одному (полезно при общих файлах/сборке);
   - demo: без реального opencode (генерирует заглушечный отчёт для проверки цикла).
 
@@ -34,6 +39,7 @@ sys.path.insert(0, str(Path(__file__).resolve().parent.parent))
 from pipeline.config import load_config         # noqa: E402
 from pipeline.templates import now               # noqa: E402
 from pipeline.cli import cmd_dispatch            # noqa: E402
+from pipeline.proc import no_window_flags        # noqa: E402
 import argparse as _ap                           # noqa: E402
 
 
@@ -65,7 +71,7 @@ def _pid_alive(pid: int) -> bool:
         try:
             out = subprocess.run(["tasklist", "/FI", f"PID eq {pid}", "/NH"],
                                  capture_output=True, text=True, errors="replace",
-                                 timeout=10).stdout or ""
+                                 timeout=10, creationflags=no_window_flags()).stdout or ""
             return str(pid) in out
         except Exception:
             return False
@@ -85,7 +91,7 @@ def _kill_tree(pid: int) -> None:
         try:
             subprocess.run(["taskkill", "/F", "/T", "/PID", str(pid)],
                            capture_output=True, text=True, errors="replace",
-                           timeout=10)
+                           timeout=10, creationflags=no_window_flags())
             return
         except Exception:
             pass
@@ -341,37 +347,9 @@ layer: {layer}
     dst.write_text(content, encoding="utf-8")
 
 
-def run_subagent(cfg, task_id: str, report_path: Path, log_path: Path,
-                 model: str = "", agent: str = "", skill: str = "", client=None,
-                 worker: str = "") -> int:
-    """Запустить субагента (opencode run) в отдельной сессии. Возвращает rc.
-    model — провайдер/модель (напр. opencode/deepseek-v4-flash-free);
-    agent — роль opencode (--agent); skill — скилл, который субагент обязан загрузить;
-    client — Client сервера (опционально) для публикации событий;
-    worker — 'qwen': субагент-рабочий, тяжёлую генерацию делает облачный Qwen через qwen_bridge."""
-    task_file = None
-    for f in glob.glob(str(cfg.abs_tasks_dir("active") / (task_id + "_*.md"))):
-        task_file = Path(f)
-        break
-    if not task_file:
-        # фолбэк: нет Markdown — создать постановку из TDL JSON (источник истины)
-        from pipeline.tdl import store as tdl_store
-        tdl_task = tdl_store.load_task(cfg, task_id)
-        if tdl_task:
-            task_file = cfg.abs_tasks_dir("active") / f"{task_id}_{slug(tdl_task.get('name', task_id))}.md"
-            _write_task_md_from_tdl(cfg, task_id, tdl_task, task_file)
-        else:
-            print(f"  [manager] задача {task_id} не найдена в Активные и в TDL JSON")
-            return 2
-
-    # open -> in_progress
-    from pipeline.models import Task
-    t = Task.from_file(task_file)
-    if t.status == "open":
-        t.set_status("in_progress")
-        _publish(cfg, client, "task_started", task_id, {"file": task_file.name})
-    _hb(client, f"subagent-{task_id}")
-
+def _build_subprompt(cfg, task_id: str, task_file: Path, report_path: Path,
+                     skill: str = "", worker: str = "") -> str:
+    """Собрать промпт субагента (общий для legacy и сессионного режима)."""
     skill_line = (f"Загрузи скилл '{skill}' ({DEV_PIPELINE_DIR / 'skills' / skill / 'SKILL.md'}) "
                   f"для ролевых правил.\n"
                   f"ВАЖНО: твоя задача УЖЕ ВЫДАНА и прикреплена вложением: {task_file}. "
@@ -419,8 +397,42 @@ def run_subagent(cfg, task_id: str, report_path: Path, log_path: Path,
             skill = qwen_skill
     if skill_line:
         prompt = skill_line + prompt
+    return prompt
+
+
+def _find_task_file(cfg, task_id: str) -> Path | None:
+    """MD-файл задачи в Активные (фолбэк — постановка из TDL JSON)."""
+    for f in glob.glob(str(cfg.abs_tasks_dir("active") / (task_id + "_*.md"))):
+        return Path(f)
+    from pipeline.tdl import store as tdl_store
+    tdl_task = tdl_store.load_task(cfg, task_id)
+    if tdl_task:
+        task_file = cfg.abs_tasks_dir("active") / f"{task_id}_{slug(tdl_task.get('name', task_id))}.md"
+        _write_task_md_from_tdl(cfg, task_id, tdl_task, task_file)
+        return task_file
+    return None
+
+
+def run_subagent_legacy(cfg, task_id: str, report_path: Path, log_path: Path,
+                        model: str = "", agent: str = "", skill: str = "", client=None,
+                        worker: str = "") -> int:
+    """Legacy-режим: opencode run напрямую из bash-процесса (фолбэк без сервера)."""
+    task_file = _find_task_file(cfg, task_id)
+    if not task_file:
+        print(f"  [manager] задача {task_id} не найдена в Активные и в TDL JSON")
+        return 2
+
+    # open -> in_progress
+    from pipeline.models import Task
+    t = Task.from_file(task_file)
+    if t.status == "open":
+        t.set_status("in_progress")
+        _publish(cfg, client, "task_started", task_id, {"file": task_file.name})
+    _hb(client, f"subagent-{task_id}")
+
+    prompt = _build_subprompt(cfg, task_id, task_file, report_path, worker=worker)
     log_path.parent.mkdir(parents=True, exist_ok=True)
-    print(f"  [manager] субагент {task_id}: opencode run"
+    print(f"  [manager] субагент {task_id}: opencode run (legacy)"
           + (f" (model={model})" if model else "")
           + (f" (agent={agent})" if agent else "")
           + (f" (skill={skill})" if skill else "")
@@ -443,7 +455,8 @@ def run_subagent(cfg, task_id: str, report_path: Path, log_path: Path,
     try:
         proc = subprocess.Popen(cmd, cwd=str(cfg.root),
                                 stdout=subprocess.PIPE, stderr=subprocess.PIPE,
-                                text=True, encoding="utf-8", errors="replace")
+                                text=True, encoding="utf-8", errors="replace",
+                                creationflags=no_window_flags())
         # PID-файл: строка 1 — PID, строка 2 — время старта (unix).
         # Сторож (agent_watch) по нему находит сирот: менеджер убит/завис,
         # а субагент продолжает висеть.
@@ -469,6 +482,119 @@ def run_subagent(cfg, task_id: str, report_path: Path, log_path: Path,
             pid_file.unlink(missing_ok=True)
         except Exception:
             pass
+
+
+def run_subagent_session(cfg, task_id: str, report_path: Path, log_path: Path,
+                         model: str = "", agent: str = "", skill: str = "", client=None,
+                         worker: str = "", poll_sec: int = 20) -> int:
+    """Явная сессия: инструкция/статус — через сервер (общение, не bash).
+
+    Создаёт сессию на сервере (POST /api/sessions) с полной инструкцией,
+    запускает тонкого session_worker.py (он читает инструкцию с сервера и
+    отчитывается через сервер), мониторит статус сессии по API. Возвращает rc:
+    0 — done+отчёт; 1 — failed; 124 — killed/stalled/таймаут; 2 — нет задачи."""
+    task_file = _find_task_file(cfg, task_id)
+    if not task_file:
+        print(f"  [manager] задача {task_id} не найдена в Активные и в TDL JSON")
+        return 2
+
+    from pipeline.models import Task
+    t = Task.from_file(task_file)
+    if t.status == "open":
+        t.set_status("in_progress")
+        _publish(cfg, client, "task_started", task_id, {"file": task_file.name})
+
+    prompt = _build_subprompt(cfg, task_id, task_file, report_path, worker=worker)
+    log_path.parent.mkdir(parents=True, exist_ok=True)
+    session = client.create_session(
+        project=cfg.name, task=task_id, agent=f"session-{task_id}",
+        role="qwen" if worker == "qwen" else "worker",
+        model=model or DEFAULT_MODEL, skill=skill or worker,
+        instruction={
+            "task_file": str(task_file), "report": str(report_path),
+            "log": str(log_path), "prompt": prompt, "model": model or DEFAULT_MODEL,
+            "skill": skill or worker, "agent": agent or "", "worker": worker,
+            "task_id": task_id,
+        })
+    if not session:
+        print(f"  [manager] сессия {task_id} НЕ создана (сервер недоступен?) — legacy")
+        return run_subagent_legacy(cfg, task_id, report_path, log_path,
+                                   model=model, agent=agent, skill=skill,
+                                   client=client, worker=worker)
+    sid = session["id"]
+    print(f"  [manager] субагент {task_id}: сессия {sid}"
+          + (f" (model={session.get('model')})" if session.get("model") else "")
+          + (f" (skill={skill})" if skill else "")
+          + (f" (worker={worker})" if worker else ""))
+
+    worker_script = DEV_PIPELINE_DIR / "agents" / "session_worker.py"
+    cmd = [sys.executable, "-X", "utf8", str(worker_script),
+           "--session", sid, "--url", SERVER_URL,
+           "--project", cfg.name, "--cwd", str(cfg.root)]
+    pid_file = log_path.parent / f"{task_id}.pid"
+    pid_file.parent.mkdir(parents=True, exist_ok=True)
+    proc = None
+    try:
+        proc = subprocess.Popen(cmd, cwd=str(cfg.root),
+                                stdout=subprocess.DEVNULL, stderr=subprocess.DEVNULL,
+                                creationflags=no_window_flags())
+        pid_file.write_text(f"{proc.pid}\n{int(time.time())}", encoding="utf-8")
+        # мониторинг через сервер (не через stdout процесса)
+        deadline = time.time() + SUBAGENT_TIMEOUT
+        terminal = ("done", "failed", "killed", "stalled")
+        status = "created"
+        while time.time() < deadline:
+            cur = client.get_session(sid)
+            if not cur:
+                print(f"  [manager] {task_id}: сессия {sid} исчезла с сервера")
+                break
+            status = cur.get("status", "created")
+            if status in terminal:
+                break
+            time.sleep(poll_sec)
+        else:
+            print(f"  [manager] {task_id}: таймаут {SUBAGENT_TIMEOUT} с — убиваю сессию {sid}")
+            client.session_kill(sid)
+            _kill_tree(proc.pid)
+            status = "killed"
+        cur = client.get_session(sid) or {}
+        final = cur.get("status", status)
+        note = (cur.get("note") or "")[:300]
+        if note:
+            print(f"  [manager] {task_id}: {note}")
+        if final == "done":
+            return 0
+        if final in ("failed", "killed", "stalled"):
+            err = (cur.get("error") or "")[:400]
+            print(f"  [manager] {task_id}: сессия {final}" + (f" ({err})" if err else ""))
+            return 124 if final in ("killed", "stalled") else 1
+        print(f"  [manager] {task_id}: сессия завершилась со статусом {final}")
+        return 124
+    finally:
+        if proc is not None:
+            try:
+                proc.wait(timeout=10)
+            except Exception:
+                _kill_tree(proc.pid)
+        try:
+            pid_file.unlink(missing_ok=True)
+        except Exception:
+            pass
+
+
+def run_subagent(cfg, task_id: str, report_path: Path, log_path: Path,
+                 model: str = "", agent: str = "", skill: str = "", client=None,
+                 worker: str = "") -> int:
+    """Запустить субагента. Если сервер доступен — через ЯВНУЮ СЕССИЮ
+    (инструкция и статусы через сервер), иначе legacy opencode run напрямую."""
+    if client is not None and client.server_alive(timeout=3.0):
+        return run_subagent_session(cfg, task_id, report_path, log_path,
+                                    model=model, agent=agent, skill=skill,
+                                    client=client, worker=worker)
+    print(f"  [manager] сервер недоступен — legacy opencode run ({task_id})")
+    return run_subagent_legacy(cfg, task_id, report_path, log_path,
+                               model=model, agent=agent, skill=skill,
+                               client=client, worker=worker)
 
 
 def run_subagent_demo(cfg, task_id: str, report_path: Path):
@@ -523,7 +649,8 @@ def run_planner(cfg, mission_path: Path, title: str, model: str = "") -> Path | 
     try:
         r = subprocess.run(cmd, cwd=str(cfg.root),
                            capture_output=True, text=True, encoding="utf-8",
-                           errors="replace", timeout=1800)
+                           errors="replace", timeout=1800,
+                           creationflags=no_window_flags())
         log_path.write_text((r.stdout or "") + (r.stderr or ""), encoding="utf-8")
     except Exception as e:
         log_path.write_text(f"ОШИБКА ЗАПУСКА ПЛАНИРОВЩИКА: {e}", encoding="utf-8")
@@ -601,7 +728,11 @@ def cmd_task(args):
 
 
 def _run_batch(cfg, ids, args):
-    """Запустить субагентов по задачам (parallel/sequential/demo)."""
+    """Запустить субагентов по задачам (parallel/sequential/demo).
+
+    По умолчанию — ЯВНЫЕ СЕССИИ через сервер (инструкция и статусы через
+    API; session_worker.py — тонкий клиент). --legacy или недоступный сервер —
+    фолбэк на bash opencode run напрямую."""
     reports_dir = cfg.abs_tasks_dir("reports")
     logs_dir = cfg.root / "Tasks" / "Конвейер" / "logs"
     results = {}
@@ -609,6 +740,7 @@ def _run_batch(cfg, ids, args):
     agent = getattr(args, "agent", "")
     skill = getattr(args, "skill", "")
     worker = getattr(args, "worker", "")
+    legacy = bool(getattr(args, "legacy", False))
     # Публикация событий в сервер (опционально): позволяет панели показывать ход задач.
     client = None
     try:
@@ -626,31 +758,28 @@ def _run_batch(cfg, ids, args):
         _print_summary(cfg, ids, results)
         return
 
-    if args.sequential:
-        for tid in ids:
-            report = reports_dir / f"{tid}_Отчёт_{now()}.md"
-            log = logs_dir / f"{tid}_run.log"
+    def _one_subagent(tid):
+        report = reports_dir / f"{tid}_Отчёт_{now()}.md"
+        log = logs_dir / f"{tid}_run.log"
+        if legacy:
+            rc = run_subagent_legacy(cfg, tid, report, log, model=model, agent=agent,
+                                     skill=skill, client=client, worker=worker)
+        else:
             rc = run_subagent(cfg, tid, report, log, model=model, agent=agent, skill=skill,
                               client=client, worker=worker)
+        ok = _ensure_report(cfg, tid, rc)
+        _publish(cfg, client, "subagent_finished", tid, {"rc": rc, "report": ok})
+        return tid, rc, ok
+
+    if args.sequential:
+        for tid, rc, ok in (_one_subagent(tid) for tid in ids):
             results[tid] = rc
-            ok = _ensure_report(cfg, tid, rc)
-            _publish(cfg, client, "subagent_finished", tid,
-                     {"rc": rc, "report": ok})
             print(f"  [manager] {tid}: rc={rc}, отчёт={'есть' if ok else 'НЕТ'}")
     else:
         # parallel: запускаем все разом, ждём по очереди
         from concurrent.futures import ThreadPoolExecutor
-        def _one(tid):
-            report = reports_dir / f"{tid}_Отчёт_{now()}.md"
-            log = logs_dir / f"{tid}_run.log"
-            rc = run_subagent(cfg, tid, report, log, model=model, agent=agent, skill=skill,
-                              client=client, worker=worker)
-            ok = _ensure_report(cfg, tid, rc)
-            _publish(cfg, client, "subagent_finished", tid,
-                     {"rc": rc, "report": ok})
-            return tid, rc, ok
         with ThreadPoolExecutor(max_workers=max(1, args.parallel)) as ex:
-            for tid, rc, ok in ex.map(_one, ids):
+            for tid, rc, ok in ex.map(_one_subagent, ids):
                 results[tid] = rc
                 print(f"  [manager] {tid}: rc={rc}, отчёт={'есть' if ok else 'НЕТ'}")
 
@@ -765,6 +894,8 @@ def main(argv=None):
     p.add_argument("--skill", default="", help="скилл, который субагент обязан загрузить")
     p.add_argument("--worker", default="", choices=["", "qwen"],
                    help="qwen — бесплатный рабочий: генерацию файлов делает облачный Qwen")
+    p.add_argument("--legacy", action="store_true",
+                   help="без явной сессии: opencode run напрямую из bash (фолбэк)")
     p.set_defaults(handler=cmd_mission)
 
     p = sub.add_parser("task")
@@ -778,6 +909,8 @@ def main(argv=None):
     p.add_argument("--skill", default="")
     p.add_argument("--worker", default="", choices=["", "qwen"],
                    help="qwen — бесплатный рабочий: генерацию файлов делает облачный Qwen")
+    p.add_argument("--legacy", action="store_true",
+                   help="без явной сессии: opencode run напрямую из bash (фолбэк)")
     p.set_defaults(handler=cmd_task)
 
     p = sub.add_parser("report")

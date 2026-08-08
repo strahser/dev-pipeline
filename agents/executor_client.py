@@ -27,6 +27,7 @@ sys.path.insert(0, str(Path(__file__).resolve().parent.parent))
 from pipeline.client import Client                 # noqa: E402
 from pipeline.config import load_config             # noqa: E402
 from pipeline.models import Task                    # noqa: E402
+from pipeline.proc import no_window_flags           # noqa: E402
 
 OPENCODE = os.environ.get("OPENCODE_CMD") or "opencode"
 
@@ -45,7 +46,8 @@ def run_opencode(cfg, task: Task) -> str:
     try:
         r = subprocess.run([OPENCODE, "run", prompt], cwd=str(cfg.root),
                            capture_output=True, text=True, encoding="utf-8",
-                           errors="replace", timeout=7200)
+                           errors="replace", timeout=7200,
+                           creationflags=no_window_flags())
         return (r.stdout or "") + (r.stderr or "")
     except Exception as e:
         return f"opencode run упал: {e}"
