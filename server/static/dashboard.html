@@ -468,10 +468,26 @@ function renderTable(){
 
   const page = dt ? dt.page() : 0;
   if (dt){
-    dt.clear();
-    dt.rows.add(cols);
-    dt.draw(false);
-    dt.page(Math.min(page, Math.max(0, dt.page.info().pages-1))).draw(false);
+    // Инкрементальное обновление: меняем только изменившиеся строки,
+    // новые добавляем, удалённые убираем — без полной перерисовки (нет мигания).
+    const byId = new Map();
+    dt.rows().every(function(){ byId.set(this.data()[2], this.index()); });  // task_id -> index
+    const seen = new Set();
+    for (const c of cols){
+      const tid = c[2];
+      seen.add(tid);
+      if (byId.has(tid)){
+        const idx = byId.get(tid);
+        if (JSON.stringify(dt.row(idx).data()) !== JSON.stringify(c)) dt.row(idx).data(c);
+      } else {
+        dt.rows.add([c]);
+      }
+    }
+    // удалить строки, пропавшие из данных (с конца, чтобы индексы не съехали)
+    for (let i = dt.rows().count() - 1; i >= 0; i--){
+      if (!seen.has(dt.cell(i, 2).data())) dt.row(i).remove();
+    }
+    dt.page(Math.min(page, Math.max(0, dt.page.info().pages - 1))).draw(false);
   } else {
     $('tblWrap').innerHTML = '<table id="TaskTable"><thead><tr>'+header.map(h=>'<th>'+h+'</th>').join('')+'</tr></thead><tbody></tbody></table>';
     dt = new DataTable('#TaskTable', {
@@ -507,18 +523,19 @@ function collapseAll(){
 }
 function expandAll(){ collapsed.clear(); renderTable(); }
 
-/* Применить фильтры через скрытые колонки */
+/* Применить фильтры через скрытые колонки (один draw — без мигания) */
 function applyColumnFilters(){
   if (!dt) return;
-  dt.column(15).search($('fKind').value || '', false).draw(false);
-  dt.column(22).search($('fStatus').value || '', false).draw(false);
-  dt.column(23).search($('fWorkflow').value || '', false).draw(false);
-  dt.column(19).search($('fModule').value || '', false).draw(false);
-  dt.column(20).search($('fClass').value || '', false).draw(false);
-  dt.column(21).search($('fLayer').value || '', false).draw(false);
-  dt.column(17).search($('fReport').value || '', false).draw(false);
-  dt.column(18).search($('fVerdict').value || '', false).draw(false);
-  dt.search($('fSearch').value || '', false).draw(false);
+  dt.column(15).search($('fKind').value || '', false);
+  dt.column(22).search($('fStatus').value || '', false);
+  dt.column(23).search($('fWorkflow').value || '', false);
+  dt.column(19).search($('fModule').value || '', false);
+  dt.column(20).search($('fClass').value || '', false);
+  dt.column(21).search($('fLayer').value || '', false);
+  dt.column(17).search($('fReport').value || '', false);
+  dt.column(18).search($('fVerdict').value || '', false);
+  dt.search($('fSearch').value || '', false);
+  dt.draw(false);
 }
 
 function applyFilters(){
@@ -871,9 +888,13 @@ async function fetchRows(){
 }
 
 /* SPA-обновление: обновляем данные, НЕ пересоздаём DataTable — фильтры/пагинация сохраняются */
-async function refreshData(){
+let lastRowsKey = '';
+async function refreshData(force){
   if (!activeProject) return;
   if (!await fetchRows()) return;
+  const key = JSON.stringify(allRows);
+  if (!force && key === lastRowsKey) return;   // данные не менялись — не трогаем DOM (нет «дёргания»)
+  lastRowsKey = key;
   renderStats();
   renderTable();
 }
@@ -903,7 +924,7 @@ function buildShell(){
           '<button onclick="resetFilters()">Сброс</button>'+
           '<button class="primary" onclick="openTokens()">📊 Токены</button>'+
           '<button class="primary" onclick="openDurations()">⏱ Время</button>'+
-          '<button class="primary" onclick="refreshData()">Обновить</button>'+
+          '<button class="primary" onclick="refreshData(true)">Обновить</button>'+
         '</div>'+
       '</div>'+
     '</div>'+
@@ -917,7 +938,7 @@ async function setProject(name){
   $('projectSelect').value = name;
   collapsed.clear();
   await loadFilters();
-  await refreshData();
+  await refreshData(true);
 }
 
 async function boot(){
@@ -930,7 +951,7 @@ async function boot(){
     buildShell();
     await setProject(activeProject);
   } catch(e){ $('content').innerHTML = '<div class="empty">ошибка загрузки проектов: '+esc(String(e))+'</div>'; }
-  // Автообновление без сброса фильтров/пагинации (SPA: clear+rows.add)
+  // Автообновление без сброса фильтров/пагинации (SPA: инкрементально, только при изменении данных)
   setInterval(()=>{ if (!currentTaskId) refreshData(); }, 20000);
 }
 /* --- Чат агентов (полноэкранный, 2 колонки) --- */
@@ -1049,8 +1070,6 @@ function appendChatMsg(m){
 async function sendChatMessage(){
   const text = $('chatText').value.trim();
   if (!text || !chatAgent) return;
-  const a = chatAgentInfo();
-  if (a.chat_ok === false){ appendChatMsg({from:'🛰 dashboard', to:chatAgent, text:'Сессия без прямого чата — общение через POST /api/sessions/{id}/instruction', created_at:new Date().toISOString()}); $('chatText').value=''; return; }
   $('chatText').value = '';
   let msg;
   try {
@@ -1066,20 +1085,11 @@ function chatAgentInfo(){
 }
 function chatPing(){
   if (!chatAgent) return;
-  const a = chatAgentInfo();
-  if (a.chat_ok === false){
-    appendChatMsg({from:'🛰 dashboard', to:chatAgent, text:'🫀 Сессия '+a.session_id+': '+a.current_task+' (role='+a.session_role+')', created_at:new Date().toISOString()});
-    return;
-  }
-  sendChatMessage('ping — проверка связи (ваш heartbeat: '+(a.heartbeat_age_sec!=null?chatHba(a):'неизвестно')+', pid: '+(a.pid||'—')+')');
+  sendChatMessage('ping — проверка связи (сессия: '+(chatAgentInfo().session_id||chatAgent)+', heartbeat: '+(chatAgentInfo().heartbeat_age_sec!=null?chatHba(chatAgentInfo()):'—')+')');
 }
 function chatAskReport(){
   if (!chatAgent) return;
   const a = chatAgentInfo();
-  if (a.chat_ok === false){
-    appendChatMsg({from:'🛰 dashboard', to:chatAgent, text:'📄 Сессия '+a.session_id+' — отчёт: POST /api/sessions/'+a.session_id+' (статус/заметка в панели «Сессии»)', created_at:new Date().toISOString()});
-    return;
-  }
   sendChatMessage(a.current_task
     ? 'отчёт по задаче '+a.current_task+' — пришли сводку (что сделано, доказательства, статус)'
     : 'отчёт — пришли сводку текущего состояния и последних действий');
@@ -1329,7 +1339,7 @@ async function dispatchRequest(id){
     const r = await (await fetch('/api/requests/'+encodeURIComponent(id)+'/dispatch', {method:'POST'})).json();
     if (!r || r.status !== 'dispatched'){ alert('Ошибка: '+(r&&r.detail?r.detail:JSON.stringify(r))); return; }
     loadRequests();
-    refreshData();
+    refreshData(true);
   } catch(e){ alert('Ошибка: '+e); }
 }
 

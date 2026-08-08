@@ -1310,7 +1310,7 @@ async def chat_agents():
             "heartbeat_age_sec": age, "sleeping": False,
             "current_task": (s.get("title") or "")[:60],
             "restartable": False, "killable": True,
-            "live": True, "chat_ok": False, "kind": "opencode",
+            "live": True, "chat_ok": True, "kind": "opencode",
             "session_id": s.get("id"), "title": s.get("title") or "",
         })
 
