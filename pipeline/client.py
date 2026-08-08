@@ -226,6 +226,17 @@ class Client:
     def session_stalled(self, sid: str, reason: str = "") -> dict | None:
         return self.session_status(sid, "stalled", error=reason)
 
+    def create_agent(self, role: str, project: str = "", model: str = "",
+                     task: str = "") -> dict | None:
+        """Создать агента-помощника (сессия + скилл роли). Роли:
+        controller/executor/browser/reviewer/qwen/planner."""
+        try:
+            return self._request("POST", "/api/agents", body={
+                "role": role, "project": project, "model": model, "task": task},
+                timeout=10.0)
+        except Exception:
+            return None
+
     # --- фолбэк на файлы --------------------------------------------------------
 
     def _file_fallback(self, type_: str, to: str, task: str, payload: dict | None) -> dict:

@@ -1310,6 +1310,115 @@ async def index():
     return {"error": "dashboard.html не найден"}
 
 
+# --- Создание агента-помощника (роль + скиллы) ------------------------------
+
+AGENT_ROLES = {
+    "controller": {
+        "title": "Контролёр/планировщик (Агент-1)",
+        "skill": "pipeline-controller",
+        "desc": "Диспатч задач, приём отчётов, вердикты (verify), оркестрация, реакция на task_stalled.",
+        "prompt": ("Ты — Агент-1 (контролёр/планировщик) конвейера dev-pipeline. "
+                   "Прочитай скилл {skill_path} ПЕРВЫМ — там методика и твоя роль.\n"
+                   "Твоя работа: диспатч задач (dispatch), приём отчётов, verify (вердикты PASS/FAIL), "
+                   "оркестрация субагентов, реакция на task_stalled (редиспатч).\n"
+                   "Дай краткий ответ: подтверди роль и опиши текущий статус задач проекта "
+                   "(можешь запустить python -m pipeline.cli tdl-status {project})."),
+    },
+    "executor": {
+        "title": "Исполнитель (Агент-2)",
+        "skill": "pipeline-executor",
+        "desc": "Выполняет задачи A-NN: правит код, собирает, тестирует, пишет отчёты с доказательствами.",
+        "prompt": ("Ты — Агент-2 (исполнитель) конвейера dev-pipeline. "
+                   "Прочитай скилл {skill_path} ПЕРВЫМ — там методика и твоя роль.\n"
+                   "Твоя работа: выполнять задачи из Tasks\\Активные\\A-NN_*.md (или TDL JSON), "
+                   "собирать и тестировать проект, писать отчёты с доказательствами в Tasks\\Отчёты.\n"
+                   "Дай краткий ответ: подтверди роль и покажи, какие задачи сейчас открыты "
+                   "(python -m pipeline.cli tdl-status {project})."),
+    },
+    "browser": {
+        "title": "Облачный мост с ИИ (Агент-3)",
+        "skill": "pipeline-browser-bridge",
+        "desc": "Передаёт промпты в облачный ИИ (Qwen/DeepSeek через LocalAssitent) и возвращает ответы.",
+        "prompt": ("Ты — Агент-3 (браузерный мост) конвейера dev-pipeline. "
+                   "Прочитай скилл {skill_path} ПЕРВЫМ — там методика и твоя роль.\n"
+                   "Твоя работа: забирать задания из Tasks\\Конвейер\\Браузер\\*.txt, отправлять промпты "
+                   "в облачный ИИ через LocalAssitent (Edge 9222) и сохранять ответы.\n"
+                   "Дай краткий ответ: подтверди роль и проверь, есть ли задания в папке Браузер."),
+    },
+    "reviewer": {
+        "title": "Тестировщик/ревьюер",
+        "skill": "pipeline-reviewer",
+        "desc": "Независимая проверка задач: git diff/status, тесты, соответствие факту; вердикт REVIEW.md.",
+        "prompt": ("Ты — тестировщик/ревьюер конвейера dev-pipeline. "
+                   "Прочитай скилл {skill_path} ПЕРВЫМ — там методика и твоя роль.\n"
+                   "Твоя работа: независимо проверять выполненные задачи (git diff/status/log, тесты), "
+                   "фиксировать вердикт REVIEW.md (PASS/NEEDS_CHANGES/FAIL). НЕ правишь код.\n"
+                   "Дай краткий ответ: подтверди роль и покажи незакрытые задачи проекта "
+                   "(python -m pipeline.cli tdl-status {project})."),
+    },
+    "qwen": {
+        "title": "Бесплатный рабочий (Qwen)",
+        "skill": "pipeline-qwen-worker",
+        "desc": "Тонкий локальный агент: тяжёлую генерацию файлов делегирует облачному Qwen через мост.",
+        "prompt": ("Ты — бесплатный рабочий (Qwen) конвейера dev-pipeline. "
+                   "Прочитай скилл {skill_path} ПЕРВЫМ — там схема работы и команды моста.\n"
+                   "Твоя работа: формулировать задачу, отправлять контекст в облачный Qwen через "
+                   "qwen_bridge.py, применять FILE:-блоки ответов, собирать и проверять.\n"
+                   "Дай краткий ответ: подтверди роль и опиши, как начнёшь работу."),
+    },
+    "planner": {
+        "title": "Планировщик миссии",
+        "skill": "pipeline-planner",
+        "desc": "LLM-декомпозиция миссии на этапы/классы/листовые задачи (spec.json → tdl-plan).",
+        "prompt": ("Ты — планировщик миссии конвейера dev-pipeline. "
+                   "Прочитай скилл {skill_path} ПЕРВЫМ — схема выхода, правила декомпозиции.\n"
+                   "Твоя работа: декомпозировать миссию на иерархию этапы→классы→листья и писать "
+                   "spec.json для tdl-plan.\n"
+                   "Дай краткий ответ: подтверди роль и жди файл миссии."),
+    },
+}
+
+SKILLS_DIR = Path(__file__).resolve().parent.parent / "skills"
+
+
+class AgentIn(BaseModel):
+    role: str
+    project: str = ""
+    model: str = ""
+    task: str = ""
+
+
+@app.post("/api/agents")
+async def agent_create(body: AgentIn):
+    """Создать агента-помощника: сессия с ролью и предзагруженным скиллом.
+
+    Агент поднимает opencode run со скиллом роли (методика + роль) и кратким
+    ТЗ. Сессия видна в панели «🗂 Сессии», убить можно через
+    POST /api/sessions/{sid}/kill."""
+    role = body.role
+    cfg = AGENT_ROLES.get(role)
+    if not cfg:
+        raise HTTPException(400, f"роль {role} не известна: {sorted(AGENT_ROLES)}")
+    skill = cfg["skill"]
+    skill_path = SKILLS_DIR / skill / "SKILL.md"
+    if not skill_path.exists():
+        raise HTTPException(404, f"скилл {skill} не найден ({skill_path})")
+    prompt = cfg["prompt"].format(skill_path=skill_path, project=body.project or "?")
+    if body.task:
+        prompt += f"\n\nДОПОЛНИТЕЛЬНОЕ ЗАДАНИЕ (выполни после подтверждения роли):\n{body.task}"
+    sid = _sess_id()
+    s = store.create_session(
+        sid, project=body.project, task="", agent=f"agent-{role}-{sid[-4:]}",
+        role=role, model=body.model or "", skill=skill,
+        instruction={"prompt": prompt, "model": body.model or "", "skill": skill,
+                     "role": role, "task": body.task or ""})
+    ev = store.add_event("session_created", "server", "feed", project=body.project,
+                         task="", payload={"session_id": sid, "agent": s["agent"],
+                                           "role": role, "agent_role": True})
+    hub.publish(ev)
+    return s
+
+
 # --- Явные сессии субагентов ------------------------------------------------
 
 SESSION_CHANNEL = "session-{sid}"   # SSE-канал сессии (агент подписывается как session-<sid>)

@@ -37,6 +37,9 @@
 - API сессий: `POST /api/sessions` (создать), `GET /api/sessions` (список), `GET /api/sessions/{id}`,
   `POST /api/sessions/{id}/start|status|heartbeat|kill|instruction`; лента событий
   `session_created/session_started/session_status/session_stalled`
+- Агенты-помощники по ролям: `POST /api/agents {role, project, model?, task?}` — сессия с
+  предзагруженным скиллом роли (методика+роль): controller/executor/browser/reviewer/qwen/planner;
+  в панели «🗂 Сессии» — кнопка «➕ Новый агент»; kill live opencode-сессий — `POST /api/sessions/live/{sid}/kill`
 - Анти-зависание: сервер — `PIPELINE_WATCH_INTERVAL`/`PIPELINE_WATCH_MAX_AGE`,
   сессии — `PIPELINE_SESSION_MAX_AGE` (default 300 с, heartbeat сессии 30 с; stale → `stalled` + событие);
   сторож — `python -m agents.agent_watch --project <p> [--stall-timeout N]` (env `TASK_STALL_TIMEOUT_SEC`, default 10800);

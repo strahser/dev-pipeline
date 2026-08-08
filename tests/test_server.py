@@ -379,6 +379,32 @@ class TestAppAPI(unittest.TestCase):
         finally:
             app_mod._opencode_db_path = old
 
+    def test_agent_create_roles(self):
+        """POST /api/agents — сессия с ролью и скиллом (контролёр/мост/тестировщик)."""
+        for role in ("controller", "browser", "reviewer"):
+            r = self.client.post("/api/agents", json={"role": role, "project": "P",
+                                                      "task": "проверь статус"})
+            self.assertEqual(r.status_code, 200, f"роль {role}")
+            s = r.json()
+            self.assertEqual(s["role"], role)
+            self.assertTrue(s["id"].startswith("S-"))
+            self.assertEqual(s["status"], "created")
+            self.assertTrue(s["instruction"]["prompt"], "промпт роли должен быть")
+            self.assertIn("SKILL.md", s["instruction"]["prompt"])
+            # скилл роли подхвачен
+            self.assertEqual(s["skill"], app_mod.AGENT_ROLES[role]["skill"])
+            # агент зарегистрирован
+            self.assertTrue(s["agent"].startswith("agent-" + role))
+
+    def test_agent_create_bad_role(self):
+        r = self.client.post("/api/agents", json={"role": "нет_такой"})
+        self.assertEqual(r.status_code, 400)
+
+    def test_agent_create_instruction_contains_task(self):
+        r = self.client.post("/api/agents", json={"role": "executor", "project": "P",
+                                                  "task": "сделай X"})
+        self.assertIn("сделай X", r.json()["instruction"]["prompt"])
+
 
 class TestSSEStream(unittest.TestCase):
     """SSE-поток через реальный uvicorn-сервер (детерминировано, как вручную)."""

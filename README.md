@@ -164,12 +164,23 @@ task_file, report, log, prompt, model, skill), а тонкий `agents/session_w
 - **Анти-зависание**: серверный watchdog (heartbeat.py) помечает сессии без heartbeat
   дольше `PIPELINE_SESSION_MAX_AGE` (default 300 с) как `stalled` + событие; heartbeat
   сессии — 30 с; таймаут исполнения — `SUBAGENT_TIMEOUT_SEC` (default 1800).
+- **Агенты-помощники по ролям**: `POST /api/agents {role, project, model?, task?}` —
+  создаёт сессию с предзагруженным скиллом роли (методика + роль): controller
+  (pipeline-controller), executor (pipeline-executor), browser (pipeline-browser-bridge),
+  reviewer (pipeline-reviewer), qwen (pipeline-qwen-worker), planner (pipeline-planner).
+  Кнопка «➕ Новый агент» в панели «🗂 Сессии».
 - **Фолбэк**: сервер недоступен → `agent_manager` молча переключается на legacy
   `opencode run` напрямую (или флаг `--legacy`); файлы+git остаются источником истины.
 - Dashboard: кнопка «🗂 Сессии» — список сессий (id, задача, роль, статус, PID, возраст,
-  заметка) с живым обновлением и кнопкой «⛔ Убить».
+  заметка) с живым обновлением и кнопкой «⛔ Убить»; секция открытых opencode-сессий
+  (`/api/sessions/live`) с кнопкой «🗑 Убить» (opencode session delete).
 - API сессий: `POST /api/sessions`, `GET /api/sessions?project=&task=&status=`,
-  `GET /api/sessions/{id}`, `POST /api/sessions/{id}/start|status|heartbeat|instruction|kill`.
+  `GET /api/sessions/{id}`, `POST /api/sessions/{id}/start|status|heartbeat|instruction|kill`,
+  `POST /api/agents` (агент-помощник с ролью и скиллом).
+- Оповещения в чат: ключевые события конвейера (session_created/started/status/stalled,
+  task_stalled, report_done, verdict, subagent_finished) приходят в SSE-ленту `feed`
+  и показываются в открытом диалоге чата кратким системным сообщением «🛰 ...»;
+  команды из чата — через `POST /api/chat/command` (очередь + SSE-канал агента).
 
 ## Статус
 
@@ -191,5 +202,7 @@ task_file, report, log, prompt, model, skill), а тонкий `agents/session_w
       watchdog stalled, панель «🗂 Сессии», фолбэк на legacy --legacy
 - [x] Summary-закрытие: tdl-verify автоматически закрывает summary-предков (этапы/классы/
       миссию) при всех done-потомках; команда tdl-close-summaries
-- [x] Полный unit-тест: `python -X utf8 tests/run_all.py` (125 тестов)
+- [x] Агенты-помощники: POST /api/agents (роль+скилл), кнопка «➕ Новый агент»,
+      оповещения ключевых событий в чат (🛰), kill live-сессий opencode из панели
+- [x] Полный unit-тест: `python -X utf8 tests/run_all.py` (130 тестов)
 - [ ] Пилот на тестовой задаче через сервер

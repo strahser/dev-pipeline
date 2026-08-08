@@ -288,6 +288,20 @@ pre.json { background:var(--code); border:1px solid var(--border); border-radius
       <button onclick="loadSessions()">🔄 Обновить</button>
       <span style="margin-left:auto;font-size:11.5px;color:var(--muted)" id="sessionsInfo"></span>
     </div>
+    <div class="agent-create" style="display:flex;flex-wrap:wrap;gap:8px;align-items:flex-end;padding:10px 4px 4px;border-bottom:1px solid var(--border);margin-bottom:8px">
+      <span style="font-size:12px;color:var(--muted);align-self:center">➕ Новый агент:</span>
+      <select id="newAgentRole" style="background:var(--panel2);color:var(--text);border:1px solid var(--border);border-radius:6px;padding:5px 8px;font-size:12.5px">
+        <option value="controller">Агент-1 контролёр/планировщик</option>
+        <option value="executor">Агент-2 исполнитель</option>
+        <option value="browser">Агент-3 облачный мост с ИИ</option>
+        <option value="reviewer">Тестировщик/ревьюер</option>
+        <option value="qwen">Бесплатный рабочий (Qwen)</option>
+        <option value="planner">Планировщик миссии</option>
+      </select>
+      <input id="newAgentModel" placeholder="модель (пусто = default)" style="background:var(--panel2);color:var(--text);border:1px solid var(--border);border-radius:6px;padding:5px 8px;font-size:12.5px;width:220px">
+      <input id="newAgentTask" placeholder="задание (необязательно)" style="background:var(--panel2);color:var(--text);border:1px solid var(--border);border-radius:6px;padding:5px 8px;font-size:12.5px;flex:1;min-width:180px">
+      <button class="primary" onclick="createAgent()" title="Создать сессию: агент получит скилл роли (методика + роль) и запустится через opencode">🚀 Создать</button>
+    </div>
     <div id="sessionsBody"><div class="empty">Загрузка…</div></div>
   </div>
 </div>
@@ -1003,7 +1017,8 @@ async function loadChatHistory(){
   el.scrollTop = el.scrollHeight;
 }
 function appendChatMsg(m){
-  if (!chatAgent || (m.from !== chatAgent && m.to !== chatAgent)) return;
+  if (!chatAgent) return;
+  if (m.from !== chatAgent && m.to !== chatAgent && !String(m.from||'').startsWith('🛰')) return;
   const el = $('chatDialog');
   const wasBottom = el.scrollHeight - el.scrollTop - el.clientHeight < 40;
   const me = m.from === 'dashboard';
@@ -1113,6 +1128,20 @@ async function liveSessionKill(sid, title){
     loadSessions();
   } catch(e){ alert('Ошибка: '+e); }
 }
+async function createAgent(){
+  const role = $('newAgentRole').value;
+  const model = $('newAgentModel').value.trim();
+  const task = $('newAgentTask').value.trim();
+  try {
+    const r = await (await fetch('/api/agents', {method:'POST', headers:{'Content-Type':'application/json'},
+      body: JSON.stringify({role: role, project: activeProject||'', model: model, task: task})})).json();
+    if (!r || !r.id){ alert('Ошибка создания агента: '+(r&&r.detail?r.detail:JSON.stringify(r))); return; }
+    $('newAgentTask').value = '';
+    loadSessions();
+  } catch(e){ alert('Ошибка: '+e); }
+}
+const AGENT_ROLE_LABEL = {controller:'контролёр', executor:'исполнитель', browser:'облачный мост',
+  reviewer:'тестировщик', qwen:'qwen-рабочий', planner:'планировщик', worker:'рабочий'};
 function loadLiveSessions(){
   return fetch('/api/sessions/live?minutes=60')
     .then(r=>r.json())
@@ -1123,6 +1152,7 @@ function renderSessionTable(list, withKill){
   let html = '<table style="width:100%;border-collapse:collapse;font-size:13px"><thead><tr>'+
     '<th style="text-align:left;padding:6px 8px;color:var(--muted)">Сессия</th>'+
     '<th style="text-align:left;padding:6px 8px;color:var(--muted)">Задача</th>'+
+    '<th style="text-align:left;padding:6px 8px;color:var(--muted)">Роль</th>'+
     '<th style="text-align:left;padding:6px 8px;color:var(--muted)">Статус</th>'+
     '<th style="text-align:left;padding:6px 8px;color:var(--muted)">PID</th>'+
     '<th style="text-align:left;padding:6px 8px;color:var(--muted)">Возраст</th>'+
@@ -1130,8 +1160,9 @@ function renderSessionTable(list, withKill){
     '<th style="padding:6px 8px"></th></tr></thead><tbody>';
   for (const s of list){
     html += '<tr>'+
-      '<td style="padding:6px 8px;border-top:1px solid var(--border);font-family:Consolas,monospace;font-size:12px">'+esc(s.id||s.slug||'')+'</td>'+
+      '<td style="padding:6px 8px;border-top:1px solid var(--border);font-family:Consolas,monospace;font-size:12px">'+esc(s.id)+'</td>'+
       '<td style="padding:6px 8px;border-top:1px solid var(--border)">'+(s.task?esc(s.task):'<span class="muted">—</span>')+'</td>'+
+      '<td style="padding:6px 8px;border-top:1px solid var(--border)">'+esc(AGENT_ROLE_LABEL[s.role]||s.role||'')+'</td>'+
       '<td style="padding:6px 8px;border-top:1px solid var(--border)">'+sessionBadge(s.status)+'</td>'+
       '<td style="padding:6px 8px;border-top:1px solid var(--border);font-family:Consolas,monospace;font-size:12px">'+(s.pid||'')+'</td>'+
       '<td style="padding:6px 8px;border-top:1px solid var(--border)">'+sessionAge(s.created_at)+'</td>'+
@@ -1169,7 +1200,7 @@ function loadSessions(){
           '<td style="padding:6px 8px;border-top:1px solid var(--border)">'+liveBadge(s.age_sec)+'</td>'+
           '<td style="padding:6px 8px;border-top:1px solid var(--border);color:var(--muted)">'+sessionAge(new Date((s.time_updated||Date.now())).toISOString())+'</td>'+
           '<td style="padding:6px 8px;border-top:1px solid var(--border);text-align:right">'+
-            (dead ? '<button class="danger" style="padding:3px 8px;font-size:12px" onclick="liveSessionKill(\''+s.id+'\',\''+esc((s.title||'').replace(/'/g,"\\'"))+'\')">🗑 Убить</button>' : '<span class="muted" style="font-size:11px">активна</span>')+
+            '<button class="danger" style="padding:3px 8px;font-size:12px" onclick="liveSessionKill(\''+s.id+'\',\''+esc((s.title||'').replace(/'/g,"\\'"))+'\')" title="'+(dead?'мёртвая сессия':'АКТИВНАЯ сессия — удалить?')+'">🗑 Убить</button>'+
           '</td></tr>';
       }
       html += '</tbody></table>';
@@ -1211,6 +1242,22 @@ function subscribeChatFeed(){
     else if (['task_started','subagent_finished','agent_offline','agent_online','task_stalled',
               'agent_killed','agent_restarted']
              .includes(ev.type)) loadChatAgents();
+    // ключевые события конвейера — кратким системным сообщением в открытый диалог
+    const sysMap = {
+      session_created:   '🆕 сессия '+(ev.payload||{}).session_id+' создана'+(ev.payload&&ev.payload.role?' ('+ev.payload.role+')':''),
+      session_started:   '▶️ сессия '+(ev.payload||{}).session_id+' запущена',
+      session_status:    '🛰 сессия '+(ev.payload||{}).session_id+': '+(ev.payload||{}).status,
+      session_stalled:   '⏸ сессия '+(ev.payload||{}).session_id+' зависла (stalled)',
+      session_instruction: '📨 инструкция → '+(ev.to||'')+': '+esc((ev.text||'').slice(0,60)),
+      task_stalled:      '⚠ задача '+(ev.task||'')+' зависла — нужен редиспатч',
+      report_done:       '📄 отчёт по '+(ev.task||'')+' готов',
+      verdict:           '⚖️ вердикт по '+(ev.task||'')+' вынесен',
+      subagent_finished: '✅ субагент '+(ev.task||'')+' закончил'+(ev.payload&&ev.payload.report?' (отчёт есть)':''),
+    };
+    if (sysMap[ev.type] && chatOpen && chatAgent){
+      const from = (ev.from||'server') === 'server' ? 'server' : (ev.from||'agent');
+      appendChatMsg({from: '🛰 '+from, to: chatAgent, text: sysMap[ev.type], created_at: new Date().toISOString()});
+    }
   };
   src.onerror = ()=>{ /* переподключение EventSource автоматическое */ };
 }
