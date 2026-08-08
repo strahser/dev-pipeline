@@ -1023,13 +1023,14 @@ async function loadChatAgents(){
   $('chatInfo').textContent = 'живых: ' + shown.length;
   $('chatAgents').innerHTML = shown.map(a=>{
     const kindIc = a.kind==='session' ? '🗂' : (a.kind==='opencode' ? '💻' : '🤖');
+    const dispName = a.display_name || a.name;
     return '<div class="chat-agent'+(a.name===chatAgent?' active':'')+'" onclick="selectChatAgent(\''+esc(a.name)+'\')">'+
       chatStatusIcon(a)+
       '<div style="flex:1;min-width:0">'+
-        '<div class="nm">'+kindIc+' '+esc(a.name)+' <span class="rl">· '+esc(a.role)+'</span></div>'+
+        '<div class="nm">'+kindIc+' '+esc(dispName)+' <span class="rl">· '+esc(a.role)+'</span></div>'+
         (a.project ? '<div class="prj">📁 '+esc(a.project)+'</div>' : '')+
         (a.current_task ? '<div class="tk">'+esc(a.current_task).slice(0,60)+'</div>' : '')+
-        (a.chat_ok===false ? '<div class="tk" style="color:var(--muted);font-size:11px">(только просмотр — общение через сессию)</div>' : '')+
+        (a.kind==='session' ? '<div class="tk" style="color:var(--muted);font-size:11px">'+esc(a.name)+'</div>' : '')+
       '</div>'+
       '<span class="hb">'+chatHba(a)+'</span>'+
     '</div>';
@@ -1385,6 +1386,7 @@ function subscribeChatFeed(){
       report_done:       '📄 отчёт по '+(ev.task||'')+' готов',
       verdict:           '⚖️ вердикт по '+(ev.task||'')+' вынесен',
       subagent_finished: '✅ субагент '+(ev.task||'')+' закончил'+(ev.payload&&ev.payload.report?' (отчёт есть)':''),
+      stage_done:        '🏁 этап завершён: '+(ev.payload||{}).wbs+' «'+(ev.payload||{}).name+'" ('+(ev.payload||{}).leaves_done+' задач)',
     };
     if (sysMap[ev.type] && chatOpen && chatAgent){
       const from = (ev.from||'server') === 'server' ? 'server' : (ev.from||'agent');

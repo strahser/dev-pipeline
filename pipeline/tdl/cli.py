@@ -21,6 +21,39 @@ def _task_or_die(cfg, task_id: str) -> dict:
     return t
 
 
+# Hook публикации событий на сервер координации (ставит контролёр/менеджер).
+# Сигнатура: publish(type_, project, task, payload) -> None. По умолчанию —
+# лёгкий клиент с фолбэком: сервер недоступен — молча пропускаем.
+_publish_hook = None
+
+
+def set_publish_hook(fn) -> None:
+    """Контролёр (agent_watch/agent_manager) ставит свой публикатор, чтобы
+    события конвейера (в т.ч. stage_done) доходили в чат/ленту."""
+    global _publish_hook
+    _publish_hook = fn
+
+
+def _publish_stage_done(cfg, idx_task: dict, task: dict, leaves: list) -> None:
+    """Оповестить о завершении этапа/класса/миссии (summary закрыт)."""
+    payload = {"task_id": task["task_id"], "wbs": task.get("wbs_code", ""),
+               "name": task.get("name", ""), "leaves_done": len(leaves)}
+    try:
+        if _publish_hook:
+            _publish_hook("stage_done", cfg.name, task["task_id"], payload)
+            return
+        import os as _os
+        import sys as _sys
+        from pathlib import Path as _Path
+        _sys.path.insert(0, str(_Path(__file__).resolve().parent.parent.parent))
+        from pipeline.client import Client  # noqa: E402
+        c = Client("controller", project=cfg.name, base_url=_os.environ.get(
+            "PIPELINE_SERVER_URL", "http://127.0.0.1:8787"))
+        c.notify("stage_done", to="feed", task=task["task_id"], payload=payload)
+    except Exception:
+        pass  # сервер недоступен — файлы+git остаются источником истины
+
+
 def tdl_init(cfg, args) -> int:
     store.ensure_dirs(cfg)
     ip = store.rebuild_index(cfg)
@@ -174,7 +207,10 @@ def tdl_index(cfg, args) -> int:
 
 def tdl_close_summaries(cfg, args) -> int:
     """Закрыть summary-задачи (миссия/этапы/классы), у которых ВСЕ
-    execution-потомки по WBS уже done. Возвращает количество закрытых."""
+    execution-потомки по WBS уже done. Возвращает количество закрытых.
+
+    При закрытии каждого этапа/миссии публикует событие stage_done
+    (через publish_hook — контролёр шлёт его в чат)."""
     idx = store.load_index(cfg) or {"tasks": []}
     tasks = {t["task_id"]: t for t in idx["tasks"]}
     # глубина WBS: потомок = wbs начинается с "prefix."
@@ -205,6 +241,7 @@ def tdl_close_summaries(cfg, args) -> int:
             closed += 1
             print(f"  {t['task_id']} [{t.get('wbs_code')}]: summary закрыта "
                   f"({len(leaves)} потомков done)")
+            _publish_stage_done(cfg, t, task, leaves)
     if closed:
         store.rebuild_index(cfg)
     print(f"TDL-CLOSE-SUMMARIES: закрыто summary {closed}")

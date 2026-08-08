@@ -1284,8 +1284,11 @@ async def chat_agents():
             continue
         age = _age_sec(s.get("heartbeat") or s.get("created_at"))
         role_cfg = AGENT_ROLES.get(s.get("role", ""), {})
+        # name = SSE-канал сессии (session_worker слушает session-<sid>),
+        # display_name — человеческое имя агента для чата
         out.append({
-            "name": s.get("agent") or f"session-{s['id']}",
+            "name": f"session-{s['id']}",
+            "display_name": s.get("agent") or f"session-{s['id']}",
             "role": role_cfg.get("title") or s.get("role", "субагент"),
             "status": "online", "project": s.get("project", ""),
             "pid": s.get("pid"), "cmd": s.get("cmd", ""),
@@ -1293,7 +1296,7 @@ async def chat_agents():
             "heartbeat_age_sec": age, "sleeping": False,
             "current_task": s.get("task", ""),
             "restartable": bool(s.get("cmd")), "killable": s.get("pid") is not None,
-            "live": True, "chat_ok": False, "kind": "session",
+            "live": True, "chat_ok": True, "kind": "session",
             "session_id": s["id"], "session_role": s.get("role", ""),
         })
 

@@ -162,12 +162,25 @@ def run_session(client: Client, sid: str, cwd: str) -> int:
 
     def on_event(ev):
         etype = ev.get("type", "")
-        text = (ev.get("text") or "").strip().lower()
-        if etype in ("session_instruction", "message") and ("abort" in text or "stop" in text):
-            print(f"[session_worker] инструкция {sid}: {text[:80]} — прерываю")
-            abort.set()
-            if proc and proc.poll() is None:
-                _kill_tree(proc.pid)
+        text = (ev.get("text") or "").strip()
+        low = text.lower()
+        if etype in ("session_instruction", "message"):
+            src = ev.get("from") or "dashboard"
+            if "abort" in low or "stop" in low:
+                print(f"[session_worker] инструкция {sid}: {text[:80]} — прерываю")
+                abort.set()
+                if proc and proc.poll() is None:
+                    _kill_tree(proc.pid)
+            else:
+                # сообщение из чата/контролёра: ответить статусом (общение через сервер)
+                print(f"[session_worker] сообщение {sid} от {src}: {text[:100]}")
+                reply = (f"[{s.get('agent') or sid}] принял: {text[:200]}"
+                         f"\nСессия {sid}: задача {task_id or '—'}, статус running"
+                         f" (отчёт/заметка — в панели «Сессии»).")
+                try:
+                    client.send_message(src, reply)
+                except Exception:
+                    pass
 
     # 3. SSE-подписка на канал сессии: контролёр может прервать
     sse_stop = threading.Event()

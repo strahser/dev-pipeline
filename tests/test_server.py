@@ -278,7 +278,8 @@ class TestAppAPI(unittest.TestCase):
             app_mod._opencode_db_path = old
 
     def test_chat_agents_live_session_shown(self):
-        """Живая сессия субагента (running) показывается в чате с chat_ok=False."""
+        """Живая сессия субагента (running) показывается в чате; имя = канал
+        session-<sid>, display_name = agent; можно писать (chat_ok=True)."""
         old = app_mod._opencode_db_path
         app_mod._opencode_db_path = lambda: None
         try:
@@ -288,8 +289,10 @@ class TestAppAPI(unittest.TestCase):
             r = self.client.get("/api/chat/agents")
             rows = [a for a in r.json() if a["kind"] == "session"]
             self.assertEqual(len(rows), 1)
+            self.assertEqual(rows[0]["name"], f"session-{s['id']}")
+            self.assertEqual(rows[0]["display_name"], "session-A-5")
             self.assertEqual(rows[0]["session_id"], s["id"])
-            self.assertFalse(rows[0]["chat_ok"])
+            self.assertTrue(rows[0]["chat_ok"], "сессии можно писать из чата")
             self.assertEqual(rows[0]["current_task"], "A-5")
         finally:
             app_mod._opencode_db_path = old

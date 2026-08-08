@@ -340,6 +340,14 @@ def main():
     cfg = load_config(a.project)
     client = Client("controller", project=cfg.name, base_url=a.url,
                     notif_dir=str(cfg.resolve(cfg.notif)))
+    # события конвейера (stage_done и др.) — в ленту/чат через сервер
+    try:
+        from pipeline.tdl import cli as tdl_cli
+        tdl_cli.set_publish_hook(
+            lambda type_, project, task, payload: client.notify(
+                type_, to="feed", task=task, payload=payload) or True)
+    except Exception:
+        pass
 
     if a.polling_only or not client.server_alive():
         print(f"[watch] сервер недоступен — файловый поллинг ({cfg.root})")

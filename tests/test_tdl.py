@@ -194,6 +194,29 @@ class TestCloseSummaries(unittest.TestCase):
                 t = store.load_task(cfg, tid)
                 self.assertEqual(t["status"], "open", f"{tid} не должна закрыться при open-листе")
 
+    def test_stage_done_published_on_close(self):
+        """При закрытии summary публикуется событие stage_done (hook)."""
+        import argparse
+        from pipeline.tdl import cli as tdl_cli
+        events = []
+        old_hook = tdl_cli._publish_hook
+        tdl_cli.set_publish_hook(lambda type_, project, task, payload:
+                                 events.append((type_, project, task, payload)))
+        try:
+            with tempfile.TemporaryDirectory() as tmp:
+                cfg = self._mk_tree(tmp, leaf_done=True)
+                tdl_cli.tdl_close_summaries(cfg, argparse.Namespace())
+        finally:
+            tdl_cli.set_publish_hook(old_hook)
+        self.assertTrue(events, "должно быть событие stage_done")
+        for type_, project, task, payload in events:
+            self.assertEqual(type_, "stage_done")
+            self.assertEqual(project, "_tdl")
+            self.assertIn("wbs", payload)
+            self.assertIn("leaves_done", payload)
+        # миссия (A-31) тоже закрылась — событий не меньше 3 (класс+этап+миссия)
+        self.assertGreaterEqual(len(events), 3)
+
 
 class TestMigrate(unittest.TestCase):
     def test_migrate_conservative(self):
