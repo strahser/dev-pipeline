@@ -1,4 +1,4 @@
-# -*- coding: utf-8 -*-
+﻿# -*- coding: utf-8 -*-
 """Парсер планов ProjectsPalns — источник истины для план-раннера.
 
 Поддерживает два формата карточек:
@@ -213,9 +213,14 @@ def _deps_from(raw: str, own_id: str) -> list:
 
 def parse_plan(path) -> Plan:
     path = Path(path)
-    text = path.read_text(encoding="utf-8")
+    text = path.read_text(encoding='utf-8-sig')
     plan = Plan(path=path)
-    mtitle = re.search(r"^#\s+(?:План:\s*)?(.+)$", text, re.M)
+    mtitle = None
+    # первый H1, который НЕ является заголовком карточки (секционный формат)
+    for m in re.finditer(r"^#\s+(.+)$", text, re.M):
+        if not CARD_RE.match(m.group(0)):
+            mtitle = m
+            break
     plan.title = mtitle.group(1).strip() if mtitle else path.stem
     mm = re.search(r"##\s*Миссия\s*\n(.*?)(?=\n##\s|\Z)", text, re.S)
     plan.mission = mm.group(1).strip()[:4000] if mm else ""
@@ -317,7 +322,7 @@ def set_card_status(path, card_id: str, status: str) -> bool:
     """Обновить статус карточки прямо в файле плана (буллет, эмодзи в заголовке,
     ячейка таблицы СДР). Возвращает True, если файл изменён."""
     path = Path(path)
-    text = path.read_text(encoding="utf-8")
+    text = path.read_text(encoding='utf-8-sig')
     plan = parse_plan(path)
     card = plan.card(card_id)
     changed = False
@@ -392,3 +397,4 @@ def render_card(card: Card) -> str:
     if card.deps:
         parts.append("\n## Зависимости (уже выполнены)\n" + ", ".join(card.deps))
     return "\n".join(parts)
+
