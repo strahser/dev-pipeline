@@ -1224,10 +1224,14 @@ async function loadRunning(){
 }
 
 async function fetchRows(){
+  const proj = activeProject;                    // фиксируем проект запроса
   try {
-    allRows = await get('/api/plan/tasks?project='+encodeURIComponent(activeProject));
+    const rows = await get('/api/plan/tasks?project='+encodeURIComponent(proj));
+    if (proj !== activeProject) return false;    // пока летел запрос — проект сменился
+    allRows = rows;
   } catch(e){
-    $('content').innerHTML = '<div class="empty">ошибка: '+esc(String(e))+'</div>';
+    if (proj === activeProject)
+      $('content').innerHTML = '<div class="empty">ошибка: '+esc(String(e))+'</div>';
     return false;
   }
   return true;
@@ -1313,10 +1317,14 @@ async function boot(){
 /* Баннер над таблицей: почему пусто / какой план выбран */
 let planMetaCache = {};
 async function refreshPlanBanner(){
-  if (!activeProject) return;
+  const proj = activeProject;                    // фиксируем проект запроса
+  if (!proj) return;
   try {
-    planMetaCache[activeProject] = await get('/api/plan/meta?project='+encodeURIComponent(activeProject));
-  } catch(e){ planMetaCache[activeProject] = null; }
+    const m = await get('/api/plan/meta?project='+encodeURIComponent(proj));
+    if (proj !== activeProject) return;          // ответ устарел
+    planMetaCache[proj] = m;
+  } catch(e){ planMetaCache[proj] = null; }
+  if (proj !== activeProject) return;
   let host = document.querySelector('.filter-card');
   if (!host) return;
   let b = document.getElementById('planBanner');

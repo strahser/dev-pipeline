@@ -137,22 +137,40 @@ def _sort_key(cid: str):
     return tuple(int(p) if p.isdigit() else p.lower() for p in parts)
 
 
+COMBO_KEYS = ("Слой", "Модуль", "Статус", "Чекпоинт")
+PROSE_KEYS = tuple(k for k in BULLETS if k not in COMBO_KEYS)
+
+
 def _extract_bullets(text: str) -> dict:
-    """Разобрать '- **Поле**: значение' (значение может тянуться до следующего буллета)."""
-    out = {}
-    pattern = re.compile(
-        r"^-\s*\*\*(?P<k>" + "|".join(BULLETS) + r")\*\*\s*:\s*(?P<v>.*)$", re.M)
-    marks = [(m.group("k"), m.start("v"), m.end()) for m in pattern.finditer(text)]
-    ends = [m.end() for m in pattern.finditer(text)]
-    for i, (k, vstart, _) in enumerate(marks):
-        vend = marks[i + 1][2] - len("- **") if i + 1 < len(marks) else len(text)
-        # конец значения — начало строки следующего буллета
-        nxt = len(text)
-        if i + 1 < len(marks):
-            m = list(pattern.finditer(text))[i + 1]
-            nxt = m.start()
-        val = text[vstart:nxt].strip().rstrip("\n").strip()
-        out[k] = val
+    """'- **Поле**: значение'. Двухпроходно:
+    1) прозаичные поля — значение до следующего буллета (многострочно);
+    2) комбостроки '- **Слой**: x · **Модуль**: y · **Статус**: z' — по сегментам '·'."""
+    out: dict = {}
+
+    # 1) прозаичные (многострочные)
+    pat_prose = re.compile(
+        r"^-\s*\*\*(?P<k>" + "|".join(PROSE_KEYS) + r")\*\*\s*:\s*", re.M)
+    ms = list(pat_prose.finditer(text))
+    for i, m in enumerate(ms):
+        vstart = m.end()
+        vend = ms[i + 1].start() if i + 1 < len(ms) else len(text)
+        val = text[vstart:vend].strip()
+        if val:
+            out.setdefault(m.group("k"), val)
+
+    # 2) комбостроки: сегменты '·' внутри строк, начинающихся с '- '
+    pat_seg = re.compile(r"\*\*(?P<k>" + "|".join(COMBO_KEYS) + r")\*\*\s*:\s*")
+    trim_edges = re.compile(r"^[`\s·]+|[`\s·]+$")
+    for line in text.splitlines():
+        if not line.lstrip().startswith("- "):
+            continue
+        kms = list(pat_seg.finditer(line))
+        for i, m in enumerate(kms):
+            vstart = m.end()
+            vend = kms[i + 1].start() if i + 1 < len(kms) else len(line)
+            val = trim_edges.sub("", line[vstart:vend])
+            if val:
+                out.setdefault(m.group("k"), val)
     return out
 
 
