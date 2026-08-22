@@ -627,6 +627,108 @@ async def api_pulse(project: str = ""):
     return out
 
 
+# ---------------------------------------------------------------------------
+# Пульс по ВСЕМ проектам (главный экран)
+# ---------------------------------------------------------------------------
+
+@router.get("/api/pulse_all")
+async def api_pulse_all():
+    """Карточки всех проектов: прогресс этапов (с названиями), время работы,
+    работает/завис, открытые вопросы и чекпоинты."""
+    import datetime as _dt
+    items = []
+    for name in list_projects():
+        try:
+            cfg = _load_cfg_lazy(name)
+        except ConfigError:
+            continue
+        it = {"project": name}
+
+        pf = cfg.find_plan_file()
+        it["found"] = bool(pf)
+        plan = _plan_or_none(cfg)
+        if plan:
+            it["plan_title"] = plan.title[:120]
+            it["overall"] = plan.progress()
+            stages, order = {}, []
+            for c in plan.execution_cards():
+                core = c.id.split("-", 1)[-1]
+                sid = c.id.rsplit(".", 1)[0] if "." in core else ""
+                if not sid:
+                    continue
+                if sid not in stages:
+                    trow = plan.sdr_rows.get(sid)
+                    scard = plan.card(sid)
+                    tname = (trow or {}).get("name") or (scard.title if scard else "")
+                    tname = re.sub(r"^\s*Этап\s*\d+[.:]?\s*", "", str(tname)).strip()
+                    stages[sid] = {"stage": sid,
+                                   "title": (tname or ("Этап " + sid))[:70],
+                                   "done": 0, "total": 0}
+                    order.append(sid)
+                stages[sid]["total"] += 1
+                if c.status == "done":
+                    stages[sid]["done"] += 1
+            it["stages"] = [stages[k] for k in order]
+        else:
+            it["stages"] = []
+
+        sf = cfg.conveyor_dir() / "runner_state.json"
+        rn = None
+        if sf.exists():
+            try:
+                rn = json.loads(sf.read_text(encoding="utf-8"))
+            except Exception:
+                rn = None
+        it["runner"] = ({k: rn[k] for k in ("phase", "card", "attempt", "note", "title")
+                         if k in rn} if rn else None)
+
+        # время работы из событий конвейера
+        evs = _store.recent_events(limit=1000, project=cfg.name) if _store else []
+        started = {}
+        total_sec = 0.0
+        run_sec = None
+        run_card = None
+        now = _dt.datetime.now()
+
+        def pdt(v):
+            try:
+                d = _dt.datetime.fromisoformat(str(v).replace("Z", "+00:00"))
+                return d.astimezone().replace(tzinfo=None) if d.tzinfo else d
+            except ValueError:
+                return None
+
+        for e in evs:
+            tid = e.get("task") or ""
+            if not tid:
+                continue
+            if e["type"] == "task_started":
+                started.setdefault(tid, e["created_at"])
+            elif e["type"] == "subagent_finished" and tid in started:
+                s = pdt(started.pop(tid))
+                f = pdt(e["created_at"])
+                if s and f:
+                    total_sec += max(0, (f - s).total_seconds())
+        for tid, ts in started.items():   # незакрытый интервал = работает сейчас
+            s = pdt(ts)
+            if s:
+                sec = max(0, int((now - s).total_seconds()))
+                if run_sec is None or sec > run_sec:
+                    run_sec, run_card = sec, tid
+        it["work_sec"] = int(total_sec)
+        it["running_sec"] = run_sec
+        it["running_card"] = run_card
+
+        q = await questions_list(project=name)
+        it["questions_open"] = len([x for x in q if not x.get("answered")])
+        cps = await checkpoints_list(project=name)
+        it["checkpoints_open"] = len(cps)
+        sd = cfg.conveyor_dir() / "stalled"
+        it["stalled"] = [p.stem for p in sorted(sd.glob("*.txt"))] if sd.is_dir() else []
+
+        items.append(it)
+    return {"projects": items}
+
+
 @router.get("/api/brief")
 async def api_brief(project: str = "", card: str = ""):
     """Markdown-дайджест проекта: план/этап, коммиты, артефакты, вопросы, конвейер."""
