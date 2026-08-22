@@ -1298,7 +1298,9 @@ async function boot(){
       '<option value="'+esc(p.name)+'">'+(p.has_plan?'★ ':'')+esc(p.name)+'</option>').join('');
     sel.addEventListener('change', ()=> setProject(sel.value));
     // по умолчанию — проект со звездой (есть план); иначе первый
-    activeProject = ((arr.find(p=>p.has_plan)) || arr[0] || {}).name || '';
+    const first = arr.find(p=>p.has_plan) || arr[0];
+    activeProject = (typeof first === 'string') ? first : (first && first.name) || '';
+    if (typeof activeProject !== 'string') activeProject = '';   // страховка от объектов
     buildShell();
     await setProject(activeProject);
   } catch(e){ $('content').innerHTML = '<div class="empty">ошибка загрузки проектов: '+esc(String(e))+'</div>'; }

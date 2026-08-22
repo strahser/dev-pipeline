@@ -1123,7 +1123,9 @@ async def chat_command(body: MessageIn):
 async def index():
     from fastapi.responses import FileResponse
     if DASHBOARD.exists():
-        return FileResponse(DASHBOARD, media_type="text/html; charset=utf-8")
+        # без кэша: панель часто обновляется вместе с бэкендом
+        return FileResponse(DASHBOARD, media_type="text/html; charset=utf-8",
+                            headers={"Cache-Control": "no-store"})
     return {"error": "dashboard.html не найден"}
 
 
@@ -1413,7 +1415,8 @@ async def session_kill(sid: str):
 async def dashboard_page():
     from fastapi.responses import FileResponse
     if DASHBOARD.exists():
-        return FileResponse(DASHBOARD, media_type="text/html; charset=utf-8")
+        return FileResponse(DASHBOARD, media_type="text/html; charset=utf-8",
+                            headers={"Cache-Control": "no-store"})
     raise HTTPException(404, "dashboard.html не найден")
 
 
