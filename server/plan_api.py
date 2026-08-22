@@ -284,6 +284,19 @@ def _row(tid, name, status, *, kind, level, parent, description, dates,
 # Эндпоинты плана
 # ---------------------------------------------------------------------------
 
+@router.get("/api/plan/meta")
+async def plan_meta(project: str = ""):
+    """Лёгкие метаданные плана: найден ли файл, заголовок, прогресс (для баннера панели)."""
+    cfg = _cfg_or_404(project)
+    pf = cfg.find_plan_file()
+    out = {"project": cfg.name, "found": bool(pf), "file": str(pf) if pf else ""}
+    if pf:
+        from pipeline.plans import load as load_plan
+        pl = load_plan(pf)
+        out.update({"title": pl.title[:140], "progress": pl.progress()})
+    return out
+
+
 @router.get("/api/plan")
 async def plan_overview(project: str = ""):
     cfg = _cfg_or_404(project)

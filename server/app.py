@@ -453,7 +453,16 @@ async def api_activity(limit: int = 50, project: str = ""):
 
 @app.get("/api/projects")
 async def api_projects():
-    return list_projects()
+    """Проекты + признак наличия плана (панель помечает ★ и выбирает их первыми)."""
+    out = []
+    for name in list_projects():
+        try:
+            cfg = load_config(name)
+            has_plan = cfg.find_plan_file() is not None
+        except ConfigError:
+            has_plan = False
+        out.append({"name": name, "has_plan": has_plan})
+    return out
 
 
 def _parse_iso_dt(v) -> datetime.datetime | None:

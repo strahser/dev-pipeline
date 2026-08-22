@@ -1243,6 +1243,7 @@ async function refreshData(force){
   lastRowsKey = key;
   renderStats();
   renderTable();
+  refreshPlanBanner();
 }
 
 /* Построить каркас один раз, дальше только обновлять данные */
@@ -1289,11 +1290,15 @@ async function setProject(name){
 
 async function boot(){
   try {
-    const projects = await get('/api/projects');
+    const raw = await get('/api/projects');
+    // бэкенд отдаёт [{name, has_plan}]; старый формат (строки) тоже принимаем
+    const arr = raw.map(p => typeof p === 'string' ? {name: p, has_plan: false} : p);
     const sel = $('projectSelect');
-    sel.innerHTML = projects.map(p=>'<option value="'+esc(p)+'">'+esc(p)+'</option>').join('');
+    sel.innerHTML = arr.map(p =>
+      '<option value="'+esc(p.name)+'">'+(p.has_plan?'★ ':'')+esc(p.name)+'</option>').join('');
     sel.addEventListener('change', ()=> setProject(sel.value));
-    activeProject = projects[0] || '';
+    // по умолчанию — проект со звездой (есть план); иначе первый
+    activeProject = ((arr.find(p=>p.has_plan)) || arr[0] || {}).name || '';
     buildShell();
     await setProject(activeProject);
   } catch(e){ $('content').innerHTML = '<div class="empty">ошибка загрузки проектов: '+esc(String(e))+'</div>'; }
@@ -1301,6 +1306,40 @@ async function boot(){
   setInterval(()=>{ if (!currentTaskId) refreshData(); }, 20000);
   await qaCounts();                       // счётчики вопросов/чекпоинтов в шапке
   setInterval(qaCounts, 15000);
+}
+
+/* Баннер над таблицей: почему пусто / какой план выбран */
+let planMetaCache = {};
+async function refreshPlanBanner(){
+  if (!activeProject) return;
+  try {
+    planMetaCache[activeProject] = await get('/api/plan/meta?project='+encodeURIComponent(activeProject));
+  } catch(e){ planMetaCache[activeProject] = null; }
+  let host = document.querySelector('.filter-card');
+  if (!host) return;
+  let b = document.getElementById('planBanner');
+  if (!b){
+    b = document.createElement('div');
+    b.id = 'planBanner';
+    b.style.cssText = 'margin:10px 0;padding:10px 12px;border-radius:8px;font-size:13px;border:1px solid var(--border);background:var(--panel)';
+    host.parentNode.insertBefore(b, host.nextSibling);
+  }
+  const m = planMetaCache[activeProject];
+  if (m === null || m === undefined){
+    b.style.borderColor = 'var(--border)';
+    b.innerHTML = '<span class="muted">Метаданные плана недоступны — вероятно, сервер запущен до обновления. Перезапустите сервер (Ctrl+C в его окне, затем повторите команду запуска).</span>';
+  } else if (m.found){
+    const pr = m.progress || {done:0,total:0};
+    b.style.borderColor = 'var(--border)';
+    b.innerHTML = '📋 <b>'+esc(m.title||'план')+'</b> · выполнено '+pr.done+' из '+pr.total+
+      ' · файл: <code style="font-size:11.5px">'+esc(m.file.split('\\').pop())+'</code>'+
+      ' <span class="muted">(статусы ведутся прямо в файле плана ProjectsPalns)</span>';
+  } else {
+    b.style.borderColor = 'var(--yellow,#eab308)';
+    b.innerHTML = '⚠ У проекта <b>'+esc(activeProject)+'</b> нет файла плана (папка _current пуста или '+
+      'в pipeline.yaml нет секции plan:) — поэтому таблица пуста. '+
+      'Выберите сверху проект со ★ — по нему план-раннер уже работает.';
+  }
 }
 /* --- Чат агентов (полноэкранный, 2 колонки) --- */
 let chatOpen = false;
