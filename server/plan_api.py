@@ -533,6 +533,23 @@ def _q_path(cfg, qid: str) -> Path:
     return cfg.questions_dir() / f"{qid}.md"
 
 
+# ---------------------------------------------------------------------------
+# Project Brief (Уровень 1): авто-дайджест контекста для субагента
+# ---------------------------------------------------------------------------
+
+@router.get("/api/brief")
+async def api_brief(project: str = "", card: str = ""):
+    """Markdown-дайджест проекта: план/этап, коммиты, артефакты, вопросы, конвейер."""
+    cfg = _cfg_or_404(project)
+    from pipeline.brief import build_brief
+    card_obj = None
+    plan = _plan_or_none(cfg)
+    if plan and card:
+        card_obj = plan.card(card)
+    md = build_brief(cfg, card=card_obj)
+    return {"project": cfg.name, "card": card, "brief": md}
+
+
 @router.get("/api/questions")
 async def questions_list(project: str = ""):
     out = []

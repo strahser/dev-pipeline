@@ -275,6 +275,21 @@ def cmd_verify(cfg, args):
     return 0 if v == "PASS" else 2
 
 
+def cmd_brief(cfg, args):
+    """Project Brief: авто-дайджест контекста (план/коммиты/артефакты/вопросы)."""
+    from .brief import build_brief
+    card = None
+    if getattr(args, "card", ""):
+        from pipeline.plans import load as load_plan
+        pf = cfg.find_plan_file()
+        if pf:
+            card = load_plan(pf).card(args.card)
+            if card is None:
+                print(f"КАРТОЧКА {args.card} не найдена в плане — бриф без привязки")
+    print(build_brief(cfg, card=card))
+    return 0
+
+
 def cmd_status(cfg, _args):
     lines = [f"# СТАТУС КОНВЕЙЕРА — {templates.now()}", ""]
     for key, label in [("inbox", "Входящие (не оформлены)"), ("active", "Активные (в работе)"),
@@ -328,6 +343,11 @@ def main(argv=None):
 
     p = sub.add_parser("verify"); add_project(p); p.add_argument("task")
     p.set_defaults(handler=lambda a: cmd_verify(load_config(a.project), a))
+
+    p = sub.add_parser("brief"); add_project(p)
+    p.add_argument("card", nargs="?", default="",
+                   help="СДР карточки для привязки этапа (необязательно)")
+    p.set_defaults(handler=lambda a: cmd_brief(load_config(a.project), a))
 
     args = ap.parse_args(argv)
     if not getattr(args, "cmd", None):

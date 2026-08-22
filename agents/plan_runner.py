@@ -51,7 +51,7 @@ CHECKPOINTS_POLL_SEC = 15
 CARD_PROMPT = """Ты исполняешь КАРТОЧКУ ПЛАНА проекта {project}. Постановка прикреплена файлом: {task_file}
 
 {card_text}
-
+{brief_block}
 ПОРЯДОК РАБОТЫ (строго):
 
 ЭТАП A. GRILL — пойми задачу ДО правок:
@@ -390,6 +390,16 @@ id: {card.id}
                 prompt = (CARD_PROMPT
                           .replace("{card_text}", render_card(card) + extra_error)
                           .replace("{dp}", dp_dir))
+                # Project Brief (Уровень 1): авто-дайджест в промпт карточки
+                brief_block = ""
+                try:
+                    from pipeline.brief import build_brief
+                    b = build_brief(self.cfg, card=card)
+                    if b:
+                        brief_block = "\n" + b + "\n"
+                except Exception as e:
+                    print(f"[runner] brief недоступен: {e}")
+                prompt = prompt.replace("{brief_block}", brief_block)
                 grill = _grill_skill_path()
                 if grill:
                     prompt = prompt.replace(
