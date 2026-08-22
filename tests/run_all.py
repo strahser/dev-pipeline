@@ -18,9 +18,10 @@ MODULES = [
     "test_server",
     "test_client",
     "test_agents",
-    "test_tdl",
     "test_qwen_bridge",
     "test_session_e2e",
+    "test_plans",
+    "test_plan_runner",
 ]
 
 

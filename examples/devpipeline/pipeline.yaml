@@ -1,0 +1,61 @@
+# Конфигурация конвейера для самого dev-pipeline (Python, самохостинг).
+# План-раннер ведёт собственную доработку по плану
+# ProjectsPalns\dev-pipeline\_current\2026-08-21_dev-pipeline-plan-runner-v2.md.
+
+project:
+  name: devpipeline
+  root: [D:\Projects\dev-pipeline]
+  branch: main
+
+# План проекта в ProjectsPalns
+plan:
+  repo: [D:\Projects\ProjectsPalns, E:\ПлагиныРевит\ProjectsPalns]
+  subdir: dev-pipeline
+  file: 2026-08-21_dev-pipeline-plan-runner-v2.md
+
+# Параметры план-раннера
+runner:
+  model: opencode-go/deepseek-v4-flash
+  retries: 2
+  question_timeout_sec: 1200
+  checkpoint_stages: true
+
+tasks:
+  inbox: Tasks\Входящие
+  active: Tasks\Активные
+  reports: Tasks\Отчёты
+  archive: Tasks\Архив
+  protocol: Tasks\00_Протокол_агентов.md
+  status: Tasks\Статус_конвейера.md
+  conveyor: Tasks\Конвейер
+  notif: Tasks\Конвейер\Уведомления
+
+build:
+  msbuild: none
+  sln: ""
+  configuration: ""
+  platform: ""
+  extra_args: []
+
+tests:
+  runner: pytest
+  vstest: ""
+  dll: tests
+  baseline_passed: 121
+  baseline_total: 121
+
+checks:
+  - id: D-01
+    label: 'TDL удалён: импорты pipeline.tdl отсутствуют'
+    kind: grep_dir
+    dir: pipeline
+    pattern: from\s+pipeline\.tdl|import\s+pipeline\.tdl
+    expect: 0
+
+layer_rules:
+  - label: 'agents не импортируют server (тонкие клиенты через pipeline.client)'
+    pattern: from\s+server|import\s+server\b
+    expect: 0
+    dirs: [agents]
+
+audit_dirs: []

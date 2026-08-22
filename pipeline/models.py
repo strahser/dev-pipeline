@@ -135,3 +135,19 @@ def parse_tests_dotnet(out: str) -> tuple:
     total = last_num(r"[Вв]сего", r"Total", r"Total tests")
     failed = last_num(r"[Нн]е пройдено", r"Failed", r"[Нн]еуспешно")
     return passed, total, failed
+
+
+def parse_tests_pytest(out: str) -> tuple:
+    """Парсинг `python -m pytest -q`: '3 failed, 26 passed, 2 skipped in 1.2s'.
+    Возвращает (passed, total, failed); failed=0 при отсутствии совпадения."""
+    def num(pattern: str):
+        m = re.search(rf"(\d+)\s+{pattern}\b", out)
+        return int(m.group(1)) if m else 0
+
+    passed = num("passed")
+    failed = num("failed") + num("error")
+    skipped = num("skipped") + num("xfailed") + num("xpassed")
+    total = passed + failed + skipped
+    if total == 0:
+        return None, None, None
+    return passed, total, failed

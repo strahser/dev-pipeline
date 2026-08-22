@@ -1,0 +1,55 @@
+# Конфигурация конвейера для проекта MepBimServer (лэндинг: Django + HTML/Three.js).
+# План ведётся в ProjectsPalns\MepBimServer\_current\.
+# Сборки нет (статический фронтенд), тестовой инфраструктуры пока нет (runner: none).
+
+project:
+  name: mepbimserver
+  root: [D:\Projects\MepBimServer]
+  branch: dev
+
+# План проекта в ProjectsPalns
+plan:
+  repo: [D:\Projects\ProjectsPalns, E:\ПлагиныРевит\ProjectsPalns]
+  subdir: MepBimServer
+  file: 2026-08-21_landing-production-prep.md
+
+# Параметры план-раннера
+runner:
+  model: opencode-go/deepseek-v4-flash
+  retries: 2
+  question_timeout_sec: 1200
+  checkpoint_stages: true
+
+tasks:
+  inbox: Tasks\Входящие
+  active: Tasks\Активные
+  reports: Tasks\Отчёты
+  archive: Tasks\Архив
+  protocol: Tasks\00_Протокол_агентов.md
+  status: Tasks\Статус_конвейера.md
+  conveyor: Tasks\Конвейер
+  notif: Tasks\Конвейер\Уведомления
+
+build:
+  msbuild: none
+  sln: ""
+  configuration: ""
+  platform: ""
+  extra_args: []
+
+tests:
+  runner: none
+  vstest: ""
+  dll: ""
+  baseline_passed: null
+  baseline_total: null
+
+checks:
+  - id: C-01
+    label: 'Снимок данных в единственном экземпляре (raw_snapshot.json канонический)'
+    kind: grep_dir
+    dir: ui
+    pattern: "^PLACEHOLDER_NEVER_MATCHES$"
+    expect: 0
+
+audit_dirs: []

@@ -8,6 +8,20 @@ project:
   root: [D:\Projects\HeatLossRevit2, E:\ПлагиныРевит\HeatLossRevit2]
   branch: refactoring/architecture-cleanup
 
+# План проекта в ProjectsPalns. file не задан: берётся новейший _current/*.md —
+# закрепите конкретный файл, когда план-раннер ведёт один план.
+plan:
+  repo: [D:\Projects\ProjectsPalns, E:\ПлагиныРевит\ProjectsPalns]
+  subdir: HeatLossRevit2
+  file: ""
+
+# Параметры план-раннера
+runner:
+  model: opencode-go/deepseek-v4-flash
+  retries: 2
+  question_timeout_sec: 1200
+  checkpoint_stages: true
+
 tasks:
   inbox: Tasks\Входящие
   active: Tasks\Активные

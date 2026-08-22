@@ -100,29 +100,6 @@ def _kill_tree(pid: int) -> None:
     except OSError:
         pass
 
-PLANNER_PROMPT = """Ты — планировщик конвейера dev-pipeline. Загрузи скилл планировщика:
-{skill_path} (прочитай его ПЕРВЫМ: схема выхода, правила декомпозиции).
-
-Прочитай файл миссии: {mission}
-
-ЗАДАЧА: декомпозируй миссию на иерархию «этапы → классы/пакеты → листовые задачи»
-и ЗАПИШИ спецификацию JSON строго по схеме из скилла в файл:
-  {spec_path}
-
-Требования (кратко, детали — в скилле):
-- Максимум 4 уровня WBS; листовые задачи атомарные, с goal-глаголом и 2-4 проверяемыми acceptance_criteria.
-- Первая фаза — «Анализ и подготовка» (одна листовая задача).
-- Каждая листовая задача — с estimate_sec (план, секунды; 0.5–8 ч на лист).
-- module/class_name/layer — из реальной структуры проекта ({project}); наследуй от пакета.
-- Без дублей: одна проблема = одна задача.
-- НЕ трогай код проекта, НЕ коммить, НЕ собирай.
-
-После записи файла выведи ОБЯЗАТЕЛЬНО строку:
-SPEC_OK {spec_path}
-и SUMMARY: сколько этапов, классов, листов и суммарный estimate.
-"""
-
-
 def _publish(cfg, client, type_: str, task_id: str, payload: dict | None = None):
     """Опубликовать событие в сервер координации (опционально; молча при недоступности)."""
     if client is None:
@@ -147,8 +124,6 @@ SUBPROMPT = """ТЕБЕ ВЫДАНА КОНКРЕТНАЯ ЗАДАЧА: {task_fi
 начинай работу немедленно с шага 0.
 
 ПОРЯДОК РАБОТЫ (строго):
-0. Если есть TDL-задача Tasks\\JSON\\Active\\{task_id}.task.json — прочитай её ПЕРВОЙ
-   (goal, acceptance_criteria, verification.commands) — это источник истины.
 1. Прочитай {task_file} (контекст, требования, границы).
 2. СРАЗУ применяй изменения в проекте: edit/write файлов. Не пиши план, не описывай намерения — редактируй.
 3. После правок запусти сборку: dotnet build Core.Tests/Core.Tests.csproj --nologo -v q  (cwd = корень проекта). Убедись EXIT 0.
@@ -156,11 +131,8 @@ SUBPROMPT = """ТЕБЕ ВЫДАНА КОНКРЕТНАЯ ЗАДАЧА: {task_fi
    (baseline в pipeline.yaml проекта; до правок обычно 8/15 — укажи фактическое в отчёте).
 5. Создай отчёт ПО-РУССКИ в {report}: секции «Что было не так», «Что сделано» (пути файлов),
    «Доказательства» (выводы сборки/тестов), «Числа до/после», «Открытые вопросы», «Как пересобрать/проверить».
-6. Если есть TDL-задача — создай также JSON-отчёт:
-   python -X utf8 -m pipeline.cli tdl-report {project} {task_id} --from-md {report}
-   (команда tdl-report в dev-pipeline; {project} = имя проекта, {task_id} = id задачи)
-7. В шапке задачи {task_file} замени 'статус: in_progress' на 'статус: done_report'.
-8. Коммит: git add -A; git commit -m "agent/{task_id}: отчёт исполнителя".
+6. В шапке задачи {task_file} замени 'статус: in_progress' на 'статус: done_report'.
+7. Коммит: git add -A; git commit -m "agent/{task_id}: отчёт исполнителя".
 
 Правила:
 - Временные файлы (логи тестов и т.п.) пиши В ПРОЕКТ (папка Tasks\\Конвейер\\logs\\), НЕ в %TEMP% —
@@ -211,8 +183,7 @@ def split_mission(text: str, n: int) -> list[str]:
 
 
 def dispatch_chunk(cfg, chunk: str, idx: int, total: int, title: str) -> str:
-    """Создать задачу A-NN в Активные из куска миссии. Возвращает id.
-    Если TDL включён — дополнительно создаёт JSON-задачу (wbs 1.idx, goal, criteria)."""
+    """Создать задачу A-NN в Активные из куска миссии. Возвращает id."""
     tid = next_task_id(cfg)
     task_file = f"{tid}_{slug(title)}.md"
     dst = cfg.abs_tasks_dir("active") / task_file
@@ -250,38 +221,8 @@ id: {tid}
 - (задача выдана {now()})
 """
     dst.write_text(content, encoding="utf-8")
-
-    # TDL JSON-задача (источник истины, если включено)
-    if getattr(cfg, "tdl_enabled", True):
-        try:
-            from pipeline.tdl._tpl import make_task
-            from pipeline.tdl import store as tdl_store
-            wbs = f"1.{idx:02d}"
-            t = make_task(
-                task_id=tid, project=cfg.name, name=f"{title} (часть {idx}/{total})",
-                wbs=wbs, priority="высокий", goal=body,
-                acceptance=[body[:2000]],
-                commands=_tdl_commands(cfg),
-                source=f"миссия {title} (часть {idx}/{total})",
-            )
-            tdl_store.save_task(cfg, t)
-            tdl_store.rebuild_index(cfg)
-        except Exception as e:
-            print(f"  [manager] TDL-задача {tid} не создана: {e}")
-
     print(f"  [manager] задача {tid}: {task_file}")
     return tid
-
-
-def _tdl_commands(cfg) -> list:
-    """Команды проверки из конфига проекта (build + test)."""
-    cmds = []
-    if cfg.msbuild.lower() == "dotnet" and cfg.sln:
-        cmds.append(f"dotnet build {cfg.sln} --nologo -v q")
-        cmds.append(f"dotnet test {cfg.sln} --nologo -v q")
-    elif cfg.msbuild:
-        cmds.append(f"\"{cfg.msbuild}\" {cfg.root / cfg.sln} /t:Build /p:Configuration={cfg.configuration} /p:Platform=\"{cfg.platform}\"")
-    return cmds
 
 
 def subagent_env(cfg):
@@ -294,62 +235,12 @@ def subagent_env(cfg):
     )
 
 
-def _write_task_md_from_tdl(cfg, task_id: str, tdl_task: dict, dst) -> None:
-    """Создать MD-постановку (для legacy-совместимости) из TDL JSON-задачи."""
-    name = tdl_task.get("name", task_id)
-    goal = tdl_task.get("goal", "")
-    criteria = tdl_task.get("acceptance_criteria") or [goal]
-    module = tdl_task.get("module", "")
-    class_name = tdl_task.get("class_name", "")
-    layer = tdl_task.get("layer", "")
-    wbs = tdl_task.get("wbs_code", "")
-    content = f"""---
-id: {task_id}
-приоритет: {tdl_task.get('priority', 'средний')}
-статус: open
-постановщик: агент-менеджер (tdl-plan)
-исполнитель: subagent
-дата: {now()}
-wbs: {wbs}
-module: {module}
-class_name: {class_name}
-layer: {layer}
----
-
-# ЗАДАЧА: {name} (WBS {wbs})
-
-## Контекст
-{goal}
-
-## Модуль / Класс / Слой
-- Модуль: {module or '—'}
-- Класс: {class_name or '—'}
-- Слой: {layer or '—'}
-
-## Требования (критерии приёмки)
-"""
-    for i, c in enumerate(criteria, 1):
-        content += f"{i}. {c}\n"
-    content += f"""
-## Границы (что НЕ делать)
-- Не менять архитектуру сверх задачи; не трогать файлы вне своей части.
-- Не коммитить: .idea\\, .opencode\\, bin\\obj, TestResults\\.
-- Не создавать субагентов; задачу самому не закрывать (закрытие — только контролёр).
-
-## Результат (куда положить артефакты)
-Отчёт — Tasks\\Отчёты\\{task_id}_Отчёт_<дата>.md по шаблону протокола;
-коммит agent/{task_id}.
-
-## Ход работы (заполняет исполнитель)
-- (задача выдана {now()})
-"""
-    dst.parent.mkdir(parents=True, exist_ok=True)
-    dst.write_text(content, encoding="utf-8")
-
-
 def _build_subprompt(cfg, task_id: str, task_file: Path, report_path: Path,
-                     skill: str = "", worker: str = "") -> str:
-    """Собрать промпт субагента (общий для legacy и сессионного режима)."""
+                     skill: str = "", worker: str = "",
+                     prompt_override: str = "") -> str:
+    """Собрать промпт субагента (общий для legacy и сессионного режима).
+
+    prompt_override — полная замена базового SUBPROMPT (используется план-раннером)."""
     skill_line = (f"Загрузи скилл '{skill}' ({DEV_PIPELINE_DIR / 'skills' / skill / 'SKILL.md'}) "
                   f"для ролевых правил.\n"
                   f"ВАЖНО: твоя задача УЖЕ ВЫДАНА и прикреплена вложением: {task_file}. "
@@ -357,15 +248,23 @@ def _build_subprompt(cfg, task_id: str, task_file: Path, report_path: Path,
                   f"Tasks\\Активные в поисках других задач — сразу приступай к шагам из промпта.\n"
                   if skill else "") + ""
 
-    prompt = SUBPROMPT.format(
-        task_file=task_file,
-        protocol=cfg.resolve(cfg.protocol),
-        controller_prompt=str(cfg.root / "Tasks" / "00_Контролёр_промпт" / "ControlerPromptv1.txt"),
-        executor_instr=str(cfg.root / "Tasks" / "Конвейер" / "ИНСТРУКЦИЯ_исполнителю.md"),
-        report=report_path,
-        task_id=task_id,
-        project=cfg.name,
-    )
+    if prompt_override:
+        prompt = prompt_override.format(
+            task_file=task_file,
+            report=report_path,
+            task_id=task_id,
+            project=cfg.name,
+        )
+    else:
+        prompt = SUBPROMPT.format(
+            task_file=task_file,
+            protocol=cfg.resolve(cfg.protocol),
+            controller_prompt=str(cfg.root / "Tasks" / "00_Контролёр_промпт" / "ControlerPromptv1.txt"),
+            executor_instr=str(cfg.root / "Tasks" / "Конвейер" / "ИНСТРУКЦИЯ_исполнителю.md"),
+            report=report_path,
+            task_id=task_id,
+            project=cfg.name,
+        )
     if worker == "qwen":
         qwen_skill = "pipeline-qwen-worker"
         qwen_bridge = DEV_PIPELINE_DIR / "agents" / "qwen_bridge.py"
@@ -388,8 +287,8 @@ def _build_subprompt(cfg, task_id: str, task_file: Path, report_path: Path,
             "--out Tasks\\00_Референсы\\Qwen_<тема>.md --apply --dir \"<корень проекта>\"\n"
             "  ШАГ 5. Проверь сборку и тесты (см. команды в задаче/конфиге). При ошибках — "
             "отправь лог Qwen на исправление (повторный вызов моста с логом в --context).\n"
-            "  ШАГ 6. Создай отчёт (см. SUBPROMPT ниже) и JSON-отчёт.\n"
-            "Прочитай скилл pipeline-qwen-worker (E:\\ПлагиныРевит\\dev-pipeline\\skills\\pipeline-qwen-worker\\SKILL.md) — "
+            "  ШАГ 6. Создай отчёт (см. SUBPROMPT ниже).\n"
+            "Прочитай скилл pipeline-qwen-worker (D:\\Projects\\revit-skills\\.opencode\\skills\\pipeline-qwen-worker\\SKILL.md) — "
             "там схема работы и команды моста.\n"
         )
         prompt = qwen_block + prompt
@@ -401,21 +300,15 @@ def _build_subprompt(cfg, task_id: str, task_file: Path, report_path: Path,
 
 
 def _find_task_file(cfg, task_id: str) -> Path | None:
-    """MD-файл задачи в Активные (фолбэк — постановка из TDL JSON)."""
+    """MD-файл задачи в Активные."""
     for f in glob.glob(str(cfg.abs_tasks_dir("active") / (task_id + "_*.md"))):
         return Path(f)
-    from pipeline.tdl import store as tdl_store
-    tdl_task = tdl_store.load_task(cfg, task_id)
-    if tdl_task:
-        task_file = cfg.abs_tasks_dir("active") / f"{task_id}_{slug(tdl_task.get('name', task_id))}.md"
-        _write_task_md_from_tdl(cfg, task_id, tdl_task, task_file)
-        return task_file
     return None
 
 
 def run_subagent_legacy(cfg, task_id: str, report_path: Path, log_path: Path,
                         model: str = "", agent: str = "", skill: str = "", client=None,
-                        worker: str = "") -> int:
+                        worker: str = "", prompt_override: str = "") -> int:
     """Legacy-режим: opencode run напрямую из bash-процесса (фолбэк без сервера)."""
     task_file = _find_task_file(cfg, task_id)
     if not task_file:
@@ -430,7 +323,8 @@ def run_subagent_legacy(cfg, task_id: str, report_path: Path, log_path: Path,
         _publish(cfg, client, "task_started", task_id, {"file": task_file.name})
     _hb(client, f"subagent-{task_id}")
 
-    prompt = _build_subprompt(cfg, task_id, task_file, report_path, worker=worker)
+    prompt = _build_subprompt(cfg, task_id, task_file, report_path, worker=worker,
+                              prompt_override=prompt_override)
     log_path.parent.mkdir(parents=True, exist_ok=True)
     print(f"  [manager] субагент {task_id}: opencode run (legacy)"
           + (f" (model={model})" if model else "")
@@ -486,7 +380,7 @@ def run_subagent_legacy(cfg, task_id: str, report_path: Path, log_path: Path,
 
 def run_subagent_session(cfg, task_id: str, report_path: Path, log_path: Path,
                          model: str = "", agent: str = "", skill: str = "", client=None,
-                         worker: str = "", poll_sec: int = 20) -> int:
+                         worker: str = "", poll_sec: int = 20, prompt_override: str = "") -> int:
     """Явная сессия: инструкция/статус — через сервер (общение, не bash).
 
     Создаёт сессию на сервере (POST /api/sessions) с полной инструкцией,
@@ -504,7 +398,8 @@ def run_subagent_session(cfg, task_id: str, report_path: Path, log_path: Path,
         t.set_status("in_progress")
         _publish(cfg, client, "task_started", task_id, {"file": task_file.name})
 
-    prompt = _build_subprompt(cfg, task_id, task_file, report_path, worker=worker)
+    prompt = _build_subprompt(cfg, task_id, task_file, report_path, worker=worker,
+                              prompt_override=prompt_override)
     log_path.parent.mkdir(parents=True, exist_ok=True)
     session = client.create_session(
         project=cfg.name, task=task_id, agent=f"session-{task_id}",
@@ -520,7 +415,8 @@ def run_subagent_session(cfg, task_id: str, report_path: Path, log_path: Path,
         print(f"  [manager] сессия {task_id} НЕ создана (сервер недоступен?) — legacy")
         return run_subagent_legacy(cfg, task_id, report_path, log_path,
                                    model=model, agent=agent, skill=skill,
-                                   client=client, worker=worker)
+                                   client=client, worker=worker,
+                                   prompt_override=prompt_override)
     sid = session["id"]
     print(f"  [manager] субагент {task_id}: сессия {sid}"
           + (f" (model={session.get('model')})" if session.get("model") else "")
@@ -584,17 +480,19 @@ def run_subagent_session(cfg, task_id: str, report_path: Path, log_path: Path,
 
 def run_subagent(cfg, task_id: str, report_path: Path, log_path: Path,
                  model: str = "", agent: str = "", skill: str = "", client=None,
-                 worker: str = "") -> int:
+                 worker: str = "", prompt_override: str = "") -> int:
     """Запустить субагента. Если сервер доступен — через ЯВНУЮ СЕССИЮ
     (инструкция и статусы через сервер), иначе legacy opencode run напрямую."""
     if client is not None and client.server_alive(timeout=3.0):
         return run_subagent_session(cfg, task_id, report_path, log_path,
                                     model=model, agent=agent, skill=skill,
-                                    client=client, worker=worker)
+                                    client=client, worker=worker,
+                                    prompt_override=prompt_override)
     print(f"  [manager] сервер недоступен — legacy opencode run ({task_id})")
     return run_subagent_legacy(cfg, task_id, report_path, log_path,
                                model=model, agent=agent, skill=skill,
-                               client=client, worker=worker)
+                               client=client, worker=worker,
+                               prompt_override=prompt_override)
 
 
 def run_subagent_demo(cfg, task_id: str, report_path: Path):
@@ -624,57 +522,6 @@ def run_subagent_demo(cfg, task_id: str, report_path: Path):
     return 0
 
 
-def run_planner(cfg, mission_path: Path, title: str, model: str = "") -> Path | None:
-    """LLM-планировщик: миссия -> spec.json (этапы/классы/листы с оценками).
-
-    Запускает opencode run со скиллом pipeline-planner; планировщик пишет spec.json
-    в Tasks\\Конвейер\\планы\\. Возвращает путь spec или None при неудаче."""
-    plans_dir = cfg.root / "Tasks" / "Конвейер" / "планы"
-    plans_dir.mkdir(parents=True, exist_ok=True)
-    import datetime
-    spec_path = plans_dir / f"{slug(title)}_{datetime.date.today().isoformat()}.spec.json"
-    skill_path = DEV_PIPELINE_DIR / "skills" / "pipeline-planner" / "SKILL.md"
-    prompt = PLANNER_PROMPT.format(
-        skill_path=skill_path,
-        mission=mission_path,
-        spec_path=spec_path,
-        project=cfg.name,
-    )
-    cmd = [OPENCODE, "run", prompt, "-f", str(mission_path), "--auto"]
-    if model:
-        cmd += ["-m", model]
-    log_path = plans_dir / f"_planner_{slug(title)}.log"
-    print(f"  [manager] планировщик: opencode run -> {spec_path.name}"
-          + (f" (model={model})" if model else ""))
-    try:
-        r = subprocess.run(cmd, cwd=str(cfg.root),
-                           capture_output=True, text=True, encoding="utf-8",
-                           errors="replace", timeout=1800,
-                           creationflags=no_window_flags())
-        log_path.write_text((r.stdout or "") + (r.stderr or ""), encoding="utf-8")
-    except Exception as e:
-        log_path.write_text(f"ОШИБКА ЗАПУСКА ПЛАНИРОВЩИКА: {e}", encoding="utf-8")
-        return None
-    if not spec_path.exists():
-        print(f"  [manager] планировщик НЕ создал spec ({spec_path}); лог: {log_path}")
-        return None
-    # валидация JSON-структуры
-    try:
-        import json
-        spec = json.loads(spec_path.read_text(encoding="utf-8"))
-        phases = spec.get("phases", [])
-        if not phases or not all(isinstance(p, dict) and p.get("name") for p in phases):
-            print("  [manager] spec невалиден: нужны phases[].name")
-            return None
-        leaves = [l for p in phases for pk in p.get("packages", [])
-                  for l in (pk.get("tasks", []) if isinstance(pk, dict) else [])]
-        print(f"  [manager] планировщик: этапов={len(phases)}, листов={len(leaves)}")
-        return spec_path
-    except Exception as e:
-        print(f"  [manager] spec не распознан JSON: {e}")
-        return None
-
-
 def cmd_mission(args):
     cfg = load_config(args.project)
     mission = Path(args.mission)
@@ -684,26 +531,6 @@ def cmd_mission(args):
     for d in ("active", "reports"):
         cfg.abs_tasks_dir(d).mkdir(parents=True, exist_ok=True)
     title = args.title or mission.stem
-
-    # Режим --plan: LLM-декомпозиция первого уровня -> tdl-plan (иерархия WBS)
-    if args.plan:
-        spec_path = run_planner(cfg, mission, title, model=args.model)
-        if spec_path is None:
-            print("[manager] планировщик не сработал — фолбэк на наивный split_mission "
-                  "(без иерархии TDL)")
-        else:
-            from pipeline.tdl.cli import tdl_plan
-            import argparse
-            pa = argparse.Namespace(file=str(spec_path), title=title)
-            rc = tdl_plan(cfg, pa)
-            if rc == 0:
-                print(f"\n[manager] план создан ({spec_path}). Дерево:")
-                from pipeline.tdl.cli import tdl_tree
-                tdl_tree(cfg, argparse.Namespace())
-                print("\nЗапуск исполнения: python -m agents.agent_manager --project "
-                      f"{args.project} --task <A-NN> [--sequential|--parallel N]")
-                return 0
-            print("[manager] tdl-plan вернул ошибку — фолбэк на split_mission")
 
     text = mission.read_text(encoding="utf-8")
     chunks = split_mission(text, args.split)
@@ -811,19 +638,14 @@ def _ensure_report(cfg, tid: str, rc: int) -> bool:
 
 
 def _mark_stalled(cfg, tid: str, reason: str):
-    """Пометка stalled в TDL history (источник истины) + печать."""
+    """Пометка зависания: файл-маркер Tasks\\Конвейер\\stalled\\<tid>.txt (файлы = источник правды)."""
     try:
-        from pipeline.tdl import store as tdl_store
-        t = tdl_store.load_task(cfg, tid)
-        if t:
-            t["history"].append({
-                "timestamp": datetime.datetime.now(datetime.timezone.utc).strftime("%Y-%m-%dT%H:%M:%SZ"),
-                "actor": "agent-manager", "action": "task_stalled",
-                "details": reason,
-            })
-            tdl_store.save_task(cfg, t)
-            tdl_store.rebuild_index(cfg)
-            print(f"  [manager] {tid}: пометка task_stalled — {reason}")
+        d = cfg.root / "Tasks" / "Конвейер" / "stalled"
+        d.mkdir(parents=True, exist_ok=True)
+        marker = d / f"{tid}.txt"
+        if not marker.exists():
+            marker.write_text(f"{now()}\n{reason}\n", encoding="utf-8")
+        print(f"  [manager] {tid}: пометка task_stalled — {reason}")
     except Exception as e:
         print(f"  [manager] stalled-пометка {tid} не сохранена: {e}")
 
@@ -881,9 +703,6 @@ def main(argv=None):
     p = sub.add_parser("mission")
     p.add_argument("--project", default="meptaggingsolution")
     p.add_argument("--mission", required=True)
-    p.add_argument("--plan", action="store_true",
-                   help="LLM-планировщик: декомпозиция миссии на этапы/классы/листы "
-                        "со спецификацией для tdl-plan (вместо наивного split_mission)")
     p.add_argument("--split", type=int, default=3)
     p.add_argument("--title")
     p.add_argument("--demo", action="store_true")

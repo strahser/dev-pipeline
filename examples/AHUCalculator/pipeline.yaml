@@ -1,12 +1,25 @@
 # Конфигурация конвейера для проекта AHUCalculator (WPF, C# .NET 8, slnx).
-# ВНИМАНИЕ: AHUCalculator НЕ ведёт TDL-задачи и Tasks-структуру — агент-исполнитель
-# работает отдельной сессией и складывает PLAN/REPORT в dev-pipeline\pipeline_output\AHUCalculator\.
+# Агент-исполнитель работает отдельной сессией и складывает PLAN/REPORT
+# в dev-pipeline\pipeline_output\AHUCalculator\.
 # Регистрация здесь нужна, чтобы проект отображался в панели конвейера.
 
 project:
   name: AHUCalculator
   root: [D:\Projects\AHUCalculator, E:\ПлагиныРевит\AHUCalculator]
   branch: master
+
+# План проекта в ProjectsPalns (папка AHUCalculator/_current; пока пусто — план появится)
+plan:
+  repo: [D:\Projects\ProjectsPalns, E:\ПлагиныРевит\ProjectsPalns]
+  subdir: AHUCalculator
+  file: ""
+
+# Параметры план-раннера
+runner:
+  model: opencode-go/deepseek-v4-flash
+  retries: 2
+  question_timeout_sec: 1200
+  checkpoint_stages: true
 
 tasks:
   inbox: Tasks\Входящие
@@ -34,10 +47,6 @@ tests:
   dll: AHUCalculator.slnx
   baseline_passed: 90
   baseline_total: 90
-
-# TDL не используется (нет Tasks\JSON и статусов A-NN)
-tdl:
-  enabled: false
 
 # Проверки архитектуры/качества (verify-порты, применяются по задачам)
 checks:

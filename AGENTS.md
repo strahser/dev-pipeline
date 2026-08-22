@@ -1,114 +1,113 @@
 # AGENTS.md — контекст и конвенции dev-pipeline
 
-Репозиторий-фреймворк конвейера задач для проектов в `E:\ПлагиныРевит\`.
+Репозиторий-фреймворк конвейера задач для проектов в `D:\Projects\` (и `E:\ПлагиныРевит\`
+на втором рабочем месте).
+
+## Что это (v2)
+
+**План-раннер**: агент исполняет план из репозитория ProjectsPalns карточка за карточкой.
+Track table (TDL) удалена — источник истины о статусах: **сам файл плана**
+(статусы карточек «Открыто/Выполнено» обновляются прямо в нём + git-коммит).
+
+Цикл одной карточки:
+
+```
+план (_current/*.md) → выбор готовой карточки (зависимости закрыты)
+  → MD-постановка в Tasks\Активные\<CARD>_*.md
+  → GRILL-фаза: субагент изучает код/вики; блокирующие вопросы владельцу через
+    Tasks\Вопросы\<CARD>_*.md + agents/wait_answer.py (таймаут → работа по допущениям)
+  → субагент (явная сессия на сервере или legacy opencode run) правит код, собирает, тестирует
+  → механический вердикт (сборка+тесты+checks) в Tasks\Отчёты\<CARD>_Вердикт_*.md
+  → PASS: статус done в плане + коммит в ProjectsPalns (`plan/<CARD>: …`)
+  → FAIL: ретрай с хвостом ошибки (≤ runner.retries) → эскалация владельцу (card_failed)
+```
+
+Чекпоинты: после PASS карточки с меткой «Чекпоинт: да» или при закрытии целого этапа
+раннер встаёт на паузу (`Tasks\Конвейер\checkpoints\<CARD>.pending.json`) до кнопки
+«Одобрить/Перезапустить» в панели (`/api/checkpoints`).
 
 ## Ключевые принципы
 
-- **Файлы + git = источник правды** по задачам и артефактам. Сервер — только координация
-  (лента событий, сообщения, heartbeat, панель). НЕ дублировать стейт-машину задач в БД.
-- **Сервер (FastAPI + SQLite + SSE)** — push-уведомления агентам вместо поллинга.
-- **Фолбэк на файлы**: сервер недоступен → файловые флаги `Tasks\Конвейер\Уведомления\`.
-- **Агенты не общаются в чате** — только события сервера + файлы+git.
+- **Файлы + git = источник правды**: план, отчёты, вердикты, вопросы — файлы; сервер —
+  только координация (лента событий, сессии, чат, панель).
+- **Сервер (FastAPI + SQLite + SSE)**: push-уведомления агентам вместо поллинга.
+- **Фолбэк на файлы**: сервер недоступен → файловые флаги `Tasks\Конвейер\Уведомления\`,
+  раннер работает без него (--legacy).
+- **Агенты не общаются в чате между собой** — события сервера + файлы+git.
 
 ## Стек
 
-- Python 3.13 (Windows), PyYAML, позже FastAPI/uvicorn/sse-starlette (уже установлены).
+- Python 3.13+ (Windows), PyYAML, FastAPI/uvicorn/sse-starlette.
 - `opencode run` — движок исполнения задач (сервер НЕ исполняет).
 
 ## Команды
 
-- Список проектов: `python -m pipeline.cli list`
-- Статус проекта: `python -m pipeline.cli status <project>`
-- Диспатч: `python -m pipeline.cli dispatch <project> <файл> [--title ...] [--priority ...]`
-- Верификация: `python -m pipeline.cli verify <project> <A-NN>`
-- TDL: `python -m pipeline.cli tdl-status|tdl-tree|tdl-plan|tdl-verify <project> [A-NN]`
-- Summary-закрытие: tdl-verify сам закрывает summary-предков при всех done-потомках;
-  принудительно — `tdl-close-summaries <project>`
-- Длительности: `python -m pipeline.cli tdl-verify` ставит `duration_sec`; оценки — `estimate_sec`
-  в spec при `tdl-plan` (число ≤24 = часы; строки «2ч 30м», «3.5h», «45м», «1д»)
-- API длительностей: `GET /api/tdl/durations?project=<p>` (план vs факт, summary-суммирование)
-- Планировщик миссии (LLM-декомпозиция 1-го уровня): `python -m agents.agent_manager mission --project <p> --mission <файл> --plan` — пишет spec в `Tasks\Конвейер\планы\` и вызывает tdl-plan; фолбэк на `split_mission`
-- **Явные сессии субагентов** (по умолчанию): `agent_manager task/mission` создаёт сессию на сервере
-  (`POST /api/sessions`, инструкция JSON) и запускает тонкого `agents/session_worker.py` — он читает
-  инструкцию С СЕРВЕРА, исполняет через opencode run, шлёт heartbeat/статусы через сервер
-  (`/api/sessions/{id}/status`), контролёр мониторит по API и может прервать
-  (`POST /api/sessions/{id}/instruction` → SSE-канал `session-<id>`, или kill). ВАЖНО: НЕ запускать
-  субагентов напрямую bash-`opencode run` — только через сессию; `--legacy` — фолбэк без сервера
-- API сессий: `POST /api/sessions` (создать), `GET /api/sessions` (список), `GET /api/sessions/{id}`,
-  `POST /api/sessions/{id}/start|status|heartbeat|kill|instruction`; лента событий
-  `session_created/session_started/session_status/session_stalled`
-- Агенты-помощники по ролям: `POST /api/agents {role, project, model?, task?}` — сессия с
-  предзагруженным скиллом роли (методика+роль): controller/executor/browser/reviewer/qwen/planner;
-  в панели «🗂 Сессии» — кнопка «➕ Новый агент»; kill live opencode-сессий — `POST /api/sessions/live/{sid}/kill`
-- Сырые задания пользователя: `POST /api/requests {project, text}` — БД (`requests`) + файл
-  `Tasks\Входящие\` + git-коммит `inbox: ...`; `POST /api/requests/{id}/dispatch` — оформить
-  в задачу (файл в Активные + коммит); панель «📥 Входящие»
-- Анти-зависание: сервер — `PIPELINE_WATCH_INTERVAL`/`PIPELINE_WATCH_MAX_AGE`,
-  сессии — `PIPELINE_SESSION_MAX_AGE` (default 300 с, heartbeat сессии 30 с; stale → `stalled` + событие);
-  сторож — `python -m agents.agent_watch --project <p> [--stall-timeout N]` (env `TASK_STALL_TIMEOUT_SEC`, default 10800);
-  субагенты — таймаут 1800 с + PID-файл `logs\<A-NN>.pid` (env `SUBAGENT_MAX_AGE_SEC` для убийства сирот сторожем);
-  фейковый отчёт при rc≠0 не создаётся — пометка `task_stalled` (редиспатч)
+- Список проектов / статус: `python -m pipeline.cli list|status <project>`
+- Диспатч задачи из файла: `python -m pipeline.cli dispatch <project> <файл> [--title ...]`
+- Верификация задачи A-NN: `python -m pipeline.cli verify <project> <A-NN>`
+- **План-раннер** (основной сценарий):
+  ```
+  python -X utf8 -m agents.plan_runner --project <p> [--once] [--plan <файл>]
+         [--retries N] [--model <модель>] [--legacy] [--dry-run]
+  ```
+- Ожидание ответа на вопрос (используется субагентом):
+  `python -X utf8 agents/wait_answer.py "<Q-файл>" --timeout 1200`
+
+## API панели (v2)
+
+- Планы: `GET /api/plan`, `/api/plan/tasks|filters|task/{id}|running|durations`
+- Вопросы: `GET /api/questions`, `POST /api/questions/{qid}/answer {project,text}`
+- Чекпоинты: `GET /api/checkpoints`, `POST /api/checkpoints/{cid}/approve|retry {project}`
+- Раннер: `GET /api/runner` (состояние из `Tasks\Конвейер\runner_state.json`)
+- Сессии/чат/входящие — как раньше (`/api/sessions*`, `/api/chat/*`, `/api/requests*`)
+
+## Анти-зависание
+
+- Субагенты: таймаут 1800 с + убийство дерева процесса (`taskkill /F /T`), PID-файлы
+  `logs\<CARD>.pid`; сторож убивает сирот (`SUBAGENT_MAX_AGE_SEC`).
+- Задача in_progress без отчёта > `TASK_STALL_TIMEOUT_SEC` (3 ч) → маркер
+  `Tasks\Конвейер\stalled\<ID>.txt` + событие task_stalled.
+- Вопрос владельцу: тишина > `runner.question_timeout_sec` (20 мин) → ASSUMPTION,
+  конвейер не стоит.
+- Карточка FAIL: ретраи ≤ `runner.retries` с логом ошибки в промпте → card_failed + стоп.
 
 ## Правила
 
 - Не коммитить: `.idea\`, `.opencode\`, `bin\obj`, `TestResults\`, `__pycache__\`, `*.db`, логи.
-- Коммиты: `pipeline: ...` (каркас), `project/<имя>: ...` (конфиги примеров).
-- Новый проект = новый `examples\<project>\pipeline.yaml` + проверка `list`/`status`.
-- Пути проекта: `project.root` — строка ИЛИ список кандидатов (первый существующий выбирается
-  автоматически), либо переменная `DEV_PIPELINE_PROJECTS_DIR` (базовая папка проектов на ПК).
-- Скиллы агентов (лежат в общем репо `agent-skills`, см. `skills/README.md`): `pipeline-planner`
-  (декомпозиция миссии), `pipeline-executor`, `pipeline-controller` (включая реакцию на `task_stalled`),
-  `pipeline-reviewer`, `pipeline-browser-bridge`, `pipeline-qwen-worker`. Путь:
-  `E:\ПлагиныРевит\agent-skills\.opencode\skills\`.
+- Коммиты: `pipeline: ...` (каркас), `project/<имя>: ...` (конфиги примеров),
+  в планах — `plan/<CARD>: ...`.
+- Новый проект = `examples\<имя>\pipeline.yaml` (секции project/build/tests/plan/runner)
+  + проверка `list`/`status`.
+
+## Пути проекта
+
+- `project.root` — строка ИЛИ список кандидатов; либо env `DEV_PIPELINE_PROJECTS_DIR`.
+- План: секция `plan:` — `repo` (репозиторий ProjectsPalns), `subdir` (<Проект>),
+  `file` (конкретный план; пусто = новейший `_current/*.md`). Env-альтернатива базы:
+  `DEV_PIPELINE_PLANS_DIR`.
 
 ## Подключение НОВОГО проекта (инструкция агенту — ОБЯЗАТЕЛЬНО к исполнению)
 
-Если ты (агент) получил ссылку на этот репозиторий dev-pipeline и задачу «подключить/вести
-проект <Имя>» — ты обязан зарегистрировать проект в конвейере, иначе панель и CLI его
-не увидят (панель берёт список ТОЛЬКО из `examples\<имя>\pipeline.yaml`):
+Если ты (агент) получил ссылку на dev-pipeline и задачу «подключить/вести проект <Имя>»:
 
-1. **Создай конфиг** `examples\<имя>\pipeline.yaml` (имя = папка проекта, латиницей, как у других):
-   - `project.name` — имя проекта (например, `AHUCalculator`);
-   - `project.root` — существующий путь проекта (строка или список [D:\, E:\] рабочих мест);
-   - `project.branch` — ветка git проекта (проверь `git -C <root> branch --show-current`);
-   - `tasks.*` — стандартная структура `Tasks\...` (как в heatlossrevit2);
-   - `build` — msbuild (путь к MSBuild.exe) ИЛИ `dotnet`; `sln` — файл решения/проекта
-     (поддерживается и `.slnx`); `configuration/platform`; `extra_args`;
-   - `tests` — runner (vstest|dotnet), dll/slnx, `baseline_passed`/`baseline_total`
-     (запусти тесты ДО регистрации и впиши реальные цифры);
-   - `tdl.enabled: false`, если проект НЕ ведёт TDL-задачи (Tasks\JSON и A-NN) —
-     тогда панель показывает пустые TDL-вкладки без ошибок;
-   - `checks`/`layer_rules` — декларативные проверки (grep/dir_exists/csproj_no_ref),
-     только те, что реально проходят (проверь каждую перед записью).
-2. **Проверь регистрацию**:
-   ```
-   python -m pipeline.cli list              # проект появился в списке
-   python -m pipeline.cli status <имя>      # без ошибок (статус-файл создастся сам)
-   ```
-3. **Проверь, что сборка/тесты из конфига проходят** (команды из `build`/`tests`).
-4. **Проверь панель**: `curl http://127.0.0.1:8787/api/projects` — проект в списке;
-   `curl http://127.0.0.1:8787/api/tasks?project=<имя>` — отвечает без 404.
-5. **Коммит** с префиксом `project/<имя>: ...` (например, `project/AHUCalculator: регистрация в конвейере`),
-   пуш после подтверждения.
-6. Если у проекта НЕТ структуры `Tasks\` — НЕ создавай её принудительно: конвейер терпимо
-   относится к отсутствию папок (пустые списки); отчёты/планы такого проекта могут лежать
-   в `pipeline_output\<имя>\` (внешний поток агента), а в отчётах/коммитах упоминай этот путь.
+1. Создай конфиг `examples\<имя>\pipeline.yaml` (шаблоны: `examples\mepbimserver` —
+   минимальный, `examples\heatlossrevit2` — полный с checks/layer_rules):
+   - `project.name/root/branch`;
+   - `tasks.*` — стандартная структура `Tasks\...`;
+   - `build` — msbuild/dotnet/**none** (нет сборки); `tests` — runner
+     vstest|dotnet|pytest|**none** + реальные baseline-цифры;
+   - `plan:` — repo/subdir/file на ProjectsPalns;
+   - `runner:` — model/retries/question_timeout_sec/checkpoint_stages;
+   - `checks`/`layer_rules` — только реально проходящие проверки.
+2. Проверь: `python -m pipeline.cli list|status <имя>`; dry-run раннера
+   (`--dry-run`) показывает первую карточку.
+3. Коммит `project/<имя>: регистрация в конвейере`; пуш после подтверждения.
 
-Шаблон для копирования — `examples\heatlossrevit2\pipeline.yaml` (полный: TDL+checks) или
-`examples\AHUCalculator\pipeline.yaml` (лёгкий: без TDL, dotnet/slnx).
+## База знаний проекта (agent-skills / revit-skills)
 
-## База знаний проекта (agent-skills)
-
-- Общая база знаний по Revit-плагинам — репозиторий `strahser/revit-skills`
-  (рабочая копия `agent-skills`), смотри скилл `knowledge-base`.
-  Ссылка: `references.revit-skills` в `opencode.json`.
-- Локально: `E:\ПлагиныРевит\agent-skills\` (ветка `main`).
-- Wiki: `E:\ПлагиныРевит\agent-skills\.opencode\wiki\` — архитектура, форматы, паттерны, MCP;
-  читай `index.md` перед Revit-задачами. Каждый проект ведёт локальную вики
-  (`<project>\.opencode\wiki\`), ссылки на неё — в главном `index.md`.
-- Общие скилы (не привязаны к агентам конвейера): `E:\ПлагиныРевит\agent-skills\.opencode\skills\` —
-  revit-api, revit-testing, revit-3d-export, threejs-viewer, cloud-ai-bridge и др. — справочник паттернов.
-- **Правила пополнения** (обязательны для агентов): новое стабильное знание → запись в локальную wiki
-  проекта или общую wiki agent-skills (не только в отчёт по задаче); коммиты `docs:` / `agent/A-NN: wiki: ...`
-  делает контролёр; ссылки относительные; `index.md` обновлять при добавлении страницы.
-- Не дублировать: dev-pipeline — задачи/отчёты/вердикты, agent-skills + локальные вики — знания.
+- Общий хаб знаний — `D:\Projects\revit-skills` (remote strahser/agent-skills).
+- Скилы конвейера: `revit-skills\.opencode\skills\pipeline-*` — включая **pipeline-grill**
+  (методика вопросов), pipeline-executor/-controller/-reviewer/-planner.
+- Вики: `revit-skills\.opencode\wiki\index.md` + локальные вики проектов.
+- Новое стабильное знание → запись в вики (скилл knowledge-base); коммиты `docs:` делает контролёр.
+- Не дублировать: dev-pipeline — задачи/отчёты/вердикты; revit-skills — знания.

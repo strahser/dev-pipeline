@@ -1,11 +1,23 @@
 # Конфигурация конвейера для проекта DesignBase (Python, SQLite+FTS5, RAG по ПД ВВ-17).
 # Задачи A-NN ведутся в Tasks\Активные\, отчёты в Tasks\Отчёты\.
-# План работ: E:\ПлагиныРевит\ProjectsPalns\DesignBase\_current\2026-08-21_regulatory-compliance-cross-analysis.md
 
 project:
   name: designbase
   root: [E:\ПлагиныРевит\DesignBase]
   branch: master
+
+# План проекта в ProjectsPalns
+plan:
+  repo: [D:\Projects\ProjectsPalns, E:\ПлагиныРевит\ProjectsPalns]
+  subdir: DesignBase
+  file: 2026-08-21_regulatory-compliance-cross-analysis.md
+
+# Параметры план-раннера
+runner:
+  model: opencode-go/deepseek-v4-flash
+  retries: 2
+  question_timeout_sec: 1200
+  checkpoint_stages: true
 
 tasks:
   inbox: Tasks\Входящие
@@ -18,9 +30,9 @@ tasks:
   notif: Tasks\Конвейер\Уведомления
 
 build:
-  # Python-проект: «сборка» = smoke-импорт пакета (быстрая проверка окружения)
-  msbuild: python
-  sln: "-c import designbase; print('designbase OK')"
+  # Python-проект: отдельная сборка не нужна (msbuild: none)
+  msbuild: none
+  sln: ""
   configuration: ""
   platform: ""
   extra_args: []
@@ -31,9 +43,6 @@ tests:
   dll: tests
   baseline_passed: 29
   baseline_total: 29
-
-tdl:
-  enabled: false
 
 checks:
   - id: A-01

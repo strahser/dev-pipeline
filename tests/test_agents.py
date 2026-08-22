@@ -8,6 +8,7 @@ from __future__ import annotations
 import json
 import sys
 import tempfile
+import time
 import unittest
 from pathlib import Path
 
@@ -60,8 +61,8 @@ class TestDispatchChunk(unittest.TestCase):
         self.assertIn(f"id: {tid}", content)
         self.assertIn("статус: open", content)
 
-    def test_dispatch_creates_tdl_task(self):
-        """dispatch_chunk создаёт TDL JSON-задачу (wbs, goal), если tdl_enabled."""
+    def test_dispatch_creates_task_file_with_boundaries(self):
+        """dispatch_chunk создаёт MD-задачу с границами и результатом."""
         tmp = Path(tempfile.mkdtemp(prefix="am_tdl_"))
         for sub in ("Tasks/Активные", "Tasks/Отчёты", "Tasks/Архив", "Tasks/Конвейер"):
             (tmp / sub).mkdir(parents=True)
@@ -69,16 +70,15 @@ class TestDispatchChunk(unittest.TestCase):
         cfg = ProjectConfig(name="_test", root=tmp, msbuild="dotnet",
                             sln="X.csproj", test_runner="dotnet")
         tid = am.dispatch_chunk(cfg, "Сделать X с доказательством", 1, 2, "Миссия")
-        from pipeline.tdl import store as tdl_store
-        t = tdl_store.load_task(cfg, tid)
-        self.assertIsNotNone(t, "JSON-задача должна создаться")
-        self.assertEqual(t["wbs_code"], "1.01")
-        self.assertIn("Сделать X", t["goal"])
-        self.assertTrue(t["verification"]["commands"], "должны быть команды проверки")
+        files = list((tmp / "Tasks" / "Активные").glob(f"{tid}_*.md"))
+        self.assertEqual(len(files), 1)
+        content = files[0].read_text(encoding="utf-8")
+        self.assertIn("Границы", content)
+        self.assertIn("Отчёт", content)
 
 
-class TestExecutorTdl(unittest.TestCase):
-    """executor take_task / tdl-report при включённом TDL."""
+class TestExecutorTakeTask(unittest.TestCase):
+    """executor take_task: open -> in_progress по MD-файлу."""
 
     def _cfg(self, tmp):
         for sub in ("Tasks/Активные", "Tasks/Отчёты", "Tasks/Архив", "Tasks/Конвейер"):
@@ -87,35 +87,21 @@ class TestExecutorTdl(unittest.TestCase):
         return ProjectConfig(name="_t", root=tmp, msbuild="dotnet",
                              sln="X.csproj", test_runner="dotnet")
 
-    def test_take_task_marks_tdl_in_progress(self):
+    def test_take_task_marks_in_progress(self):
         import tempfile
-        from pipeline.tdl import store as tdl_store
+        from pipeline.models import Task as T
         from agents import executor_client as ec
-        tmp = Path(tempfile.mkdtemp(prefix="ex_tdl_"))
+        tmp = Path(tempfile.mkdtemp(prefix="ex_md_"))
         cfg = self._cfg(tmp)
-        # создать задачу через dispatch (создаст и MD, и JSON)
         tid = am.dispatch_chunk(cfg, "задача", 1, 1, "М")
-        # MD-задача open
+        f = next(iter(cfg.abs_tasks_dir("active").glob(f"{tid}_*.md")))
+        self.assertEqual(T.from_file(f).status, "open")
         task = ec.take_task(cfg, tid)
         self.assertIsNotNone(task)
-        # JSON-задача переведена в in_progress
-        t = tdl_store.load_task(cfg, tid)
-        self.assertEqual(t["workflow_state"], "in_progress")
-        import shutil; shutil.rmtree(tmp, ignore_errors=True)
-
-    def test_tdl_report_created_after_execution(self):
-        import tempfile, time
-        from pipeline.tdl import store as tdl_store
-        from agents import executor_client as ec
-        tmp = Path(tempfile.mkdtemp(prefix="ex_tdl2_"))
-        cfg = self._cfg(tmp)
-        tid = am.dispatch_chunk(cfg, "задача", 1, 1, "М")
-        # имитируем отчёт, созданный субагентом
-        md = cfg.abs_tasks_dir("reports") / f"{tid}_Отчёт_2026-08-07.md"
-        md.write_text("# ОТЧЁТ\n## Что сделано\nсделал X\n## Доказательства\nлог\n", encoding="utf-8")
-        ec._tdl_report_if_needed(cfg, tid, md)
-        r = tdl_store.load_report(cfg, tid)
-        self.assertIsNotNone(r, "JSON-отчёт должен создаться из MD")
+        f2 = next(iter(cfg.abs_tasks_dir("active").glob(f"{tid}_*.md")))
+        self.assertEqual(T.from_file(f2).status, "in_progress")
+        # повторно взять нельзя
+        self.assertIsNone(ec.take_task(cfg, tid))
         import shutil; shutil.rmtree(tmp, ignore_errors=True)
 
 
@@ -180,98 +166,89 @@ class TestDotnetParser(unittest.TestCase):
 
 
 class TestCheckStalled(unittest.TestCase):
-    """Детектор зависших задач (agent_watch.check_stalled)."""
+    """Детектор зависших задач (agent_watch.check_stalled) — файловые маркеры."""
 
-    def _cfg(self, tmp):
-        for sub in ("Tasks/Активные", "Tasks/Отчёты", "Tasks/Архив",
-                    "Tasks/Конвейер", "Tasks/JSON/Active"):
-            (tmp / sub).mkdir(parents=True)
-        from pipeline.config import ProjectConfig
-        return ProjectConfig(name="_t", root=tmp)
-
-    def _mk_task(self, cfg, tid, start, workflow="in_progress"):
-        import datetime
-        from pipeline.tdl._tpl import make_task
-        from pipeline.tdl import store as tdl_store
-        t = make_task(tid, "_t", "Задача", "1.1", goal="ц", acceptance=["к"], commands=["b"])
-        t["workflow_state"] = workflow
-        t["dates"]["start"] = start
-        tdl_store.save_task(cfg, t)
-
-    def test_stalled_detected_and_marked_once(self):
-        import datetime
-        import tempfile
-        from agents import agent_watch as aw
-        from pipeline.tdl import store as tdl_store
-        tmp = Path(tempfile.mkdtemp(prefix="stall_"))
-        cfg = self._cfg(tmp)
-        now = datetime.datetime.now()
-        old = (now - datetime.timedelta(days=5)).isoformat()          # зависла: 5 дней
-        fresh = (now - datetime.timedelta(hours=1)).isoformat()       # свежая: час
-        self._mk_task(cfg, "A-01", old)
-        self._mk_task(cfg, "A-02", fresh)
-        n = aw.check_stalled(cfg, None, timeout_sec=10800)
-        self.assertEqual(n, 1)
-        t = tdl_store.load_task(cfg, "A-01")
-        self.assertEqual(t["workflow_state"], "in_progress")  # статус не меняем
-        self.assertTrue(any(h["action"] == "stalled" for h in t["history"]))
-        # повторный вызов не помечает второй раз
-        self.assertEqual(aw.check_stalled(cfg, None, timeout_sec=10800), 0)
-        import shutil; shutil.rmtree(tmp, ignore_errors=True)
-
-    def test_stalled_skips_with_report(self):
-        import datetime
-        import tempfile
-        from agents import agent_watch as aw
-        from pipeline.tdl import store as tdl_store
-        tmp = Path(tempfile.mkdtemp(prefix="stall2_"))
-        cfg = self._cfg(tmp)
-        old = (datetime.datetime.now() - datetime.timedelta(days=5)).isoformat()
-        self._mk_task(cfg, "A-01", old)
-        (tdl_store.reports_dir(cfg) / "A-01_2026-08-01.report.json").write_text(
-            '{"report_id":"A-01_2026-08-01"}', encoding="utf-8")
-        self.assertEqual(aw.check_stalled(cfg, None, timeout_sec=10800), 0)
-        import shutil; shutil.rmtree(tmp, ignore_errors=True)
-
-
-class TestEnsureReportNoFake(unittest.TestCase):
-    """Менеджер не создаёт фейковый отчёт при rc!=0/обрыве — пометка stalled."""
     def _cfg(self, tmp):
         for sub in ("Tasks/Активные", "Tasks/Отчёты", "Tasks/Архив", "Tasks/Конвейер"):
             (tmp / sub).mkdir(parents=True)
         from pipeline.config import ProjectConfig
         return ProjectConfig(name="_t", root=tmp)
 
-    def _mk_task(self, cfg, tid):
-        from pipeline.tdl._tpl import make_task
-        from pipeline.tdl import store as tdl_store
-        t = make_task(tid, "_t", "Задача", "1.1", goal="ц", acceptance=["к"], commands=["b"])
-        tdl_store.save_task(cfg, t)
+    def _mk_task(self, cfg, tid, status="in_progress", age_sec=0):
+        f = cfg.abs_tasks_dir("active") / f"{tid}_Задача.md"
+        f.write_text(f"---\nid: {tid}\nстатус: {status}\n---\n# ЗАДАЧА\n", encoding="utf-8")
+        if age_sec:
+            old = time.time() - age_sec
+            import os
+            os.utime(f, (old, old))
+
+    def test_stalled_detected_and_marked_once(self):
+        import tempfile
+        from agents import agent_watch as aw
+        tmp = Path(tempfile.mkdtemp(prefix="stall_"))
+        cfg = self._cfg(tmp)
+        self._mk_task(cfg, "A-01", age_sec=5 * 86400)      # зависла: 5 дней
+        self._mk_task(cfg, "A-02", age_sec=3600)           # свежая: час
+        n = aw.check_stalled(cfg, None, timeout_sec=10800)
+        self.assertEqual(n, 1)
+        marker = tmp / "Tasks" / "Конвейер" / "stalled" / "A-01.txt"
+        self.assertTrue(marker.exists(), "маркер stalled записан")
+        # повторный вызов не помечает второй раз
+        self.assertEqual(aw.check_stalled(cfg, None, timeout_sec=10800), 0)
+        import shutil; shutil.rmtree(tmp, ignore_errors=True)
+
+    def test_stalled_skips_with_report_and_open(self):
+        import tempfile
+        from agents import agent_watch as aw
+        tmp = Path(tempfile.mkdtemp(prefix="stall2_"))
+        cfg = self._cfg(tmp)
+        self._mk_task(cfg, "A-01", age_sec=5 * 86400)
+        (cfg.abs_tasks_dir("reports") / "A-01_Отчёт_2026-08-01.md").write_text(
+            "# ОТЧЁТ: A-01\n## Что сделано\nx\n", encoding="utf-8")
+        # open-задача без отчёта — не «зависшая»
+        self._mk_task(cfg, "A-02", status="open", age_sec=5 * 86400)
+        self.assertEqual(aw.check_stalled(cfg, None, timeout_sec=10800), 0)
+        import shutil; shutil.rmtree(tmp, ignore_errors=True)
+
+    def test_clear_stalled(self):
+        import tempfile
+        from agents import agent_watch as aw
+        tmp = Path(tempfile.mkdtemp(prefix="stall3_"))
+        cfg = self._cfg(tmp)
+        self._mk_task(cfg, "A-01", age_sec=5 * 86400)
+        aw.check_stalled(cfg, None, timeout_sec=10800)
+        self.assertTrue((tmp / "Tasks" / "Конвейер" / "stalled" / "A-01.txt").exists())
+        aw.clear_stalled(cfg, "A-01")
+        self.assertFalse((tmp / "Tasks" / "Конвейер" / "stalled" / "A-01.txt").exists())
+        import shutil; shutil.rmtree(tmp, ignore_errors=True)
+
+
+class TestEnsureReportNoFake(unittest.TestCase):
+    """Менеджер не создаёт фейковый отчёт при rc!=0/обрыве — маркер stalled."""
+    def _cfg(self, tmp):
+        for sub in ("Tasks/Активные", "Tasks/Отчёты", "Tasks/Архив", "Tasks/Конвейер"):
+            (tmp / sub).mkdir(parents=True)
+        from pipeline.config import ProjectConfig
+        return ProjectConfig(name="_t", root=tmp)
 
     def test_rc_nonzero_no_report_marks_stalled(self):
         import tempfile
-        from pipeline.tdl import store as tdl_store
         tmp = Path(tempfile.mkdtemp(prefix="rep_"))
         cfg = self._cfg(tmp)
-        self._mk_task(cfg, "A-01")
         ok = am._ensure_report(cfg, "A-01", rc=1)
         self.assertFalse(ok)
         # фейкового отчёта НЕ создано
         self.assertEqual(list((tmp / "Tasks" / "Отчёты").glob("A-01_*")), [])
-        t = tdl_store.load_task(cfg, "A-01")
-        self.assertTrue(any(h["action"] == "task_stalled" for h in t["history"]),
-                        "обрыв без отчёта -> task_stalled для редиспатча")
+        marker = tmp / "Tasks" / "Конвейер" / "stalled" / "A-01.txt"
+        self.assertTrue(marker.exists(), "обрыв без отчёта -> маркер stalled для редиспатча")
         import shutil; shutil.rmtree(tmp, ignore_errors=True)
 
     def test_timeout_rc_124_marks_stalled(self):
         import tempfile
-        from pipeline.tdl import store as tdl_store
         tmp = Path(tempfile.mkdtemp(prefix="rep2_"))
         cfg = self._cfg(tmp)
-        self._mk_task(cfg, "A-01")
         am._ensure_report(cfg, "A-01", rc=124)
-        t = tdl_store.load_task(cfg, "A-01")
-        self.assertTrue(any(h["action"] == "task_stalled" for h in t["history"]))
+        self.assertTrue((tmp / "Tasks" / "Конвейер" / "stalled" / "A-01.txt").exists())
         import shutil; shutil.rmtree(tmp, ignore_errors=True)
 
     def test_report_exists_ok(self):
@@ -495,20 +472,16 @@ class TestSubagentZombies(unittest.TestCase):
     def test_zombie_marks_task_stalled(self):
         import subprocess, sys, tempfile, time
         from agents import agent_watch as aw
-        from pipeline.tdl import store as tdl_store
-        from pipeline.tdl._tpl import make_task
         tmp = Path(tempfile.mkdtemp(prefix="zom2_"))
         cfg = self._cfg(tmp)
-        t = make_task("A-05", "_t", "Задача", "1.1", goal="ц", acceptance=["к"], commands=["b"])
-        tdl_store.save_task(cfg, t)
         logs = tmp / "Tasks" / "Конвейер" / "logs"
         victim = subprocess.Popen([sys.executable, "-c", "import time; time.sleep(120)"])
         (logs / "A-05.pid").write_text(
             f"{victim.pid}\n{int(time.time()) - 7200}", encoding="utf-8")
         aw.check_subagent_zombies(cfg, None, max_age_sec=1800)
         victim.wait()
-        t2 = tdl_store.load_task(cfg, "A-05")
-        self.assertTrue(any(h["action"] == "task_stalled" for h in t2["history"]))
+        marker = tmp / "Tasks" / "Конвейер" / "stalled" / "A-05.txt"
+        self.assertTrue(marker.exists(), "сирота -> маркер task_stalled")
         import shutil; shutil.rmtree(tmp, ignore_errors=True)
 
 

@@ -9,6 +9,19 @@ project:
   root: [D:\Projects\MepTaggingSolution, E:\ПлагиныРевит\MepTaggingSolution]
   branch: feature/tagging-extension-tests
 
+# План проекта в репозитории ProjectsPalns (источник карточек план-раннера)
+plan:
+  repo: [D:\Projects\ProjectsPalns, E:\ПлагиныРевит\ProjectsPalns]
+  subdir: MepTaggingSolution
+  file: 2026-08-21_leader-crossing-roomtag-fix.md
+
+# Параметры план-раннера (python -m agents.plan_runner --project meptaggingsolution)
+runner:
+  model: opencode-go/deepseek-v4-flash
+  retries: 2
+  question_timeout_sec: 1200   # тишина по вопросу 20 мин -> работа по допущениям
+  checkpoint_stages: true      # пауза после закрытия этапа до одобрения в панели
+
 tasks:
   inbox: Tasks\Входящие
   active: Tasks\Активные

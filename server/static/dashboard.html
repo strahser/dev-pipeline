@@ -227,6 +227,7 @@ pre.json { background:var(--code); border:1px solid var(--border); border-radius
   <button onclick="openChat()" title="Чат с агентами" style="background:var(--panel);color:var(--text);border:1px solid var(--border);border-radius:8px;padding:6px 12px;font-size:13px;cursor:pointer;">💬 Чат</button>
   <button onclick="openSessions()" title="Явные сессии субагентов" style="background:var(--panel);color:var(--text);border:1px solid var(--border);border-radius:8px;padding:6px 12px;font-size:13px;cursor:pointer;">🗂 Сессии</button>
   <button onclick="openRequests()" title="Сырые задания пользователя (Входящие)" style="background:var(--panel);color:var(--text);border:1px solid var(--border);border-radius:8px;padding:6px 12px;font-size:13px;cursor:pointer;">📥 Входящие</button>
+  <button onclick="openQA()" title="Вопросы агентов (grill) и чекпоинты план-раннера" style="background:var(--panel);color:var(--text);border:1px solid var(--border);border-radius:8px;padding:6px 12px;font-size:13px;cursor:pointer;">❓ Вопросы · ⏸ Чекпоинты <span id="qaCount" style="color:var(--muted)">0/0</span></button>
   <span class="status" id="status">…</span>
 </header>
 <main id="content">
@@ -371,6 +372,20 @@ pre.json { background:var(--code); border:1px solid var(--border); border-radius
   </div>
 </div>
 
+<div class="overlay" id="qaOverlay">
+  <div class="modal" style="max-width:1100px" id="qaModal">
+    <header>
+      <h2>❓ Вопросы агентов · ⏸ Чекпоинты раннера</h2>
+      <button class="close" onclick="closeQA()">✕ Закрыть</button>
+    </header>
+    <div class="chat-actions">
+      <button onclick="loadQA()">🔄 Обновить</button>
+      <span style="margin-left:auto;font-size:11.5px;color:var(--muted)" id="qaInfo"></span>
+    </div>
+    <div id="qaBody"><div class="empty">Загрузка…</div></div>
+  </div>
+</div>
+
 <script src="/static/vendor/jquery.min.js"></script>
 <script src="/static/vendor/dataTables.min.js"></script>
 <script>
@@ -380,6 +395,87 @@ let dt = null;
 let currentTaskId = null;
 let allRows = [];          // все задачи из API (сырые)
 const collapsed = new Set(); // свёрнутые WBS-коды (дерево)
+
+/* --- Вопросы агентов (grill) и чекпоинты план-раннера --- */
+function qaQuery(){
+  return activeProject ? '?project='+encodeURIComponent(activeProject) : '';
+}
+async function qaCounts(){
+  try {
+    const [qs, cps] = await Promise.all([
+      get('/api/questions'+qaQuery()),
+      get('/api/checkpoints'+qaQuery())
+    ]);
+    const q = qs.filter(x=>!x.answered).length;
+    $('qaCount').textContent = q+'/'+cps.length;
+    $('qaCount').style.color = (q+cps.length) ? 'var(--yellow)' : 'var(--muted)';
+    return {qs, cps};
+  } catch(e){ return {qs:[], cps:[]}; }
+}
+async function openQA(){ $('qaOverlay').classList.add('show'); await loadQA(); }
+function closeQA(){ $('qaOverlay').classList.remove('show'); }
+$('qaOverlay').addEventListener('click', e=>{ if (e.target===$('qaOverlay')) closeQA(); });
+
+async function loadQA(){
+  $('qaBody').innerHTML = '<div class="empty">Загрузка…</div>';
+  const {qs, cps} = await qaCounts();
+  const qsOpen = qs.filter(x=>!x.answered), qsDone = qs.filter(x=>x.answered);
+  let html = '';
+  html += '<h4 style="margin:10px 4px 6px">❓ Открытые вопросы ('+qsOpen.length+')</h4>';
+  html += qsOpen.length ? qsOpen.map(q=>{
+    const tid = 'ans_'+esc(q.id);
+    return '<div class="table-card" style="padding:10px;margin-bottom:8px">'+
+      '<div style="display:flex;gap:8px;align-items:center;flex-wrap:wrap">'+
+        '<span class="badge warn">'+esc(q.project)+'</span>'+
+        (q.card?'<span class="cls-badge">'+esc(q.card)+'</span>':'')+
+        '<b>'+esc(q.question)+'</b>'+
+        '<span class="muted" style="margin-left:auto;font-size:11.5px">ждёт '+q.age_min+' мин · '+esc(q.id)+'</span>'+
+      '</div>'+
+      '<pre class="json" style="max-height:180px;overflow:auto;margin-top:8px">'+esc(q.content)+'</pre>'+
+      '<div style="display:flex;gap:8px;margin-top:8px;align-items:flex-end">'+
+        '<textarea id="'+tid+'" placeholder="Ответ владельца: вариант и уточнения…" style="flex:1;min-height:44px;background:var(--panel2);color:var(--text);border:1px solid var(--border);border-radius:6px;padding:6px 8px;font-size:13px;resize:vertical"></textarea>'+
+        '<button class="primary" onclick="answerQ(\''+esc(q.project)+'\',\''+esc(q.id)+'\')">✉ Ответить</button>'+
+      '</div></div>';
+  }).join('') : '<div class="empty" style="padding:4px">открытых вопросов нет</div>';
+  if (qsDone.length){
+    html += '<details style="margin:0 4px 12px"><summary class="muted" style="cursor:pointer;font-size:12.5px">Отвеченные ('+qsDone.length+')</summary>'+
+      qsDone.map(q=>'<div class="muted" style="font-size:12px;padding:3px 0;border-bottom:1px dashed var(--border)">✅ ['+esc(q.project)+'] '+esc(q.question)+' — '+esc(q.id)+'</div>').join('')+'</details>';
+  }
+  html += '<h4 style="margin:14px 4px 6px">⏸ Ожидают одобрения ('+cps.length+')</h4>';
+  html += cps.length ? cps.map(c=>
+    '<div class="table-card" style="padding:10px;margin-bottom:8px;display:flex;gap:10px;align-items:center;flex-wrap:wrap">'+
+      '<span class="badge orange">'+esc(c.project||activeProject)+'</span>'+
+      '<b>Карточка '+esc(c.card)+'</b><span>'+esc(c.title||'')+'</span>'+
+      '<span class="muted" style="font-size:11.5px">'+esc(c.reason||'')+' · '+esc(c.created||'')+'</span>'+
+      '<span style="margin-left:auto"></span>'+
+      '<button class="primary" onclick="cpAction(\''+esc(c.project||activeProject)+'\',\''+esc(c.id)+'\',\'approve\')">✅ Одобрить</button>'+
+      '<button onclick="cpAction(\''+esc(c.project||activeProject)+'\',\''+esc(c.id)+'\',\'retry\')">🔄 Перезапустить карточку</button>'+
+    '</div>').join('')
+    : '<div class="empty" style="padding:4px">раннер не ждёт одобрений</div>';
+  $('qaBody').innerHTML = html;
+  $('qaInfo').textContent = 'проект: '+(activeProject||'все');
+}
+async function answerQ(project, id){
+  const ta = document.getElementById('ans_'+id);
+  const text = (ta && ta.value || '').trim();
+  if (!text){ alert('Введите ответ'); return; }
+  try {
+    await fetch('/api/questions/'+encodeURIComponent(id)+'/answer', {
+      method:'POST', headers:{'Content-Type':'application/json'},
+      body: JSON.stringify({project: project, text: text})
+    });
+    await loadQA();
+  } catch(e){ alert('Ошибка отправки: '+e); }
+}
+async function cpAction(project, id, action){
+  try {
+    await fetch('/api/checkpoints/'+encodeURIComponent(id)+'/'+action, {
+      method:'POST', headers:{'Content-Type':'application/json'},
+      body: JSON.stringify({project: project})
+    });
+    await loadQA();
+  } catch(e){ alert('Ошибка: '+e); }
+}
 
 function esc(s){ return String(s??'').replace(/[&<>"']/g, c=>({'&':'&amp;','<':'&lt;','>':'&gt;','"':'&quot;',"'":'&#39;'}[c])); }
 async function get(path){ const r = await fetch(path); if(!r.ok) throw new Error(r.status+' '+path); return r.json(); }
@@ -740,7 +836,7 @@ async function openTask(id){
   $('taskOverlay').classList.add('show');
   $('modalBody').innerHTML = '<div class="empty">Загрузка…</div>';
   let t;
-  try { t = await get('/api/tdl/task/'+id+'?project='+encodeURIComponent(activeProject)); }
+  try { t = await get('/api/plan/task/'+id+'?project='+encodeURIComponent(activeProject)); }
   catch(e){ $('modalBody').innerHTML = '<div class="empty">ошибка: '+esc(String(e))+'</div>'; return; }
 
   const task = t.task || {};
@@ -878,7 +974,7 @@ function durDeltaHtml(r){
 
 async function loadDurations(){
   let d;
-  try { d = await get('/api/tdl/durations?project='+encodeURIComponent(activeProject)); }
+  try { d = await get('/api/plan/durations?project='+encodeURIComponent(activeProject)); }
   catch(e){ $('durationsBody').innerHTML = '<div class="empty">ошибка: '+esc(String(e))+'</div>'; return; }
   const rows = d.tasks || [];
   const s = d.summary || {};
@@ -918,7 +1014,7 @@ async function loadDurations(){
     '<th style="padding:6px 8px">Факт</th><th style="padding:6px 8px">Δ</th>'+
     '<th style="padding:6px 8px">Статус</th></tr></thead>'+
     '<tbody>'+body+'</tbody></table></div>'+
-    '<div class="muted" style="margin-top:8px;font-size:11.5px">План — estimate_sec из TDL (задаётся при tdl-plan); факт — duration_sec (start→finish при tdl-verify) или время в работе. Красным — превышение плана более чем на 50%.</div>';
+    '<div class="muted" style="margin-top:8px;font-size:11.5px">Факт — длительность сессий карточек (события конвейера). План/оценки — в файле плана ProjectsPalns.</div>';
 }
 
 /* Загруженность: план vs факт по дням/неделям/месяцам (canvas) */
@@ -928,7 +1024,7 @@ async function loadLoadChart(){
   let d;
   try {
     const buckets = loadPeriod==='month' ? 8 : 14;
-    d = await get('/api/tdl/load?project='+encodeURIComponent(activeProject)+'&period='+loadPeriod+'&buckets='+buckets);
+    d = await get('/api/plan/load?project='+encodeURIComponent(activeProject)+'&period='+loadPeriod+'&buckets='+buckets);
   } catch(e){ return; }
   drawLoadChart(d.buckets || [], d.period || loadPeriod);
 }
@@ -1079,7 +1175,7 @@ function drawTokenChart(series){
 
 /* --- Загрузка фильтров и данных --- */
 async function loadFilters(){
-  const f = await get('/api/tdl/filters?project='+encodeURIComponent(activeProject));
+  const f = await get('/api/plan/filters?project='+encodeURIComponent(activeProject));
   const fill = (id, items, prefix) => {
     const sel = $(id); sel.innerHTML = '<option value="">'+prefix+'</option>'+
       items.map(i=>'<option value="'+esc(i.value)+'">'+esc(i.value)+' ('+i.count+')</option>').join('');
@@ -1118,7 +1214,7 @@ async function loadRunning(){
   const el = $('runningList');
   if (!el) return;
   let run = [];
-  try { run = await get('/api/tdl/running?project='+encodeURIComponent(activeProject)); }
+  try { run = await get('/api/plan/running?project='+encodeURIComponent(activeProject)); }
   catch(e){ return; }
   if (!run.length){ el.innerHTML = ''; return; }
   el.innerHTML =
@@ -1129,7 +1225,7 @@ async function loadRunning(){
 
 async function fetchRows(){
   try {
-    allRows = await get('/api/tdl/tasks?project='+encodeURIComponent(activeProject));
+    allRows = await get('/api/plan/tasks?project='+encodeURIComponent(activeProject));
   } catch(e){
     $('content').innerHTML = '<div class="empty">ошибка: '+esc(String(e))+'</div>';
     return false;
@@ -1203,6 +1299,8 @@ async function boot(){
   } catch(e){ $('content').innerHTML = '<div class="empty">ошибка загрузки проектов: '+esc(String(e))+'</div>'; }
   // Автообновление без сброса фильтров/пагинации (SPA: инкрементально, только при изменении данных)
   setInterval(()=>{ if (!currentTaskId) refreshData(); }, 20000);
+  await qaCounts();                       // счётчики вопросов/чекпоинтов в шапке
+  setInterval(qaCounts, 15000);
 }
 /* --- Чат агентов (полноэкранный, 2 колонки) --- */
 let chatOpen = false;

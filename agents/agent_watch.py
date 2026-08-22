@@ -25,6 +25,7 @@ sys.path.insert(0, str(Path(__file__).resolve().parent.parent))
 
 from pipeline.client import Client                 # noqa: E402
 from pipeline.config import load_config             # noqa: E402
+from pipeline.models import Task                    # noqa: E402
 from pipeline.cli import cmd_dispatch, cmd_verify   # noqa: E402
 from agents.agent_manager import _kill_tree, _pid_alive  # noqa: E402
 import argparse as _ap                              # noqa: E402
@@ -36,21 +37,8 @@ _STALL_TIMEOUT = int(os.environ.get("TASK_STALL_TIMEOUT_SEC", "10800"))
 _SUBAGENT_MAX_AGE = int(os.environ.get("SUBAGENT_MAX_AGE_SEC", "3600"))
 
 
-def _verify_tdl_or_legacy(cfg, tid: str):
-    """verify: TDL (если включён и есть JSON-отчёт) или legacy Markdown."""
-    if getattr(cfg, "tdl_enabled", True):
-        try:
-            from pipeline.tdl import store as tdl_store
-            from pipeline.tdl import cli as tdl_cli
-            task = tdl_store.load_task(cfg, tid)
-            report = tdl_store.latest_report_path(cfg, tid)
-            verdict = tdl_store.latest_verdict_path(cfg, tid)
-            if task is not None and report is not None and verdict is None:
-                tdl_cli.tdl_verify(cfg, _ap.Namespace(task=tid))
-                return True
-        except Exception as e:
-            print(f"[watch] tdl-verify {tid} ошибка: {e}")
-    # legacy Markdown
+def _verify_task(cfg, tid: str):
+    """verify: отчёт есть, вердикта нет -> механическая проверка (Markdown)."""
     reports = cfg.abs_tasks_dir("reports")
     has_report = bool(glob.glob(str(reports / (tid + "_Отчёт_*"))))
     has_verdict = bool(glob.glob(str(reports / (tid + "_Вердикт_*"))))
@@ -60,58 +48,60 @@ def _verify_tdl_or_legacy(cfg, tid: str):
     return False
 
 
-def check_stalled(cfg, client, timeout_sec: int = 10800) -> int:
-    """Найти зависшие TDL-задачи: in_progress дольше timeout_sec без отчёта.
+def stalled_dir(cfg) -> Path:
+    return cfg.root / "Tasks" / "Конвейер" / "stalled"
 
-    Каждая задача помечается в history один раз (action=stalled), публикуется
-    событие task_stalled (to=controller) и печатается предупреждение.
+
+def _is_stalled_marked(cfg, tid: str) -> bool:
+    return (stalled_dir(cfg) / f"{tid}.txt").exists()
+
+
+def _stalled_marker(cfg, tid: str, details: str):
+    """Однократный маркер зависания: Tasks\\Конвейер\\stalled\\<tid>.txt."""
+    try:
+        if _is_stalled_marked(cfg, tid):
+            return
+        import datetime
+        stalled_dir(cfg).mkdir(parents=True, exist_ok=True)
+        (stalled_dir(cfg) / f"{tid}.txt").write_text(
+            f"{datetime.datetime.now().isoformat(timespec='seconds')}\n{details}\n",
+            encoding="utf-8")
+        print(f"[watch] {tid}: пометка task_stalled — {details}")
+    except Exception as e:
+        print(f"[watch] stalled-пометка {tid} не сохранена: {e}")
+
+
+def check_stalled(cfg, client, timeout_sec: int = 10800) -> int:
+    """Найти зависшие задачи: in_progress дольше timeout_sec без отчёта.
+
+    Каждая задача помечается однократно маркером
+    Tasks\\Конвейер\\stalled\\<tid>.txt и публикуется событие task_stalled.
     Возвращает количество вновь помеченных задач."""
-    if not getattr(cfg, "tdl_enabled", True):
-        return 0
     import datetime
-    import json
-    from pipeline.tdl import store as tdl_store
-    from pipeline.tdl._tpl import _now_iso
-    ad = tdl_store.active_dir(cfg)
-    if not ad.is_dir():
+    active = cfg.abs_tasks_dir("active")
+    if not active.is_dir():
         return 0
-    now = datetime.datetime.now()
+    now = time.time()
     stalled = []
-    for tf in sorted(ad.glob("*.task.json")):
+    for f in sorted(active.glob("A-*.md")):
         try:
-            t = json.loads(tf.read_text(encoding="utf-8"))
+            t = Task.from_file(f)
         except Exception:
             continue
-        if t.get("workflow_state") != "in_progress":
+        if t.status != "in_progress":
             continue
-        tid = t.get("task_id", "")
-        if tdl_store.latest_report_path(cfg, tid):
+        tid = t.id
+        if glob.glob(str(cfg.abs_tasks_dir("reports") / (tid + "_Отчёт_*"))):
             continue  # отчёт есть — не завис
-        start = (t.get("dates") or {}).get("start")
-        if not start:
-            continue
-        try:
-            st = datetime.datetime.fromisoformat(str(start).replace("Z", "+00:00"))
-            if st.tzinfo is not None:
-                st = st.astimezone().replace(tzinfo=None)
-        except ValueError:
-            continue
-        elapsed = (now - st).total_seconds()
-        if elapsed < timeout_sec:
-            continue
-        hist = t.setdefault("history", [])
-        if any(h.get("action") == "stalled" for h in hist):
+        if _is_stalled_marked(cfg, tid):
             continue  # уже помечена
-        hist.append({"timestamp": _now_iso(), "actor": "watch", "action": "stalled",
-                     "details": f"Задача в работе {int(elapsed // 3600)} ч без отчёта/прогресса "
-                                f"(порог {timeout_sec // 3600} ч)."})
-        tdl_store.save_task(cfg, t)
+        age = now - f.stat().st_mtime
+        if age < timeout_sec:
+            continue
+        _stalled_marker(cfg, tid,
+                        f"Задача в работе {int(age // 3600)} ч без отчёта/прогресса "
+                        f"(порог {timeout_sec // 3600} ч).")
         stalled.append(tid)
-    if stalled:
-        try:
-            tdl_store.rebuild_index(cfg)
-        except Exception:
-            pass
     for tid in stalled:
         print(f"[watch] ЗАВИСАНИЕ: {tid} — нет отчёта дольше {timeout_sec // 3600} ч")
         if client is not None:
@@ -124,26 +114,12 @@ def check_stalled(cfg, client, timeout_sec: int = 10800) -> int:
     return len(stalled)
 
 
-def _mark_task_stalled(cfg, tid: str, details: str):
-    """Пометить TDL-задачу task_stalled (однократно) в history."""
+def clear_stalled(cfg, tid: str):
+    """Снять пометку зависания (после редиспатча)."""
     try:
-        from pipeline.tdl import store as tdl_store
-        from pipeline.tdl._tpl import _now_iso
-        t = tdl_store.load_task(cfg, tid)
-        if t is None:
-            return
-        hist = t.setdefault("history", [])
-        if any(h.get("action") == "task_stalled" for h in hist):
-            return
-        hist.append({"timestamp": _now_iso(), "actor": "watch",
-                     "action": "task_stalled", "details": details})
-        tdl_store.save_task(cfg, t)
-        try:
-            tdl_store.rebuild_index(cfg)
-        except Exception:
-            pass
-    except Exception as e:
-        print(f"[watch] stalled-пометка {tid} не сохранена: {e}")
+        (stalled_dir(cfg) / f"{tid}.txt").unlink(missing_ok=True)
+    except Exception:
+        pass
 
 
 def check_subagent_zombies(cfg, client, max_age_sec: int = 3600) -> int:
@@ -181,9 +157,9 @@ def check_subagent_zombies(cfg, client, max_age_sec: int = 3600) -> int:
             pf.unlink()
         except Exception:
             pass
-        _mark_task_stalled(cfg, tid,
-                           f"субагент-сирота (PID {pid}) убит сторожем "
-                           f"после {max_age_sec} с без результата")
+        _stalled_marker(cfg, tid,
+                        f"субагент-сирота (PID {pid}) убит сторожем "
+                        f"после {max_age_sec} с без результата")
         if client is not None:
             try:
                 client.notify("task_stalled", to="controller", task=tid,
@@ -218,29 +194,11 @@ def file_polling_loop(cfg, client, stop):
                                                     remark=None, id=None))
                 except Exception as e:
                     print(f"[watch] dispatch {p.name} ошибка: {e}")
-            # TDL JSON-задачи (источник истины)
-            if getattr(cfg, "tdl_enabled", True):
-                try:
-                    from pipeline.tdl import store as tdl_store
-                    ad = tdl_store.active_dir(cfg)
-                    if ad.is_dir():
-                        for tf in sorted(ad.glob("*.task.json")):
-                            import json
-                            try:
-                                t = json.loads(tf.read_text(encoding="utf-8"))
-                            except Exception:
-                                continue
-                            tid = t.get("task_id")
-                            if not tid:
-                                continue
-                            _verify_tdl_or_legacy(cfg, tid)
-                except Exception as e:
-                    print(f"[watch] tdl-поллинг ошибка: {e}")
-            # legacy Markdown
+            # Markdown-задачи: отчёт без вердикта -> verify
             for f in sorted(glob.glob(str(cfg.abs_tasks_dir("active") / "A-*.md"))):
                 tid = os.path.basename(f).split("_")[0]
                 try:
-                    _verify_tdl_or_legacy(cfg, tid)
+                    _verify_task(cfg, tid)
                 except Exception as e:
                     print(f"[watch] verify {tid} ошибка: {e}")
             # зависшие in_progress-задачи и сироты-субагенты
@@ -261,7 +219,7 @@ def sse_loop(cfg, client, watch_dispatch):
             if tid:
                 print(f"[watch] отчёт по {tid} — запускаю verify")
                 try:
-                    _verify_tdl_or_legacy(cfg, tid)
+                    _verify_task(cfg, tid)
                     client.notify("verdict", to="executor", task=tid,
                                   payload={"action": "check verdict file"})
                 except Exception as e:
@@ -277,17 +235,22 @@ def sse_loop(cfg, client, watch_dispatch):
             low = text.lower()
             if "статус" in low or "отчёт" in low or "ping" in low:
                 try:
-                    from pipeline.tdl import store as tdl_store
-                    idx = tdl_store.load_index(cfg) or {"tasks": []}
-                    tasks = idx.get("tasks", [])
-                    done = sum(1 for t in tasks if t.get("status") == "done")
-                    inprog = [t.get("task_id") for t in tasks
-                              if t.get("workflow_state") == "in_progress"]
-                    stalled = [t.get("task_id") for t in tasks
-                               if t.get("workflow_state") == "in_progress"
-                               and any(h.get("action") == "stalled" for h in (tdl_store.load_task(cfg, t.get("task_id", "")) or {}).get("history", []))]
-                    reply += (f"\nСтатус {cfg.name}: всего={len(tasks)}, done={done}, "
-                              f"в работе={inprog or '—'}, зависшие(stalled)={stalled or '—'}")
+                    active = cfg.abs_tasks_dir("active")
+                    tasks = sorted(active.glob("A-*.md")) if active.is_dir() else []
+                    from pipeline.models import Task as _T
+                    inprog = []
+                    for f in tasks:
+                        try:
+                            if _T.from_file(Path(f)).status == "in_progress":
+                                inprog.append(os.path.basename(f).split("_")[0])
+                        except Exception:
+                            continue
+                    sd = stalled_dir(cfg)
+                    stalled = [p.stem for p in sorted(sd.glob("*.txt"))] if sd.is_dir() else []
+                    done = len(glob.glob(str(cfg.abs_tasks_dir("archive") / "A-*.md")))
+                    reply += (f"\nСтатус {cfg.name}: активных={len(tasks)}, "
+                              f"в работе={inprog or '—'}, зависших={stalled or '—'}, "
+                              f"в архиве={done}")
                 except Exception as e:
                     reply += f"\n(статистика недоступна: {e})"
             client.send_message(src, reply)
@@ -340,14 +303,6 @@ def main():
     cfg = load_config(a.project)
     client = Client("controller", project=cfg.name, base_url=a.url,
                     notif_dir=str(cfg.resolve(cfg.notif)))
-    # события конвейера (stage_done и др.) — в ленту/чат через сервер
-    try:
-        from pipeline.tdl import cli as tdl_cli
-        tdl_cli.set_publish_hook(
-            lambda type_, project, task, payload: client.notify(
-                type_, to="feed", task=task, payload=payload) or True)
-    except Exception:
-        pass
 
     if a.polling_only or not client.server_alive():
         print(f"[watch] сервер недоступен — файловый поллинг ({cfg.root})")

@@ -62,14 +62,17 @@ class ProjectConfig:
     layer_rules: list = field(default_factory=list)
     audit_dirs: list = field(default_factory=lambda: ["Test", "Core.Tests"])
 
-    # TDL (JSON как источник истины)
-    tdl_enabled: bool = True
-    tdl_root: str = "Tasks\\JSON"
-    tdl_active: str = "Tasks\\JSON\\Active"
-    tdl_reports: str = "Tasks\\JSON\\Reports"
-    tdl_verdicts: str = "Tasks\\JSON\\Verdicts"
-    tdl_index: str = "Tasks\\JSON\\Index\\tdl.index.json"
-    tdl_markdown_mirror: bool = True
+    # План (репозиторий ProjectsPalns): источник карточек для plan_runner
+    plan_repo: list = field(default_factory=list)   # кандидаты корня ProjectsPalns
+    plan_subdir: str = ""                            # <Проект> внутри ProjectsPalns
+    plan_file: str = ""                              # конкретный файл (иначе — новейший _current/*.md)
+
+    # План-раннер
+    runner_model: str = "opencode-go/deepseek-v4-flash"
+    runner_parallel: int = 1
+    runner_retries: int = 2                          # ретраев карточки с логом ошибки
+    question_timeout_sec: int = 1200                 # тишина по вопросу -> работа по допущениям
+    checkpoint_stages: bool = True                   # пауза после закрытия этапа (summary)
 
     # Служебные настройки
     skip_dirs: list = field(default_factory=lambda: [
@@ -88,6 +91,42 @@ class ProjectConfig:
     def abs_tasks_dir(self, folder_key: str) -> Path:
         return self.resolve(getattr(self, folder_key))
 
+    def questions_dir(self) -> Path:
+        """Папка вопросов агентов (grill-фаза): Tasks\\Вопросы."""
+        return self.root / "Tasks" / "Вопросы"
+
+    def conveyor_dir(self) -> Path:
+        return self.root / "Tasks" / "Конвейер"
+
+    def plan_dir(self):
+        """Каталог планов проекта в ProjectsPalns: <repo>\\<subdir|name>\\_current.
+        Возвращает Path или None, если репозиторий планов не найден."""
+        import os
+        name = self.plan_subdir or self.name
+        candidates = []
+        env = os.environ.get("DEV_PIPELINE_PLANS_DIR")
+        if env:
+            candidates.append(Path(env) / name / "_current")
+            candidates.append(Path(env) / name)
+        for r in self.plan_repo:
+            candidates.append(Path(r) / name / "_current")
+            candidates.append(Path(r) / name)
+        for cand in candidates:
+            if cand.is_dir():
+                return cand
+        return None
+
+    def find_plan_file(self):
+        """Актуальный файл плана: явный plan.file или новейший _current/*.md."""
+        d = self.plan_dir()
+        if d is None:
+            return None
+        if self.plan_file:
+            p = d / self.plan_file
+            return p if p.exists() else None
+        md = sorted(d.glob("*.md"), key=lambda p: -p.stat().st_mtime)
+        return md[0] if md else None
+
     # Короткие помощники для команд сборки/тестов
     def msbuild_cmd(self) -> list[str]:
         if self.msbuild.lower() == "dotnet":
@@ -101,6 +140,11 @@ class ProjectConfig:
         return args
 
     def test_cmd(self) -> list[str]:
+        if self.test_runner == "none":
+            return []
+        if self.test_runner == "pytest":
+            return ["python", "-X", "utf8", "-m", "pytest",
+                    str(self.root / self.test_dll), "-q"]
         if self.test_runner == "vstest":
             return [self.vstest, str(self.root / self.test_dll)]
         if self.test_runner == "dotnet":
@@ -158,7 +202,8 @@ def load_config(project_name: str) -> ProjectConfig:
     c = raw.get("checks", [])
     lr = raw.get("layer_rules", [])
     ad = raw.get("audit_dirs", ["Test", "Core.Tests"])
-    td = raw.get("tdl", {})
+    pl = raw.get("plan", {}) or {}
+    rn = raw.get("runner", {}) or {}
 
     root = None
     tried: list[str] = []
@@ -200,13 +245,15 @@ def load_config(project_name: str) -> ProjectConfig:
         checks=c,
         layer_rules=lr,
         audit_dirs=ad,
-        tdl_enabled=td.get("enabled", True),
-        tdl_root=td.get("root", "Tasks\\JSON"),
-        tdl_active=td.get("active", "Tasks\\JSON\\Active"),
-        tdl_reports=td.get("reports", "Tasks\\JSON\\Reports"),
-        tdl_verdicts=td.get("verdicts", "Tasks\\JSON\\Verdicts"),
-        tdl_index=td.get("index", "Tasks\\JSON\\Index\\tdl.index.json"),
-        tdl_markdown_mirror=td.get("markdown_mirror", True),
+        plan_repo=[Path(r) for r in ([pl["repo"]] if isinstance(pl.get("repo"), str)
+                                     else (pl.get("repo") or [])) if r],
+        plan_subdir=pl.get("subdir", ""),
+        plan_file=pl.get("file", ""),
+        runner_model=rn.get("model", "opencode-go/deepseek-v4-flash"),
+        runner_parallel=int(rn.get("parallel", 1)),
+        runner_retries=int(rn.get("retries", 2)),
+        question_timeout_sec=int(rn.get("question_timeout_sec", 1200)),
+        checkpoint_stages=bool(rn.get("checkpoint_stages", True)),
     )
 
 

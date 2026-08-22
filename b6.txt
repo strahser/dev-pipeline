@@ -1,2 +1,0 @@
-MSBUILD : error MSB1009: файл проекта не существует.
-Ключ: CoreConsoleRunner/CoreConsoleRunner.csproj

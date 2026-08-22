@@ -48,25 +48,46 @@ python -X utf8 tests/test_client.py -v      # client: ACK/recovery/фолбэк
 python -X utf8 tests/run_all.py             # весь набор
 ```
 
-## 4.1. Агент-менеджер (запуск субагентов)
+## 4.1. План-раннер (основной сценарий v2)
+
+```bat
+:: Всё по плану проекта (до первой эскалации/черпка)
+python -X utf8 -m agents.plan_runner --project meptaggingsolution
+
+:: Одна карточка и выход (пилот)
+python -X utf8 -m agents.plan_runner --project mepbimserver --once
+
+:: Посмотреть, что раннер выбрал бы сейчас
+python -X utf8 -m agents.plan_runner --project devpipeline --dry-run
+```
+
+Цикл карточки: выбор готовой (зависимости закрыты) → MD-постановка в Активные →
+grill-фаза субагента (вопросы владельцу через `Tasks\Вопросы\*.md`, панель «❓ Вопросы») →
+исполнение → механический вердикт → статус `Выполнено` в файле плана + коммит в ProjectsPalns.
+
+- Чекпоинты: метка «Чекпоинт: да» или закрытие этапа → пауза; одобрение — панель
+  («❓ Вопросы · ⏸ Чекпоинты») или `POST /api/checkpoints/<id>/approve`.
+- Ретраи: FAIL вердикта повторяется с хвостом лога (`runner.retries`), затем card_failed и стоп.
+- Состояние: `Tasks\Конвейер\runner_state.json` (`GET /api/runner`).
+- Без сервера: добавьте `--legacy` (opencode run напрямую).
+
+## 4.2. Агент-менеджер (разовые задачи A-NN)
 
 ```powershell
-# Миссия → подзадачи A-NN → субагенты (parallel)
-python -X utf8 agents/agent_manager.py mission --project <p> --mission <ТЗ.md> --split 3 ^
-    --model opencode/deepseek-v4-flash-free --skill pipeline-executor
+# Миссия -> подзадачи A-NN -> субагенты (parallel)
+python -X utf8 agents/agent_manager.py mission --project <p> --mission <ТЗ>.md --split 3
 
 # Одна задача реальным субагентом
-python -X utf8 agents/agent_manager.py task --project <p> --task A-05 ^
-    --model opencode/deepseek-v4-flash-free
+python -X utf8 agents/agent_manager.py task --project <p> --task A-05
 
 # Демо-цикл без реального opencode (проверка механики)
-python -X utf8 agents/agent_manager.py mission --project <p> --mission <ТЗ.md> --demo
+python -X utf8 agents/agent_manager.py mission --project <p> --mission <ТЗ>.md --demo
 ```
 
 **Уроки пилота (MepTaggingSolution, 2026-08-06):**
 - `opencode run` субагентам нужен `--auto` (иначе останавливаются на запросе записи файла).
-- Неинтерактивный субагент может **не дописать отчёт** после успешной работы → менеджер
-  авто-генерирует отчёт (`_ensure_report`), если задача была взята (in_progress).
+- Неинтерактивный субагент может **не дописать отчёт**: менеджер НЕ создаёт фейковый отчёт —
+  ставит маркер stalled (`Tasks\Конвейер\stalled\<ID>.txt`) для редиспатча.
 - Промпт субагента должен ЯВНО запрещать поиск «открытых задач» (иначе скилл-исполнитель
   конфликтует: менеджер уже перевёл задачу в in_progress).
 - verify сравнивает тесты с `baseline_passed/baseline_total` из pipeline.yaml:
@@ -78,7 +99,7 @@ python -X utf8 agents/agent_manager.py mission --project <p> --mission <ТЗ.md>
 
 ```powershell
 python -X utf8 agents/agent_manager.py report --project meptaggingsolution
-# -> Tasks\Отчёты_менеджера.md: входящие/активные/архив, вердикты, рекомендации
+# -> Tasks\Отчёт_менеджера.md: входящие/активные/архив, вердикты, рекомендации
 ```
 
 Отчёт показывает цели (задачи по статусам) и что делать дальше. Проверяйте его

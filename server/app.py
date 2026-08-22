@@ -47,6 +47,7 @@ from pipeline.models import Task
 from server.db import Store, now_iso as _now_iso
 from server.heartbeat import start_watchdog
 from server.sse import SSEHub
+from server.plan_api import router as plan_router, init as plan_api_init
 
 DB_PATH = os.environ.get("PIPELINE_DB", "conveyor.db")
 DASHBOARD = Path(__file__).parent / "static" / "dashboard.html"
@@ -90,6 +91,8 @@ async def lifespan(_app: FastAPI):
 
 
 app = FastAPI(title="dev-pipeline coordinator", lifespan=lifespan)
+plan_api_init(store, hub)
+app.include_router(plan_router)
 
 STATIC_DIR = Path(__file__).parent / "static"
 app.mount("/static", StaticFiles(directory=str(STATIC_DIR)), name="static")
@@ -228,51 +231,6 @@ async def api_verdicts(project: str = "", limit: int = 20):
         rd = cfg.abs_tasks_dir("reports")
         files = sorted((p.name for p in rd.glob("*_Вердикт_*")), reverse=True) if rd.is_dir() else []
         return files[:limit]
-    except ConfigError as e:
-        raise HTTPException(404, f"проект не найден: {e}")
-
-
-@app.get("/api/plan")
-async def api_plan(project: str = ""):
-    """План проекта — таблица согласованного плана. Если TDL включён — из JSON index,
-    иначе из legacy Markdown."""
-    project = project or (list_projects() or ["_test"])[0]
-    try:
-        cfg = load_config(project)
-        if cfg.tdl_enabled:
-            from pipeline.tdl import store as tdl_store
-            idx = tdl_store.load_index(cfg) or {"tasks": []}
-            rows = []
-            for t in idx.get("tasks", []):
-                rows.append({
-                    "id": t.get("task_id", ""),
-                    "wbs": t.get("wbs_code", ""),
-                    "title": t.get("name", ""),
-                    "status": t.get("status", "open"),
-                    "workflow_state": t.get("workflow_state", ""),
-                    "документ": "",
-                    "report_refs": t.get("report_refs", []),
-                    "verdict_refs": t.get("verdict_refs", []),
-                })
-            done = [r for r in rows if r["status"] == "done"]
-            return {
-                "project": project, "tdl": True,
-                "total": len(rows), "done": len(done),
-                "rows": rows,
-                "active": [r for r in rows if r["status"] != "done"],
-                "archive": done,
-                "working": _working_subagents(cfg),
-            }
-        rows = _plan_rows(cfg)
-        active = [r for r in rows if r["status"] in ("open", "in_progress", "done_report", "rejected")]
-        done = [r for r in rows if r["status"] in ("verified", "closed")]
-        total = len(rows)
-        return {
-            "project": project, "tdl": False,
-            "total": total, "done": len(done),
-            "rows": rows, "active": active, "archive": done,
-            "working": _working_subagents(cfg),
-        }
     except ConfigError as e:
         raise HTTPException(404, f"проект не найден: {e}")
 
@@ -498,286 +456,6 @@ async def api_projects():
     return list_projects()
 
 
-# --- TDL (JSON как источник истины) ---
-
-def _wbs_level(level, wbs_code: str) -> int:
-    """Уровень вложения: явный level, иначе глубина WBS (2.1.1 -> 3)."""
-    try:
-        if level is not None:
-            return int(level)
-    except (TypeError, ValueError):
-        pass
-    return len([p for p in str(wbs_code).split(".") if p])
-
-
-def _tdl_task_row(cfg, t: dict) -> dict:
-    """Обогатить индексную строку TDL-задачи данными из JSON-файла задачи
-    (module/class_name/layer/is_summary/task_kind/dates) + счётчиками из отчёта."""
-    from pipeline.tdl import store as tdl_store
-    task = tdl_store.load_task(cfg, t.get("task_id", "")) or {}
-    report = tdl_store.load_report(cfg, t.get("task_id", ""))
-    verdict = tdl_store.load_verdict(cfg, t.get("task_id", ""))
-    evidence_count = 0
-    if report:
-        ev = report.get("evidence") or []
-        evidence_count = sum(1 for e in ev if e.get("evidence_id"))
-    return {
-        "task_id": t.get("task_id", ""),
-        "path": t.get("path", ""),
-        "wbs_code": t.get("wbs_code", ""),
-        "parent_wbs": t.get("parent_wbs", task.get("parent_wbs", "")) or "",
-        "level": _wbs_level(t.get("level", task.get("level")), t.get("wbs_code", task.get("wbs_code", ""))),
-        "is_summary": bool(task.get("is_summary", t.get("is_summary", False))),
-        "task_kind": task.get("task_kind", t.get("task_kind", "")),
-        "name": t.get("name", task.get("name", "")),
-        "description": task.get("description", "") or t.get("description", "") or "",
-        "status": t.get("status", "open"),
-        "workflow_state": t.get("workflow_state", "issued"),
-        "priority": t.get("priority", task.get("priority", "средний")),
-        "module": task.get("module", t.get("module", "")) or "",
-        "class_name": task.get("class_name", t.get("class_name", "")) or "",
-        "layer": task.get("layer", t.get("layer", "")) or "",
-        "dates": task.get("dates", {}) or {},
-        "has_report": bool(t.get("report_refs")),
-        "has_verdict": bool(t.get("verdict_refs")),
-        "verdict_result": (verdict or {}).get("result") if verdict else None,
-        "links_count": len(task.get("links", []) or []),
-        "evidence_count": evidence_count,
-    }
-
-
-@app.get("/api/tdl/tasks")
-async def api_tdl_tasks(project: str = "", status: str = "", workflow_state: str = "",
-                        task_kind: str = "", module: str = "", class_name: str = "",
-                        layer: str = "", is_summary: str = "", wbs: str = "",
-                        q: str = "", has_report: str = "", has_verdict: str = ""):
-    from pipeline.tdl import store as tdl_store
-    project = project or (list_projects() or [""])[0]
-    try:
-        cfg = load_config(project)
-    except ConfigError:
-        return []
-    idx = tdl_store.load_index(cfg) or {"tasks": []}
-    out = []
-    for t in idx.get("tasks", []):
-        row = _tdl_task_row(cfg, t)
-        if status and row["status"] != status:
-            continue
-        if workflow_state and row["workflow_state"] != workflow_state:
-            continue
-        if task_kind and row["task_kind"] != task_kind:
-            continue
-        if module and row["module"] != module:
-            continue
-        if class_name and row["class_name"] != class_name:
-            continue
-        if layer and row["layer"] != layer:
-            continue
-        if is_summary in ("true", "1") and not row["is_summary"]:
-            continue
-        if is_summary in ("false", "0") and row["is_summary"]:
-            continue
-        if wbs and wbs != row["wbs_code"]:
-            continue
-        if has_report in ("true", "1") and not row["has_report"]:
-            continue
-        if has_report in ("false", "0") and row["has_report"]:
-            continue
-        if has_verdict in ("true", "1") and not row["has_verdict"]:
-            continue
-        if has_verdict in ("false", "0") and row["has_verdict"]:
-            continue
-        if q:
-            hay = " ".join([row["name"], row["task_id"], row["wbs_code"],
-                            row["module"], row["class_name"]]).lower()
-            if q.lower() not in hay:
-                continue
-        out.append(row)
-    return out
-
-
-@app.get("/api/tdl/filters")
-async def api_tdl_filters(project: str = ""):
-    """Списки значений для панели фильтров dashboard (модули/классы/слои/типы/статусы)."""
-    from pipeline.tdl import store as tdl_store
-    project = project or (list_projects() or [""])[0]
-    try:
-        cfg = load_config(project)
-    except ConfigError:
-        return {}
-    idx = tdl_store.load_index(cfg) or {"tasks": []}
-    statuses: dict[str, int] = {}
-    workflows: dict[str, int] = {}
-    kinds: dict[str, int] = {}
-    modules: dict[str, int] = {}
-    classes: dict[str, int] = {}
-    layers: dict[str, int] = {}
-    for t in idx.get("tasks", []):
-        row = _tdl_task_row(cfg, t)
-        statuses[row["status"]] = statuses.get(row["status"], 0) + 1
-        workflows[row["workflow_state"]] = workflows.get(row["workflow_state"], 0) + 1
-        if row["task_kind"]:
-            kinds[row["task_kind"]] = kinds.get(row["task_kind"], 0) + 1
-        if row["module"]:
-            modules[row["module"]] = modules.get(row["module"], 0) + 1
-        if row["class_name"]:
-            classes[row["class_name"]] = classes.get(row["class_name"], 0) + 1
-        if row["layer"]:
-            layers[row["layer"]] = layers.get(row["layer"], 0) + 1
-
-    def _to_list(cnt: dict) -> list:
-        return [{"value": k, "count": v} for k, v in
-                sorted(cnt.items(), key=lambda x: (-x[1], x[0]))]
-
-    return {
-        "statuses": _to_list(statuses),
-        "workflow_states": _to_list(workflows),
-        "task_kinds": _to_list(kinds),
-        "modules": _to_list(modules),
-        "class_names": _to_list(classes),
-        "layers": _to_list(layers),
-    }
-
-
-@app.get("/api/tdl/task/{task_id}")
-async def api_tdl_task(task_id: str, project: str = ""):
-    from pipeline.tdl import store as tdl_store, render
-    project = project or (list_projects() or [""])[0]
-    try:
-        cfg = load_config(project)
-    except ConfigError as e:
-        raise HTTPException(404, f"проект не найден: {e}")
-    task = tdl_store.load_task(cfg, task_id)
-    if not task:
-        raise HTTPException(404, f"TDL-задача {task_id} не найдена")
-    report = tdl_store.load_report(cfg, task_id)
-    verdict = tdl_store.load_verdict(cfg, task_id)
-    evs = [e for e in store.recent_events(limit=500, project=project)
-           if (e.get("task") or "") == task_id]
-    task_path = tdl_store.task_path(cfg, task_id)
-    report_path = tdl_store.latest_report_path(cfg, task_id)
-    verdict_path = tdl_store.latest_verdict_path(cfg, task_id)
-    return {
-        "task": task,
-        "report": report,
-        "verdict": verdict,
-        "events": evs,
-        "markdown": {
-            "task_card": render.render_task_card(task),
-            "report": render.render_report_md(report) if report else "",
-            "verdict": render.render_verdict_md(verdict) if verdict else "",
-        },
-        "sources": {
-            "task": str(task_path.relative_to(cfg.root)) if task_path else "",
-            "report": str(report_path.relative_to(cfg.root)) if report_path else "",
-            "verdict": str(verdict_path.relative_to(cfg.root)) if verdict_path else "",
-        },
-    }
-
-
-@app.get("/api/tdl/index")
-async def api_tdl_index(project: str = ""):
-    from pipeline.tdl import store as tdl_store
-    project = project or (list_projects() or [""])[0]
-    try:
-        cfg = load_config(project)
-    except ConfigError:
-        return {}
-    return tdl_store.load_index(cfg) or {}
-
-
-@app.get("/api/tdl/plan")
-async def api_tdl_plan(project: str = ""):
-    from pipeline.tdl import store as tdl_store
-    project = project or (list_projects() or [""])[0]
-    try:
-        cfg = load_config(project)
-    except ConfigError:
-        return {"project": project, "tasks": []}
-    idx = tdl_store.load_index(cfg) or {"tasks": []}
-    tasks = idx.get("tasks", [])
-    done = [t for t in tasks if t.get("status") == "done"]
-    return {
-        "project": project,
-        "total": len(tasks), "done": len(done),
-        "tasks": tasks,
-    }
-
-
-@app.get("/api/tdl/activity")
-async def api_tdl_activity(limit: int = 50, project: str = ""):
-    evs = store.recent_events(limit=min(limit, 200), project=project)
-    return [{"type": e["type"], "task": e.get("task", ""), "created_at": e["created_at"],
-             "from": e["from"]} for e in evs]
-
-
-def _running_tasks(cfg) -> list:
-    """Текущие выполняющиеся задачи с затраченным временем (сек).
-    Источник: события task_started/subagent_finished из БД сервера,
-    фолбэк — dates.start из TDL JSON-задачи."""
-    import datetime
-    from pipeline.tdl import store as tdl_store
-    evs = store.recent_events(limit=500, project=cfg.name)
-    started: dict[str, str] = {}
-    finished: set[str] = set()
-    for e in evs:
-        tid = e.get("task") or ""
-        if not tid:
-            continue
-        if e["type"] == "task_started":
-            started[tid] = e["created_at"]
-        elif e["type"] == "subagent_finished":
-            finished.add(tid)
-    idx = tdl_store.load_index(cfg) or {"tasks": []}
-    now = datetime.datetime.now()  # локальное время — события в БД наивные (local)
-    out = []
-    for t in idx.get("tasks", []):
-        tid = t.get("task_id", "")
-        if t.get("status") == "done":
-            continue
-        if t.get("workflow_state") in ("blocked", "rejected"):
-            continue
-        started_at = started.get(tid)
-        if started_at and tid not in finished:
-            try:
-                st = datetime.datetime.fromisoformat(started_at.replace("Z", "+00:00"))
-                if st.tzinfo is not None:
-                    st = st.astimezone().replace(tzinfo=None)
-                out.append({"task_id": tid, "name": t.get("name", ""),
-                            "elapsed_sec": max(0, int((now - st).total_seconds()))})
-            except ValueError:
-                pass
-        elif not started_at:
-            # фолбэк: дата старта из TDL-задачи — только если задача реально в работе
-            if t.get("workflow_state") not in ("in_progress",):
-                continue
-            task = tdl_store.load_task(cfg, tid) or {}
-            st = (task.get("dates") or {}).get("start")
-            if st:
-                try:
-                    st_dt = datetime.datetime.fromisoformat(str(st).replace("Z", "+00:00"))
-                    if st_dt.tzinfo is not None:
-                        st_dt = st_dt.astimezone().replace(tzinfo=None)
-                    out.append({"task_id": tid, "name": t.get("name", ""),
-                                "elapsed_sec": max(0, int((now - st_dt).total_seconds()))})
-                except ValueError:
-                    pass
-    out.sort(key=lambda x: -x["elapsed_sec"])
-    return out
-
-
-@app.get("/api/tdl/running")
-async def api_tdl_running(project: str = ""):
-    """Текущие выполняющиеся задачи с затраченным временем (для прогресс-бара)."""
-    from pipeline.config import ConfigError as _CE
-    project = project or (list_projects() or [""])[0]
-    try:
-        cfg = load_config(project)
-    except _CE:
-        return []
-    return _running_tasks(cfg)
-
-
 def _parse_iso_dt(v) -> datetime.datetime | None:
     """Дата (YYYY-MM-DD) или ISO-момент -> локальный datetime."""
     if not v:
@@ -790,284 +468,6 @@ def _parse_iso_dt(v) -> datetime.datetime | None:
         return dt
     except ValueError:
         return None
-
-
-def _has_time(v) -> bool:
-    """Есть ли в значении время (ISO-момент), а не только дата."""
-    s = str(v or "").strip()
-    return "T" in s or (":" in s and " " in s)
-
-
-def _duration_sec(start, finish) -> int | None:
-    s = _parse_iso_dt(start)
-    f = _parse_iso_dt(finish)
-    if s is None or f is None:
-        return None
-    return max(0, int((f - s).total_seconds()))
-
-
-@app.get("/api/tdl/durations")
-async def api_tdl_durations(project: str = ""):
-    """Таблица длительностей задач: план (estimate_sec) vs факт (duration_sec).
-    Для summary-задач план/факт = сумма по потомкам (по префиксу wbs).
-    У незавершённых задач duration_sec = время в работе (start -> now)."""
-    import datetime as _dt
-    from pipeline.tdl import store as tdl_store
-    project = project or (list_projects() or [""])[0]
-    try:
-        cfg = load_config(project)
-    except ConfigError:
-        return {"project": project, "tasks": [], "summary": {}}
-
-    idx = tdl_store.load_index(cfg) or {"tasks": []}
-    tasks = []
-    for e in idx.get("tasks", []):
-        t = tdl_store.load_task(cfg, e.get("task_id", "")) or {}
-        tasks.append(t)
-
-    by_wbs = {str(t.get("wbs_code", "")): t for t in tasks}
-    wbs_set = set(by_wbs)
-    prefix = lambda w: str(w) + "."
-
-    def children_wbs(w):
-        p = prefix(w)
-        return sorted((x for x in wbs_set if x.startswith(p)), key=lambda s: [int(v) for v in s.split(".")])
-
-    def all_descendants_wbs(w):
-        """Все потомки по WBS (не только прямые): 2 -> 2.1, 2.1.1, 2.1.1.1..."""
-        p = prefix(w)
-        return sorted((x for x in wbs_set if x.startswith(p)), key=lambda s: [int(v) for v in s.split(".")])
-
-    def child_sum(w, field):
-        """Сумма field по всем потомкам (листьям) summary-задачи."""
-        total = 0
-        for c in all_descendants_wbs(w):
-            v = by_wbs[c].get("dates", {}).get(field)
-            if v:
-                total += v
-        return total or None
-
-    now = _dt.datetime.now()
-    rows = []
-    for t in tasks:
-        tid = t.get("task_id", "")
-        w = str(t.get("wbs_code", ""))
-        dates = t.get("dates", {}) or {}
-        is_sum = bool(t.get("is_summary"))
-        est = dates.get("estimate_sec") or (child_sum(w, "estimate_sec") if is_sum else None)
-        if t.get("status") == "done":
-            dur = dates.get("duration_sec") or (child_sum(w, "duration_sec") if is_sum else None) \
-                  or _duration_sec(dates.get("start"), dates.get("finish"))
-        else:
-            st = _parse_iso_dt(dates.get("start"))
-            if st is not None:
-                dur = int((now - st).total_seconds())
-            else:
-                dur = child_sum(w, "duration_sec") if is_sum else None
-        delta = (dur - est) if (est is not None and dur is not None) else None
-        over = bool(delta is not None and delta > 0 and est and delta > est * 0.5)
-        rows.append({
-            "task_id": tid,
-            "name": t.get("name", ""),
-            "wbs_code": w,
-            "level": t.get("level", 1),
-            "is_summary": is_sum,
-            "status": t.get("status", "open"),
-            "workflow_state": t.get("workflow_state", "issued"),
-            "issued": dates.get("issued", ""),
-            "start": dates.get("start", ""),
-            "finish": dates.get("finish", ""),
-            "estimate_sec": est,
-            "duration_sec": dur,
-            "delta_sec": delta,
-            "over_plan": over,
-            "has_report": bool(e.get("report_refs", [])) if not is_sum else None,
-            "has_verdict": bool(e.get("verdict_refs", [])) if not is_sum else None,
-        })
-
-    rows.sort(key=lambda r: (r["wbs_code"]))
-    plan_total = sum(r["estimate_sec"] or 0 for r in rows if r["is_summary"])
-    fact_total = sum(r["duration_sec"] or 0 for r in rows if r["is_summary"])
-    done_count = sum(1 for r in rows if r["status"] == "done")
-    over_count = sum(1 for r in rows if r["over_plan"])
-    return {
-        "project": project,
-        "tasks": rows,
-        "summary": {
-            "total": len(rows),
-            "done": done_count,
-            "plan_sec": plan_total,
-            "fact_sec": fact_total,
-            "over_plan": over_count,
-        },
-    }
-
-
-@app.get("/api/tdl/load")
-async def api_tdl_load(project: str = "", period: str = "day", buckets: int = 14):
-    """Примерная загруженность (план vs факт, в часах) по периодам.
-
-    period: day — последние N дней; week — последние N недель; month — по месяцам.
-    Факт: duration_sec задач, размазанный равномерно по дням start→finish
-    (или start→now для незавершённых). План: estimate_sec аналогично."""
-    import datetime as _dt
-    from pipeline.tdl import store as tdl_store
-    project = project or (list_projects() or [""])[0]
-    try:
-        cfg = load_config(project)
-    except ConfigError:
-        return {"project": project, "buckets": [], "period": period}
-
-    idx = tdl_store.load_index(cfg) or {"tasks": []}
-    now = _dt.datetime.now()
-
-    def norm(dt):
-        return dt if dt.tzinfo is None else dt.astimezone().replace(tzinfo=None)
-
-    def parse(v):
-        if not v:
-            return None
-        try:
-            return norm(_parse_iso_dt(v))
-        except Exception:
-            return None
-
-    # 1) собрать задачи с длительностью (done: duration_sec; в работе: start->now)
-    tasks = []
-    for e in idx.get("tasks", []):
-        t = tdl_store.load_task(cfg, e.get("task_id", "")) or {}
-        dates = t.get("dates", {}) or {}
-        start = parse(dates.get("start"))
-        finish = parse(dates.get("finish"))
-        est = dates.get("estimate_sec")
-        is_dates = not _has_time(dates.get("start"))  # start задан датой (не ISO)
-        if t.get("status") == "done":
-            dur = dates.get("duration_sec")
-            if not dur and start and finish:
-                dur = max(0, int((finish - start).total_seconds()))
-        else:
-            dur = max(0, int((now - start).total_seconds())) if start else None
-        if not dur:
-            continue
-        if not start:
-            # нет start: берём issued 09:00 (или finish-день) как начало работы
-            start = parse(dates.get("issued")) or finish
-            if start:
-                start = start.replace(hour=9, minute=0, second=0)
-                is_dates = True
-        if not start:
-            continue
-        end = finish or now
-        if is_dates and finish:
-            end = finish + _dt.timedelta(days=1)  # даты: finish = последний день работы
-        if end <= start:
-            end = start + _dt.timedelta(days=1)  # один день работы
-        tasks.append({"start": start, "end": end, "dur": dur, "est": est,
-                      "is_dates": is_dates})
-
-    # 2) бакеты по периоду
-    def day_key(dt):
-        return dt.date().isoformat()
-
-    def bucket_label(dt, period):
-        if period == "day":
-            return dt.date().isoformat()
-        if period == "week":
-            monday = dt.date() - _dt.timedelta(days=dt.date().weekday())
-            return monday.isoformat()
-        return dt.strftime("%Y-%m")
-
-    buckets_out = []
-    if period == "day":
-        dates = [(now - _dt.timedelta(days=i)) for i in range(buckets - 1, -1, -1)]
-        for d in dates:
-            buckets_out.append({"label": day_key(d), "fact_h": 0, "plan_h": 0})
-    elif period == "week":
-        # последние N недель, начиная с понедельника текущей
-        monday = now.date() - _dt.timedelta(days=now.date().weekday())
-        weeks = [(monday - _dt.timedelta(days=7 * i)) for i in range(buckets - 1, -1, -1)]
-        for w in weeks:
-            buckets_out.append({"label": w.isoformat(), "fact_h": 0, "plan_h": 0})
-    else:  # month
-        cur = _dt.date(now.year, now.month, 1)
-        months = []
-        y, m = cur.year, cur.month
-        for _ in range(buckets):
-            months.append(_dt.date(y, m, 1))
-            m -= 1
-            if m == 0:
-                m, y = 12, y - 1
-        for mo in reversed(months):
-            buckets_out.append({"label": mo.strftime("%Y-%m"), "fact_h": 0, "plan_h": 0})
-
-    # 3) размазать длительность по бакетам
-    def overlaps(t0, t1, bucket_start, bucket_end):
-        s = max(t0, bucket_start)
-        e = min(t1, bucket_end)
-        return max(0, (e - s).total_seconds()) if e > s else 0
-
-    for t in tasks:
-        if t["is_dates"]:
-            # даты без времени: duration = рабочие часы, раскидываем равномерно
-            # по календарным дням диапазона (start..end)
-            span_days = max(1, (t["end"].date() - t["start"].date()).days)
-            per_day = t["dur"] / span_days / 3600
-            for b in buckets_out:
-                if period == "day":
-                    bs = _dt.datetime.fromisoformat(b["label"] + "T00:00:00")
-                    if bs.date() < t["start"].date() or bs.date() >= t["end"].date():
-                        continue
-                    b["fact_h"] += per_day
-                    if t["est"]:
-                        b["plan_h"] += t["est"] / span_days / 3600
-                elif period == "week":
-                    bs = _dt.datetime.fromisoformat(b["label"] + "T00:00:00")
-                    be = bs + _dt.timedelta(days=7)
-                    days_in = max(0, (min(t["end"].date(), be.date())
-                                      - max(t["start"].date(), bs.date())).days)
-                    if days_in <= 0:
-                        continue
-                    b["fact_h"] += per_day * days_in
-                    if t["est"]:
-                        b["plan_h"] += t["est"] / span_days / 3600 * days_in
-                else:
-                    bs = _dt.datetime.fromisoformat(b["label"] + "-01T00:00:00")
-                    if bs.month == 12:
-                        be = _dt.datetime(bs.year + 1, 1, 1)
-                    else:
-                        be = _dt.datetime(bs.year, bs.month + 1, 1)
-                    days_in = max(0, (min(t["end"].date(), be.date())
-                                      - max(t["start"].date(), bs.date())).days)
-                    if days_in <= 0:
-                        continue
-                    b["fact_h"] += per_day * days_in
-                    if t["est"]:
-                        b["plan_h"] += t["est"] / span_days / 3600 * days_in
-            continue
-        for b in buckets_out:
-            if period == "day":
-                bs = _dt.datetime.fromisoformat(b["label"] + "T00:00:00")
-                be = bs + _dt.timedelta(days=1)
-            elif period == "week":
-                bs = _dt.datetime.fromisoformat(b["label"] + "T00:00:00")
-                be = bs + _dt.timedelta(days=7)
-            else:
-                bs = _dt.datetime.fromisoformat(b["label"] + "-01T00:00:00")
-                if bs.month == 12:
-                    be = _dt.datetime(bs.year + 1, 1, 1)
-                else:
-                    be = _dt.datetime(bs.year, bs.month + 1, 1)
-            # доля длительности, попавшая в бакет
-            total_sec = max(1, (t["end"] - t["start"]).total_seconds())
-            share = overlaps(t["start"], t["end"], bs, be) / total_sec
-            b["fact_h"] += t["dur"] * share / 3600
-            if t["est"]:
-                b["plan_h"] += t["est"] * share / 3600
-
-    for b in buckets_out:
-        b["fact_h"] = round(b["fact_h"], 1)
-        b["plan_h"] = round(b["plan_h"], 1)
-    return {"project": project, "period": period, "buckets": buckets_out}
 
 
 # --- Потребление токенов (opencode.db: session.tokens_*) ------------------
@@ -1730,7 +1130,7 @@ AGENT_ROLES = {
                    "Твоя работа: диспатч задач (dispatch), приём отчётов, verify (вердикты PASS/FAIL), "
                    "оркестрация субагентов, реакция на task_stalled (редиспатч).\n"
                    "Дай краткий ответ: подтверди роль и опиши текущий статус задач проекта "
-                   "(можешь запустить python -m pipeline.cli tdl-status {project})."),
+                   "(можешь запустить python -m pipeline.cli status {project})."),
     },
     "executor": {
         "title": "Исполнитель (Агент-2)",
@@ -1738,10 +1138,11 @@ AGENT_ROLES = {
         "desc": "Выполняет задачи A-NN: правит код, собирает, тестирует, пишет отчёты с доказательствами.",
         "prompt": ("Ты — Агент-2 (исполнитель) конвейера dev-pipeline. "
                    "Прочитай скилл {skill_path} ПЕРВЫМ — там методика и твоя роль.\n"
-                   "Твоя работа: выполнять задачи из Tasks\\Активные\\A-NN_*.md (или TDL JSON), "
-                   "собирать и тестировать проект, писать отчёты с доказательствами в Tasks\\Отчёты.\n"
+                   "Твоя работа: выполнять задачи из Tasks\\Активные\\A-NN_*.md и карточек плана "
+                   "(ProjectsPalns), собирать и тестировать проект, писать отчёты с доказательствами "
+                   "в Tasks\\Отчёты.\n"
                    "Дай краткий ответ: подтверди роль и покажи, какие задачи сейчас открыты "
-                   "(python -m pipeline.cli tdl-status {project})."),
+                   "(python -m pipeline.cli status {project})."),
     },
     "browser": {
         "title": "Облачный мост с ИИ (Агент-3)",
@@ -1762,7 +1163,7 @@ AGENT_ROLES = {
                    "Твоя работа: независимо проверять выполненные задачи (git diff/status/log, тесты), "
                    "фиксировать вердикт REVIEW.md (PASS/NEEDS_CHANGES/FAIL). НЕ правишь код.\n"
                    "Дай краткий ответ: подтверди роль и покажи незакрытые задачи проекта "
-                   "(python -m pipeline.cli tdl-status {project})."),
+                   "(python -m pipeline.cli status {project})."),
     },
     "qwen": {
         "title": "Бесплатный рабочий (Qwen)",
@@ -1775,18 +1176,37 @@ AGENT_ROLES = {
                    "Дай краткий ответ: подтверди роль и опиши, как начнёшь работу."),
     },
     "planner": {
-        "title": "Планировщик миссии",
+        "title": "Планировщик",
         "skill": "pipeline-planner",
-        "desc": "LLM-декомпозиция миссии на этапы/классы/листовые задачи (spec.json → tdl-plan).",
-        "prompt": ("Ты — планировщик миссии конвейера dev-pipeline. "
-                   "Прочитай скилл {skill_path} ПЕРВЫМ — схема выхода, правила декомпозиции.\n"
-                   "Твоя работа: декомпозировать миссию на иерархию этапы→классы→листья и писать "
-                   "spec.json для tdl-plan.\n"
+        "desc": "Декомпозиция целей в планы ProjectsPalns (этапы/карточки с критериями).",
+        "prompt": ("Ты — планировщик конвейера dev-pipeline. "
+                   "Прочитай скилл {skill_path} ПЕРВЫМ — схема плана, правила декомпозиции.\n"
+                   "Твоя работа: декомпозировать цель в план ProjectsPalns "
+                   "(этапы → карточки с критериями приёмки и зависимостями).\n"
                    "Дай краткий ответ: подтверди роль и жди файл миссии."),
     },
 }
 
-SKILLS_DIR = Path(__file__).resolve().parent.parent / "skills"
+def _skills_dir() -> Path:
+    """Каталог скиллов: env PIPELINE_SKILLS_DIR, затем локальный skills/,
+    репозиторий revit-skills (скиллы конвейера перенесены туда)."""
+    env = os.environ.get("PIPELINE_SKILLS_DIR")
+    if env and Path(env).is_dir():
+        return Path(env)
+    here = Path(__file__).resolve().parent.parent
+    candidates = [
+        here / "skills",
+        here.parent / "revit-skills" / ".opencode" / "skills",
+        Path(r"D:\Projects\revit-skills\.opencode\skills"),
+        Path(r"E:\ПлагиныРевит\agent-skills\.opencode\skills"),
+    ]
+    for cand in candidates:
+        if cand.is_dir() and any(cand.glob("*/SKILL.md")):
+            return cand
+    return here / "skills"
+
+
+SKILLS_DIR = _skills_dir()
 
 
 class AgentIn(BaseModel):

@@ -68,10 +68,16 @@ def _grep_count(cfg: ProjectConfig, rel_dir: str, pattern: str) -> tuple:
 # ---------------------------------------------------------------------------
 
 def build_sln(cfg: ProjectConfig):
+    if str(cfg.msbuild).lower() == "none":
+        return 0, "(сборка пропущена: msbuild: none)"
     return sh(cfg.msbuild_cmd(), timeout=2400)
 
 
 def run_tests(cfg: ProjectConfig):
+    if cfg.test_runner == "none":
+        return 0, "(тесты пропущены: runner: none)"
+    if cfg.test_runner == "pytest":
+        return sh(cfg.test_cmd(), timeout=1200)
     if cfg.test_runner == "vstest":
         return sh(cfg.test_cmd(), timeout=1200)
     if cfg.test_runner == "dotnet":

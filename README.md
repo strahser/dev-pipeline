@@ -32,65 +32,50 @@ dev-pipeline\
 3. Запустить CLI: `python -m pipeline.cli <команда> <project>`.
 4. Запустить сервер + агентов (шаг 3, в разработке).
 
-## TDL (JSON — источник истины)
+## План-раннер (план ProjectsPalns — источник истины)
 
-Иерархия «миссия → этап → класс → лист» (СДР до 4 уровней), только leaf-задачи
-исполняются, закрытие — только при отчёте (evidence) + вердикте (pass).
-
-```text
-python -m pipeline.cli tdl-init      <project>            # каталоги + индекс
-python -m pipeline.cli tdl-plan      <project> <spec.json> # построить иерархию миссии
-python -m pipeline.cli tdl-dispatch  <project> <файл> --title ... --module ... --class-name ... --layer ...
-python -m pipeline.cli tdl-start     <project> <A-NN>     # in_progress
-python -m pipeline.cli tdl-report    <project> <A-NN> --from-md <отчёт>  # отчёт исполнителя
-python -m pipeline.cli tdl-verify    <project> <A-NN>     # сборка+тесты → вердикт → done
-python -m pipeline.cli tdl-tree      <project>            # дерево WBS
-python -m pipeline.cli tdl-status    <project>            # статусы
-python -m pipeline.cli tdl-validate  <project>            # проверка схемы
-python -m pipeline.cli tdl-close-summaries <project>      # summary закрываются при всех done-потомках
-```
-
-Спецификация для `tdl-plan` — JSON/YAML:
-
-```json
-{
-  "mission": { "name": "Исправление HeatLossRevit2", "goal": "..." },
-  "phases": [
-    {
-      "name": "Дефекты пользователя", "module": "MainAppHeatLoss",
-      "packages": [
-        { "name": "Комбобокс уровень", "class_name": "ViewModel", "layer": "ui",
-          "tasks": ["текст листовой задачи", "..."] }
-      ]
-    }
-  ]
-}
-```
-
-Оценки в спецификации: `estimate_sec` (или `estimate`) на этапе/классе/листе —
-число в секундах, `<= 24` трактуется как часы, либо строка «2ч 30м» / «3.5h» / «45м» / «1д».
-
-## Планировщик миссии (LLM-декомпозиция 1-го уровня)
-
-Наивный `split_mission` (рез по `##`) заменяется LLM-планировщиком:
+Track table (TDL) удалена. План-раннер исполняет карточки плана из репозитория
+ProjectsPalns: выбор готовой карточки (статус `Открыто`, зависимости закрыты) →
+MD-постановка → grill-фаза → субагент → механический вердикт → статус `Выполнено`
+прямо в файле плана + коммит.
 
 ```bat
-python -X utf8 agents/agent_manager.py mission --project heatlossrevit2 ^
-    --mission "%HLR_MISSION%" --plan [--model opencode-go/qwen3.8-max]
+python -X utf8 -m agents.plan_runner --project <p> [--once] [--plan <файл>]
+                     [--retries N] [--model <модель>] [--legacy] [--dry-run]
 ```
 
-- Запускает `opencode run` со скиллом `pipeline-planner`: миссия → этапы → классы → листовые
-  задачи с goal, acceptance_criteria и estimate_sec (первая фаза — «Анализ и подготовка»).
-- Пишет spec.json в `Tasks\Конвейер\планы\<имя>_<дата>.spec.json`, валидирует и вызывает `tdl-plan`.
-- При сбое — фолбэк на старый `split_mission` (без иерархии).
+- **Grill-фаза**: субагент сначала изучает код/вики; блокирующие вопросы владельцу —
+  через файл `Tasks\Вопросы\<CARD>_*.md` + `agents/wait_answer.py` (панель → «❓ Вопросы»).
+  Тишина > `runner.question_timeout_sec` → работа по допущениям (ASSUMPTION в отчёте).
+- **Верификация**: сборка+тесты+checks из pipeline.yaml → Вердикт
+  `Tasks\Отчёты\<CARD>_Вердикт_*.md`; FAIL → ретраи с хвостом ошибки → card_failed.
+- **Чекпоинты**: метка «Чекпоинт: да» на карточке или закрытие этапа → пауза до
+  «✅ Одобрить / 🔄 Перезапустить» в панели («⏸ Чекпоинты», `/api/checkpoints`).
+- **Состояние**: `Tasks\Конвейер\runner_state.json` (`GET /api/runner`), панель таблицы —
+  `/api/plan/tasks` (совместимо со старой сеткой колонок).
 
-## Длительность задач (план vs факт)
+Секция конфига проекта:
 
-- TDL-задача: `dates.estimate_sec` (план, задаётся при tdl-plan), `dates.duration_sec` (факт,
-  вычисляется при tdl-verify из start→finish; `tdl-start` фиксирует `start`).
-- API: `GET /api/tdl/durations?project=<p>` — план/факт/Δ по всем задачам, для summary —
-  суммирование по потомкам WBS, флаг `over_plan` (превышение >50%), сводка.
-- Dashboard: кнопка «⏱ Время» — модальное окно с таблицей (WBS/задача/start→finish/план/факт/Δ/статус).
+```yaml
+plan:
+  repo: [D:\Projects\ProjectsPalns]
+  subdir: MepTaggingSolution
+  file: 2026-08-21_leader-crossing-roomtag-fix.md   # пусто = новейший _current/*.md
+runner:
+  model: opencode-go/deepseek-v4-flash
+  retries: 2
+  question_timeout_sec: 1200
+  checkpoint_stages: true
+```
+
+Поддерживаемые форматы карточек плана (см. `pipeline/plans.py`): «Карточка X.Y» с буллетами,
+именованные `GEO-N` с DoD-чекбоксами, карточки-секции `# Карточка задачи X.Y`.
+
+## Длительность карточек (факт)
+
+Факт считается из событий конвейера (task_started/subagent_finished):
+`GET /api/plan/durations`, кнопка «⏱ Время» в панели. Плановые оценки живут в самом плане
+(«Сроки» карточки), сервер их не дублирует.
 
 ## Анти-зависание агентов
 
@@ -203,22 +188,21 @@ task_file, report, log, prompt, model, skill), а тонкий `agents/session_w
 - [x] Шаг 3: сервер (FastAPI + SQLite + SSE, `/events`, `/messages`, `/heartbeat`, dashboard)
 - [x] Шаг 4: клиенты агентов (`agents/`): agent_watch, executor_client, browser_client
 - [x] Шаг 5: скилы (pipeline-executor/-controller/-reviewer/-browser-bridge), docs
-- [x] TDL: JSON-конвейер (task/report/verdict), иерархия миссии (tdl-plan/tdl-tree), dashboard
+- [x] **v2: TDL удалён; план ProjectsPalns — источник истины** (pipeline/plans.py:
+  3 формата карточек, set_card_status; server/plan_api.py: /api/plan/*, вопросы,
+  чекпоинты, состояние раннера)
+- [x] **v2: план-раннер agents/plan_runner.py** (grill-фаза, wait_answer.py,
+  механический вердикт, ретраи, чекпоинты этапов) + панель «❓ Вопросы · ⏸ Чекпоинты»
 - [x] Гибкие пути проектов: `project.root` — список кандидатов (E:\ПлагиныРевит / D:\Projects),
       либо `DEV_PIPELINE_PROJECTS_DIR` (базовая папка проектов на ПК)
-- [x] Длительность задач: estimate/duration в TDL, `/api/tdl/durations`, модальное окно в dashboard
-- [x] Планировщик миссии `--plan` (скилл pipeline-planner) + скилл
-- [x] Анти-зависание: параметризуемый watchdog (env) + детектор task_stalled в agent_watch
+- [x] runners vstest|dotnet|pytest|none; msbuild none — для python/фронтенд-проектов
+- [x] Анти-зависание: параметризуемый watchdog (env) + маркеры stalled в файлах
 - [x] Чат агентов: /api/chat/agents, /api/chat/history, /api/chat/command, панель в dashboard,
       ответы агентов (executor/agent_watch) на команды
 - [x] Явные сессии субагентов: реестр сессий на сервере (/api/sessions), session_worker
       (инструкция с сервера, heartbeat, статусы, abort), мониторинг контролёром по API,
       watchdog stalled, панель «🗂 Сессии», фолбэк на legacy --legacy
-- [x] Summary-закрытие: tdl-verify автоматически закрывает summary-предков (этапы/классы/
-      миссию) при всех done-потомках; команда tdl-close-summaries
-- [x] Агенты-помощники: POST /api/agents (роль+скилл), кнопка «➕ Новый агент»,
-      оповещения ключевых событий в чат (🛰), kill live-сессий opencode из панели
 - [x] Входящие: сырые задания пользователя (БД + файл Tasks\Входящие + git),
       панель «📥 Входящие» с формой и кнопкой «📋 Оформить»
-- [x] Полный unit-тест: `python -X utf8 tests/run_all.py` (135 тестов)
-- [ ] Пилот на тестовой задаче через сервер
+- [x] Полный unit-тест: `python -X utf8 tests/run_all.py` (121 тест)
+- [ ] Пилот на реальной карточке через план-раннер (карточка 4.2 плана v2)

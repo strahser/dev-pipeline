@@ -21,7 +21,7 @@ from pathlib import Path
 
 from . import checks, templates
 from .config import ConfigError, check_env, load_config, list_projects
-from .models import Task, parse_tests_dotnet, parse_tests_vstest
+from .models import Task, parse_tests_dotnet, parse_tests_pytest, parse_tests_vstest
 
 
 def slug(title: str) -> str:
@@ -160,14 +160,19 @@ def cmd_verify(cfg, args):
     tail = " ".join(l for l in b_out.splitlines() if "error" in l.lower())[-300:] \
         or (b_out.splitlines()[-1] if b_out.splitlines() else "")
     build_label = "сборка" if cfg.msbuild.lower() == "dotnet" else \
-        f"сборка sln ({cfg.configuration}/{cfg.platform})"
+        ("сборка (пропущена)" if cfg.msbuild.lower() == "none" else
+         f"сборка sln ({cfg.configuration}/{cfg.platform})")
     result.append((f"{build_label}: EXIT {b_rc}",
                    b_status + (" " + tail if b_status == "FAIL" else "")))
 
-    if b_rc == 0:
+    if cfg.test_runner == "none":
+        result.append(("тесты (runner: none — пропущены)", "SKIP"))
+    elif b_rc == 0:
         t_rc, t_out = checks.run_tests(cfg)
         if cfg.test_runner == "dotnet":
             passed, total, failed = parse_tests_dotnet(t_out)
+        elif cfg.test_runner == "pytest":
+            passed, total, failed = parse_tests_pytest(t_out)
         else:
             passed, total, failed = parse_tests_vstest(t_out)
         tail = " ".join(l.strip() for l in t_out.splitlines() if l.strip())[-250:]
@@ -291,50 +296,6 @@ def main(argv=None):
 
     p = sub.add_parser("verify"); add_project(p); p.add_argument("task")
     p.set_defaults(handler=lambda a: cmd_verify(load_config(a.project), a))
-
-    # --- TDL (JSON как источник истины) ---
-    from pipeline.tdl import cli as tdl_cli
-
-    def tdl(proj):
-        return load_config(proj)
-
-    def _t(fn):
-        def h(a):
-            cfg = tdl(a.project)
-            return fn(cfg, a)
-        return h
-
-    for name, fn in [("tdl-init", tdl_cli.tdl_init),
-                     ("tdl-dispatch", tdl_cli.tdl_dispatch),
-                     ("tdl-plan", tdl_cli.tdl_plan),
-                     ("tdl-start", tdl_cli.tdl_start),
-                     ("tdl-report", tdl_cli.tdl_report),
-                     ("tdl-verify", tdl_cli.tdl_verify),
-                     ("tdl-migrate", tdl_cli.tdl_migrate),
-                     ("tdl-validate", tdl_cli.tdl_validate),
-                     ("tdl-index", tdl_cli.tdl_index),
-                     ("tdl-tree", tdl_cli.tdl_tree),
-                     ("tdl-close-summaries", tdl_cli.tdl_close_summaries),
-                     ("tdl-fix-durations", tdl_cli.fix_date_durations),
-                     ("tdl-status", tdl_cli.tdl_status)]:
-        p = sub.add_parser(name); add_project(p)
-        if name == "tdl-dispatch":
-            p.add_argument("file"); p.add_argument("--title"); p.add_argument("--priority")
-            p.add_argument("--wbs"); p.add_argument("--parent-wbs"); p.add_argument("--module")
-            p.add_argument("--class-name"); p.add_argument("--layer"); p.add_argument("--goal")
-            p.add_argument("--requirements"); p.add_argument("--result"); p.add_argument("--remark")
-        elif name == "tdl-plan":
-            p.add_argument("file"); p.add_argument("--title")
-        elif name == "tdl-report":
-            p.add_argument("task"); p.add_argument("--final", action="store_true"); p.add_argument("--from-md")
-        elif name in ("tdl-start", "tdl-verify"):
-            p.add_argument("task")
-        elif name == "tdl-validate":
-            p.add_argument("task", nargs="?", default=None)
-        elif name == "tdl-migrate":
-            p.add_argument("--dry-run", action="store_true")
-            p.add_argument("--allow-done-from-md", action="store_true")
-        p.set_defaults(handler=_t(fn))
 
     args = ap.parse_args(argv)
     if not getattr(args, "cmd", None):

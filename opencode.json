@@ -2,13 +2,13 @@
   "$schema": "https://opencode.ai/config.json",
   "instructions": ["AGENTS.md", "README.md", "docs/protocol.md"],
   "skills": {
-    "paths": ["E:\\ПлагиныРевит\\agent-skills\\.opencode\\skills"]
+    "paths": ["D:\\Projects\\revit-skills\\.opencode\\skills"]
   },
   "references": {
     "revit-skills": {
       "repository": "strahser/revit-skills",
       "branch": "main",
-      "description": "Общая база знаний по Revit-плагинам: agent-skills\\.opencode\\wiki\\ (index.md + локальные вики проектов) + общие скилы .opencode/skills/ (revit-api, revit-testing, revit-3d-export, threejs-viewer, cloud-ai-bridge, pipeline-*). Локально: E:\\ПлагиныРевит\\agent-skills. Смотри скилл knowledge-base для правил пополнения."
+      "description": "Общая база знаний по Revit-плагинам: agent-skills\\.opencode\\wiki\\ (index.md + локальные вики проектов) + общие скилы .opencode/skills/ (revit-api, revit-testing, revit-3d-export, threejs-viewer, cloud-ai-bridge, pipeline-*). Локально: D:\\Projects\\revit-skills. Смотри скилл knowledge-base для правил пополнения."
     }
   },
   "agent": {
