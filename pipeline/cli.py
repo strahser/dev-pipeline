@@ -144,6 +144,22 @@ def cmd_verify(cfg, args):
         print("ОТЧЁТ ИСПОЛНИТЕЛЯ НЕ НАЙДЕН — сначала execute")
         return 1
     report = Path(reports[-1])
+
+    # Привязка к ожидаемому отчёту (инцидент 2026-08-22: два конвейера на один проект
+    # писали {CARD}_Отчёт_*.md в общую папку — верификация прошла по чужому отчёту).
+    # План-раннер задаёт PIPELINE_EXPECT_REPORT с точным путём своего отчёта.
+    import os as _os
+    expect = _os.environ.get("PIPELINE_EXPECT_REPORT", "")
+    if expect:
+        expect_path = Path(expect)
+        if not expect_path.exists():
+            print(f"ОТКАЗ ВЕРИФИКАЦИИ: ожидаемый отчёт не создан: {expect}")
+            return 3
+        report = expect_path
+    elif len(reports) > 1:
+        print(f"[verify] внимание: найдено {len(reports)} отчётов по {args.task}, "
+              f"берётся последний: {Path(reports[-1]).name}")
+
     rtxt = report.read_text(encoding="utf-8")
 
     result = []  # (label, status_str)
@@ -234,7 +250,10 @@ def cmd_verify(cfg, args):
         if st.startswith(("НЕТ", "НАЙДЕНЫ", "SKIP", "PARTIAL", "ОШИБКА")):
             v = "PARTIAL"
 
-    verdict_name = f"{args.task}_Вердикт_контролёра_{templates.now()}.md"
+    # Уникальное имя вердикта: два прогона в один день не перезаписывают друг друга
+    # (инцидент 2026-08-22: PASS затёр PARTIAL из-за одинакового имени).
+    import time as _t
+    verdict_name = f"{args.task}_Вердикт_контролёра_{templates.now()}_{_t.strftime('%H%M%S')}.md"
     verdict_path = reports_dir / verdict_name
     rows = "\n".join(f"| {n} | {s} |" for n, s in result)
     verdict = templates.verdict_content(

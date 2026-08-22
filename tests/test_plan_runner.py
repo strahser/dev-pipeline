@@ -154,6 +154,24 @@ class RunnerTest(unittest.TestCase):
         plan = load_plan(self.plan_path)
         self.assertEqual(plan.card("1.1").status, "open")
 
+    def test_lock_blocks_second_runner(self):
+        """Инцидент 2026-08-22: два конвейера на один проект запрещены."""
+        from agents import plan_runner as pr
+        r1 = pr.PlanRunner(self.cfg, plan_path=self.plan_path, once=True, dry_run=True)
+        self.assertTrue(r1._lock_acquire())
+        r2 = pr.PlanRunner(self.cfg, plan_path=self.plan_path, once=True, dry_run=True)
+        self.assertFalse(r2._lock_acquire())
+        r1._lock_release()
+        self.assertTrue(r2._lock_acquire())
+        r2._lock_release()
+
+    def test_run_sets_and_releases_lock(self):
+        from agents import plan_runner as pr
+        r = pr.PlanRunner(self.cfg, plan_path=self.plan_path, once=True, dry_run=True)
+        r.run()
+        self.assertFalse((self.tmp / "Tasks" / "Конвейер" / "runner.lock").exists(),
+                         "лок снят после нормального завершения")
+
 
 if __name__ == "__main__":
     unittest.main(verbosity=2)

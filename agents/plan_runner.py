@@ -26,6 +26,7 @@ from __future__ import annotations
 import argparse
 import glob
 import json
+import os
 import re
 import subprocess
 import sys
@@ -274,7 +275,65 @@ id: {card.id}
 
     # --- основной цикл ----------------------------------------------------------
 
+    # --- блокировка второго конвейера (инцидент 2026-08-22) ------------------
+
+    LOCK_STALE_SEC = 6 * 3600
+
+    def _lock_acquire(self) -> bool:
+        """Единственный конвейер на проект: Tasks\\Конвейер\\runner.lock."""
+        from agents.agent_manager import _pid_alive
+        d = self.cfg.conveyor_dir()
+        d.mkdir(parents=True, exist_ok=True)
+        lp = d / "runner.lock"
+        if lp.exists():
+            pid, ts, plan = 0, 0.0, "?"
+            try:
+                data = json.loads(lp.read_text(encoding="utf-8"))
+                pid = int(data.get("pid", 0))
+                ts = float(data.get("ts", 0))
+                plan = str(data.get("plan", "?"))
+            except Exception:
+                pass
+            age = time.time() - ts
+            if pid and _pid_alive(pid):
+                print(f"[runner] ЗАПРЕЩЕНО: на проекте уже работает конвейер "
+                      f"(pid={pid}, план {plan}, {int(age // 60)} мин). "
+                      f"Два конвейера на один проект смешивают артефакты "
+                      f"(инцидент с ложным PASS 2026-08-22).")
+                return False
+            if age < self.LOCK_STALE_SEC and not pid:
+                return False  # непонятный свежий lock без пидa — не рискуем
+            print("[runner] устаревший runner.lock — перехватываю")
+        try:
+            lp.write_text(json.dumps({
+                "pid": os.getpid(), "ts": time.time(),
+                "started": _now_ts(),
+                "plan": str(self._current_plan_path() or ""),
+            }, ensure_ascii=False), encoding="utf-8")
+        except OSError as e:
+            print(f"[runner] не смог создать runner.lock: {e}")
+            return False
+        self._lock_path = lp
+        return True
+
+    def _lock_release(self):
+        try:
+            getattr(self, "_lock_path", None)
+            if getattr(self, "_lock_path", None):
+                self._lock_path.unlink(missing_ok=True)
+        except Exception:
+            pass
+
     def run(self) -> int:
+        if not self._lock_acquire():
+            self._state(phase="locked")
+            return 5
+        try:
+            return self._run_locked()
+        finally:
+            self._lock_release()
+
+    def _run_locked(self) -> int:
         pp = self._current_plan_path()
         if pp is None:
             print("[runner] план не найден: задайте plan.repo/subdir/file в pipeline.yaml "
@@ -318,8 +377,11 @@ id: {card.id}
                     return 0
 
                 md = self._dispatch_md(card)
+                # Уникальное имя отчёта: иначе вчерашний/приёмочный отчёт с тем же
+                # именем «1.4_Отчёт_<дата>.md» маскирует отсутствие работы субагента.
+                import time as _t
                 report = self.cfg.abs_tasks_dir("reports") / \
-                    f"{card.id}_Отчёт_{_today()}.md"
+                    f"{card.id}_Отчёт_{_today()}_{_t.strftime('%H%M%S')}.md"
                 log = self.cfg.conveyor_dir() / "logs" / f"{card.id}_run.log"
 
                 extra_error = f"\n\nХВОСТ ОШИБКИ ПРОШЛОЙ ПОПЫТКИ:\n{self._error_tail(card)}\n" \
@@ -385,10 +447,15 @@ id: {card.id}
 
     # --- верификация -------------------------------------------------------------
 
-    def _verify(self, card) -> str:
-        """Механическая проверка: cmd_verify пишет Вердикт; возвращаем PASS/FAIL/PARTIAL."""
+    def _verify(self, card, report_path=None) -> str:
+        """Механическая проверка: cmd_verify пишет Вердикт; возвращаем PASS/FAIL/PARTIAL.
+        Привязка к СВОЕМУ отчёту через PIPELINE_EXPECT_REPORT — защита от чужих
+        отчётов при параллельных конвейерах (инцидент 2026-08-22)."""
         from pipeline.cli import cmd_verify
         import argparse as _ap
+        old = os.environ.get("PIPELINE_EXPECT_REPORT")
+        if report_path is not None:
+            os.environ["PIPELINE_EXPECT_REPORT"] = str(report_path)
         try:
             rc = cmd_verify(self.cfg, _ap.Namespace(task=card.id))
         except SystemExit:
@@ -396,6 +463,12 @@ id: {card.id}
         except Exception as e:
             print(f"[runner] verify {card.id} ошибка: {e}")
             return "FAIL"
+        finally:
+            if report_path is not None:
+                if old is None:
+                    os.environ.pop("PIPELINE_EXPECT_REPORT", None)
+                else:
+                    os.environ["PIPELINE_EXPECT_REPORT"] = old
         vf = sorted(glob.glob(str(self.cfg.abs_tasks_dir("reports") /
                                    f"{card.id}_Вердикт_*")))
         vtxt = Path(vf[-1]).read_text(encoding="utf-8", errors="replace") if vf else ""
