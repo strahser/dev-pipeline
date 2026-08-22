@@ -147,8 +147,18 @@ def cmd_verify(cfg, args):
     rtxt = report.read_text(encoding="utf-8")
 
     result = []  # (label, status_str)
+    # Секции отчёта: допускаем синонимы — агенты называют их по-разному
+    SECTION_ALIASES = {
+        "Что сделано": ("что сделано", "выполнено", "изменения"),
+        "Доказательства": ("доказательства", "проверка критериев", "итоги",
+                           "проверка приёмки", "верификация"),
+        "Открытые вопросы": ("открытые вопросы", "отклонени", "ограничени",
+                             "заметки", "примечани", "assumption", "допущени"),
+    }
+    low = rtxt.lower()
     for sec in templates.REPORT_SECTIONS:
-        result.append((f"секция «{sec}» в отчёте", "OK" if sec in rtxt else "НЕТ"))
+        found = any(v in low for v in SECTION_ALIASES.get(sec, (sec.lower(),)))
+        result.append((f"секция «{sec}» в отчёте", "OK" if found else "НЕТ"))
     result.append(("отчёт не пустой", f"{len(rtxt)} символов"))
     if re.search(r"\{[a-z_]+\s*\[", rtxt):
         result.append(("отчёт без {meta}-шаблонов", "НАЙДЕНЫ"))
@@ -180,11 +190,13 @@ def cmd_verify(cfg, args):
             t_status = "ОШИБКА ПАРСИНГА"
             t_summary = tail
         else:
-            # Сравнение с базовым состоянием: не хуже baseline = PASS (задача не про тесты)
+            # Сравнение с базовым состоянием: не хуже базы = PASS.
+            # total >= base_t — карточке РАЗРЕШЕНО добавлять тесты;
+            # регрессия — только потеря прохождений или убыль набора.
             base_p = cfg.baseline_passed
             base_t = cfg.baseline_total
             if base_p is not None and base_t is not None and passed is not None and total is not None:
-                ok = (passed >= base_p and total == base_t)
+                ok = (passed >= base_p and total >= base_t)
                 t_status = "PASS" if ok else "FAIL"
                 t_summary = (f"rc={t_rc}, passed={passed}, total={total}, failed={failed}"
                              f" (база {base_p}/{base_t})")
@@ -236,6 +248,7 @@ def cmd_verify(cfg, args):
 
     task.set_status("verified" if v == "PASS" else "rejected")
     if v == "PASS":
+        cfg.abs_tasks_dir("archive").mkdir(parents=True, exist_ok=True)
         shutil.move(str(task.file), str(cfg.abs_tasks_dir("archive") / task.file.name))
     checks.git(cfg.root, f"review/{args.task}: вердикт контролёра {v} ({verdict_name})")
 

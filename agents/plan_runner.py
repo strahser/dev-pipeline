@@ -206,15 +206,29 @@ id: {card.id}
         return dst
 
     def _error_tail(self, card) -> str:
+        parts = []
+        # хвост лога субагента
         log = self.cfg.root / "Tasks" / "Конвейер" / "logs" / f"{card.id}_run.log"
-        if not log.exists():
-            return ""
-        try:
-            lines = [l for l in log.read_text(encoding="utf-8", errors="replace").splitlines()
-                     if l.strip()]
-            return "\n".join(lines[-25:])
-        except Exception:
-            return ""
+        if log.exists():
+            try:
+                lines = [l for l in log.read_text(encoding="utf-8", errors="replace").splitlines()
+                         if l.strip()]
+                parts.append("\n".join(lines[-20:]))
+            except Exception:
+                pass
+        # механические провалы из последнего вердикта
+        vf = sorted(glob.glob(str(self.cfg.abs_tasks_dir("reports") /
+                                   f"{card.id}_Вердикт_*")))
+        if vf:
+            try:
+                vlines = [l for l in Path(vf[-1]).read_text(encoding="utf-8",
+                                                             errors="replace").splitlines()
+                          if ("FAIL" in l or "НЕТ" in l) and "|" in l]
+                if vlines:
+                    parts.append("ПРОВАЛЫ ВЕРДИКТА:\n" + "\n".join(vlines[:8]))
+            except Exception:
+                pass
+        return "\n".join(parts)
 
     # --- чекпоинты ------------------------------------------------------------
 
@@ -310,8 +324,10 @@ id: {card.id}
 
                 extra_error = f"\n\nХВОСТ ОШИБКИ ПРОШЛОЙ ПОПЫТКИ:\n{self._error_tail(card)}\n" \
                     if attempt > 1 else ""
-                prompt = CARD_PROMPT.replace("{card_text}",
-                                             render_card(card) + extra_error)
+                dp_dir = str(Path(__file__).resolve().parent.parent)
+                prompt = (CARD_PROMPT
+                          .replace("{card_text}", render_card(card) + extra_error)
+                          .replace("{dp}", dp_dir))
                 grill = _grill_skill_path()
                 if grill:
                     prompt = prompt.replace(

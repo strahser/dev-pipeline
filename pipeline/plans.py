@@ -28,7 +28,8 @@ from pathlib import Path
 CARD_RE = re.compile(
     r"^(#{1,3})\s+(?:Карточка(?:\s+задачи)?\s+)?"
     r"([A-Za-zА-Яа-яЁё]{0,12}-?\d+(?:\.\d+)*)\.?"
-    r"(?:\s*[—–-]+\s*(.+?))?\s*$",
+    r"(?:\s*[—–-]+\s*(.+?))??"
+    r"\s*([⬜✅🔄❌])?\s*$",
     re.M,
 )
 STATUS_BULLET_RE = re.compile(r"-\s*\*\*Статус\*\*\s*:\s*`([^`]+)`")
@@ -39,6 +40,7 @@ STATUS_LINE_RE = re.compile(r"Статус:\s*(Открыто|В работе|В
 NAME_SECTION_RE = re.compile(r"^#+\s*Наименование\s*\n(.+?)$", re.M)
 
 EMOJI_BY_STATUS = {"open": "⬜", "in_progress": "🔄", "done": "✅", "cancelled": "❌"}
+EMOJI_TO_STATUS = {v: k for k, v in EMOJI_BY_STATUS.items()}
 STATUS_WORDS = {
     "открыто": "open", "open": "open", "новый": "open", "⬜": "open",
     "в работе": "in_progress", "in_progress": "in_progress", "активно": "in_progress",
@@ -217,7 +219,8 @@ def parse_plan(path) -> Plan:
         start_line = text.count("\n", 0, m.start())
         headings.append({
             "id": m.group(2).rstrip("."),
-            "title": m.group(3),
+            "title": m.group(3) or "",
+            "emoji": m.group(4) or "",
             "level": len(m.group(1)),
             "line": start_line,
             "span": m.span(),
@@ -255,15 +258,12 @@ def parse_plan(path) -> Plan:
         status = ""
         if bullets.get("Статус"):
             status = norm_status(bullets["Статус"])
-        else:
+        if h.get("emoji"):
+            status = EMOJI_TO_STATUS[h["emoji"]]
+        if not status:
             sl = STATUS_LINE_RE.search(body)
             if sl:
                 status = norm_status(sl.group(1))
-        if not status:
-            tail = (h["title"] or "").strip()
-            for st_code, emoji in EMOJI_BY_STATUS.items():
-                if tail.endswith(emoji):
-                    status = st_code
         row = plan.sdr_rows.get(h["id"])
         if not status and row:
             status = norm_status(row["status_raw"])
@@ -308,12 +308,22 @@ def set_card_status(path, card_id: str, status: str) -> bool:
     if card:
         i = card.heading_line
         # 1) буллет статуса внутри секции
+        bullet_done = False
         for j in range(i, min(card.end_line, len(lines))):
             nm = STATUS_BULLET_RE.search(lines[j])
             if nm:
                 lines[j] = STATUS_BULLET_RE.sub(f"- **Статус**: `{status}`", lines[j])
                 changed = True
+                bullet_done = True
                 break
+        # 1а) строка «Статус: Открыто» в «Основных данных» (секционный формат)
+        if not bullet_done:
+            for j in range(i, min(card.end_line, len(lines))):
+                sl = STATUS_LINE_RE.search(lines[j])
+                if sl:
+                    lines[j] = STATUS_LINE_RE.sub(f"Статус: {status_word(status)}", lines[j])
+                    changed = True
+                    break
         # 2) эмодзи в конце заголовка
         head = lines[i]
         for emoji in EMOJI_BY_STATUS.values():
@@ -322,7 +332,10 @@ def set_card_status(path, card_id: str, status: str) -> bool:
                 changed = True
                 break
         else:
-            if not STATUS_BULLET_RE.search("".join(lines[i:min(card.end_line, len(lines))])):
+            # без буллета и без эмодзи: помечаем в заголовке только если есть
+            # тире-титул (иначе заголовок вида «# Карточка задачи 1.1» оставляем
+            # как есть — статус ляжет в таблицу СДР и не сломает CARD_RE)
+            if "—" in lines[i] or "–" in lines[i] or re.search(r"-+\s*\S", lines[i].split("]", 1)[-1]):
                 lines[i] = head.rstrip() + " " + EMOJI_BY_STATUS[status]
                 changed = True
     # 3) строка в таблице СДР
