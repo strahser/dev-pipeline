@@ -197,7 +197,10 @@ def _plan_rows(cfg) -> list:
 
     # 1) этапы из таблицы СДР (summary-строки без карточек)
     seen = set()
+    valid_id = re.compile(r"^\d+(\.\d+)*$|^[A-Za-zА-Яа-яЁё]{1,12}-\d+$")
     for cid, row in plan.sdr_rows.items():
+        if not valid_id.match(str(cid)):
+            continue  # служебные/мусорные строки таблицы
         st = norm_status_safe(row.get("status_raw"))
         if st == "unknown":
             st = "open"
@@ -549,6 +552,80 @@ def _q_path(cfg, qid: str) -> Path:
 # ---------------------------------------------------------------------------
 # Project Brief (Уровень 1): авто-дайджест контекста для субагента
 # ---------------------------------------------------------------------------
+
+# ---------------------------------------------------------------------------
+# Пульс проекта (главный экран панели вместо таблицы задач)
+# ---------------------------------------------------------------------------
+
+@router.get("/api/pulse")
+async def api_pulse(project: str = ""):
+    cfg = _cfg_or_404(project)
+    out = {"project": cfg.name}
+
+    # план и этапы
+    plan = _plan_or_none(cfg)
+    pf = cfg.find_plan_file()
+    out["found"] = bool(pf)
+    if plan:
+        out["plan_title"] = plan.title[:140]
+        prog = plan.progress()
+        out["overall"] = prog
+        stages, order = {}, []
+        for c in plan.execution_cards():
+            core = c.id.split("-", 1)[-1]
+            s = c.id.rsplit(".", 1)[0] if "." in core else "—"
+            if s not in stages:
+                stages[s] = {"stage": s, "done": 0, "total": 0}
+                order.append(s)
+            stages[s]["total"] += 1
+            if c.status == "done":
+                stages[s]["done"] += 1
+        out["stages"] = [stages[k] for k in order]
+
+    # конвейер
+    sf = cfg.conveyor_dir() / "runner_state.json"
+    if sf.exists():
+        try:
+            out["runner"] = json.loads(sf.read_text(encoding="utf-8"))
+        except Exception:
+            out["runner"] = None
+
+    # сессии в работе
+    out["sessions_running"] = len([s for s in (_store.list_sessions() if _store else [])
+                                   if s.get("status") in ("running", "created")])
+
+    # вопросы (открытые)
+    q = await questions_list(project=cfg.name)
+    open_q = [x for x in q if not x.get("answered")]
+    out["questions"] = [{"id": x["id"], "question": x["question"],
+                         "card": x.get("card", ""), "age_min": x.get("age_min")}
+                        for x in open_q[:5]]
+    out["questions_total"] = len(open_q)
+
+    # чекпоинты
+    cps = await checkpoints_list(project=cfg.name)
+    out["checkpoints"] = cps[:5]
+    out["checkpoints_total"] = len(cps)
+
+    # зависшие
+    sd = cfg.conveyor_dir() / "stalled"
+    out["stalled"] = [p.stem for p in sorted(sd.glob("*.txt"))] if sd.is_dir() else []
+
+    # лента активности
+    out["activity"] = (_store.activity(limit=14, project=cfg.name) if _store else [])
+
+    # коммиты
+    try:
+        r = subprocess.run(["git", "-C", str(cfg.root), "log", "--oneline", "-5"],
+                           capture_output=True, text=True, encoding="utf-8",
+                           errors="replace", timeout=10,
+                           creationflags=_nwf())
+        out["commits"] = [l for l in (r.stdout or "").splitlines() if l.strip()]
+    except Exception:
+        out["commits"] = []
+
+    return out
+
 
 @router.get("/api/brief")
 async def api_brief(project: str = "", card: str = ""):

@@ -224,9 +224,7 @@ pre.json { background:var(--code); border:1px solid var(--border); border-radius
 <header>
   <h1>dev-pipeline · Панель конвейера</h1>
   <select id="projectSelect" style="background:var(--panel);color:var(--text);border:1px solid var(--border);border-radius:8px;padding:6px 10px;font-size:13px;"></select>
-  <button onclick="openChat()" title="Чат с агентами" style="background:var(--panel);color:var(--text);border:1px solid var(--border);border-radius:8px;padding:6px 12px;font-size:13px;cursor:pointer;">💬 Чат</button>
   <button onclick="openSessions()" title="Явные сессии субагентов" style="background:var(--panel);color:var(--text);border:1px solid var(--border);border-radius:8px;padding:6px 12px;font-size:13px;cursor:pointer;">🗂 Сессии</button>
-  <button onclick="openRequests()" title="Сырые задания пользователя (Входящие)" style="background:var(--panel);color:var(--text);border:1px solid var(--border);border-radius:8px;padding:6px 12px;font-size:13px;cursor:pointer;">📥 Входящие</button>
   <button onclick="openQA()" title="Вопросы агентов (grill) и чекпоинты план-раннера" style="background:var(--panel);color:var(--text);border:1px solid var(--border);border-radius:8px;padding:6px 12px;font-size:13px;cursor:pointer;">❓ Вопросы · ⏸ Чекпоинты <span id="qaCount" style="color:var(--muted)">0/0</span></button>
   <span class="status" id="status">…</span>
 </header>
@@ -313,7 +311,7 @@ pre.json { background:var(--code); border:1px solid var(--border); border-radius
       <button onclick="loadSessions()">🔄 Обновить</button>
       <span style="margin-left:auto;font-size:11.5px;color:var(--muted)" id="sessionsInfo"></span>
     </div>
-    <div class="agent-create" style="display:flex;flex-wrap:wrap;gap:8px;align-items:flex-end;padding:10px 4px 4px;border-bottom:1px solid var(--border);margin-bottom:8px">
+    <div class="agent-create" style="display:none">
       <span style="font-size:12px;color:var(--muted);align-self:center">➕ Новый агент:</span>
       <select id="newAgentRole" style="background:var(--panel2);color:var(--text);border:1px solid var(--border);border-radius:6px;padding:5px 8px;font-size:12.5px">
         <option value="controller">Агент-1 контролёр/планировщик</option>
@@ -1248,12 +1246,110 @@ async function refreshData(force){
   renderStats();
   renderTable();
   refreshPlanBanner();
+  loadPulse();
+}
+
+async function refreshData(force){
+  if (!activeProject) return;
+  if (!await fetchRows()) return;
+  const key = JSON.stringify(allRows);
+  if (!force && key === lastRowsKey) return;   // данные не менялись — не трогаем DOM
+  lastRowsKey = key;
+  renderStats();
+  renderTable();
+  refreshPlanBanner();
+  loadPulse();
+}
+
+/* --- Пульс проекта: главный экран вместо таблицы --- */
+async function loadPulse(){
+  if (!activeProject) return;
+  const proj = activeProject;
+  let p;
+  try { p = await get('/api/pulse?project='+encodeURIComponent(proj)); }
+  catch(e){ return; }
+  if (proj !== activeProject) return;
+
+  const esc2 = esc;
+  let h = '';
+  // заголовок + общий прогресс
+  if (p.found){
+    h += '<div class="table-card" style="padding:12px;margin-bottom:10px">'+
+         '<div style="font-size:15px;font-weight:600">📋 '+esc2(p.plan_title||'')+'</div>'+
+         '<div class="muted" style="font-size:12.5px;margin-top:4px">'+
+           'выполнено '+ (p.overall?p.overall.done:0) +' из '+ (p.overall?p.overall.total:0) +' карточек'+
+         '</div></div>';
+    // этапы
+    if ((p.stages||[]).length){
+      h += '<div class="table-card" style="padding:12px;margin-bottom:10px"><b>Этапы</b>';
+      for (const s of p.stages){
+        const pct = s.total ? Math.round(100*s.done/s.total) : 0;
+        const done = pct===100;
+        h += '<div style="display:flex;align-items:center;gap:10px;margin-top:8px">'+
+             '<span style="width:110px;font-size:12.5px">'+esc2(s.stage==='—'?'без этапа':'Этап '+s.stage)+'</span>'+
+             '<div class="progress-track" style="flex:1"><div class="progress-fill" style="width:'+pct+'%"></div></div>'+
+             '<span class="muted" style="font-size:11.5px;width:70px;text-align:right">'+s.done+'/'+s.total+(done?' ✅':'')+'</span></div>';
+      }
+      h += '</div>';
+    }
+  } else {
+    h += '<div class="table-card" style="padding:12px;margin-bottom:10px;border-color:#eab308">'+
+         '⚠ У проекта нет файла плана — раннеру нечего исполнять. Выберите ★-проект.</div>';
+  }
+  // сейчас
+  const rn = p.runner || {};
+  h += '<div class="table-card" style="padding:12px;margin-bottom:10px"><b>Сейчас</b><div style="margin-top:6px;font-size:13px">';
+  if (rn.phase === 'executing')
+    h += '🤖 Работаю над карточкой <b>'+esc2(rn.card||'')+'</b>'+((rn.attempt>1)?' (попытка '+rn.attempt+')':'')+' — '+esc2(rn.title||'');
+  else if (rn.phase === 'checkpoint')
+    h += '⏸ Пауза на чекпоинте: '+esc2(rn.note||'');
+  else if (rn.phase === 'failed')
+    h += '❌ Провал карточки '+esc2(rn.card||'')+' — нужно ваше вмешательство';
+  else if (rn.phase === 'done' || rn.phase === 'checkpoint_approved')
+    h += '✅ Последняя задача завершена ('+esc2(rn.card||'')+'), очередь свободна';
+  else
+    h += '💤 Конвейер простаивает';
+  h += '</div>';
+  if (p.sessions_running)
+    h += '<div class="muted" style="font-size:12px;margin-top:4px">активных сессий субагентов: '+p.sessions_running+'</div>';
+  h += '</div>';
+
+  // от вас ждут
+  const need = (p.questions_total||0) + (p.checkpoints_total||0);
+  h += '<div class="table-card" style="padding:12px;margin-bottom:10px;'+(need?'border-color:#eab308':'')+'">'+
+       '<b>От вас ждут</b><div style="margin-top:6px;font-size:13px">';
+  h += '❓ Вопросов: <b>'+(p.questions_total||0)+'</b>';
+  if ((p.questions||[]).length){
+    h += '<ul style="margin:6px 0 0 18px">'+p.questions.map(q=>
+      '<li>'+esc2(q.question)+' <span class="muted">('+esc2(q.card||'?')+', '+q.age_min+' мин)</span></li>').join('')+'</ul>';
+  }
+  h += '<br>⏸ Чекпоинтов: <b>'+(p.checkpoints_total||0)+'</b>';
+  if ((p.checkpoints||[]).length){
+    h += '<ul style="margin:6px 0 0 18px">'+p.checkpoints.map(c=>
+      '<li>'+esc2(c.card||'')+' — '+esc2(c.reason||'')+'</li>').join('')+'</ul>';
+  }
+  h += '</div><button class="primary" style="margin-top:8px" onclick="openQA()">Открыть «Вопросы и чекпоинты»</button></div>';
+
+  // зависшие + лента + коммиты
+  if ((p.stalled||[]).length)
+    h += '<div class="table-card" style="padding:10px;margin-bottom:10px;border-color:#dc2626">🐌 Зависшие: '+p.stalled.map(esc2).join(', ')+'</div>';
+  if ((p.activity||[]).length){
+    h += '<div class="table-card" style="padding:12px;margin-bottom:10px"><b>Лента</b><ul style="margin:6px 0 0 16px;font-size:12.5px">';
+    h += p.activity.map(a=>'<li>'+esc2(a.detail)+' <span class="muted">· '+esc2(String(a.created_at||'').slice(11,16))+'</span></li>').join('')+'</ul></div>';
+  }
+  if ((p.commits||[]).length){
+    h += '<div class="table-card" style="padding:12px;margin-bottom:10px"><b>Последние коммиты</b><pre style="margin:6px 0 0;font-size:12px;white-space:pre-wrap">'+esc2(p.commits.join('\n'))+'</pre></div>';
+  }
+  $('pulseBody').innerHTML = h;
 }
 
 /* Построить каркас один раз, дальше только обновлять данные */
 function buildShell(){
   const html =
-    '<div class="filter-card">'+
+    '<div id="pulseBody"><div class="empty">Пульс загружается…</div></div>'+
+    '<details id="fullTable">'+
+      '<summary style="cursor:pointer;padding:10px 12px;font-size:13.5px;user-select:none">📋 Полная таблица карточек и фильтры <span class="muted" style="font-size:11.5px">(развернуть при необходимости)</span></summary>'+
+      '<div class="filter-card">'+
       '<div class="filter-row">'+
         '<div class="filter-group"><label>Тип задачи</label><select id="fKind" onchange="applyFilters()"></select></div>'+
         '<div class="filter-group"><label>Статус</label><select id="fStatus" onchange="applyFilters()"></select></div>'+
@@ -1280,8 +1376,10 @@ function buildShell(){
       '</div>'+
     '</div>'+
     '<div class="stats-row" id="statsRow"></div>'+
-    '<div class="table-card"><div id="tblWrap"></div></div>';
+      '<div class="table-card"><div id="tblWrap"></div></div>'+
+    '</details>';
   $('content').innerHTML = html;
+  refreshPlanBanner();
 }
 
 async function setProject(name){
