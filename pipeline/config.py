@@ -52,6 +52,7 @@ class ProjectConfig:
     test_runner: str = "vstest"
     vstest: str = ""
     test_dll: str = ""
+    test_filter: str = ""            # dotnet test --filter (точечный/быстрый набор)
     baseline_passed: int | None = None
     baseline_total: int | None = None
     # Известные падения тестов (подстроки имён) — не блокируют verify
@@ -146,10 +147,15 @@ class ProjectConfig:
             return ["python", "-X", "utf8", "-m", "pytest",
                     str(self.root / self.test_dll), "-q"]
         if self.test_runner == "vstest":
-            return [self.vstest, str(self.root / self.test_dll)]
+            args = [self.vstest, str(self.root / self.test_dll)]
+            if self.test_filter:
+                args += ["/TestCaseFilter:" + self.test_filter]
+            return args
         if self.test_runner == "dotnet":
             args = ["dotnet", "test", str(self.root / self.test_dll)]
             args += self.build_extra
+            if self.test_filter:
+                args += ["--filter", self.test_filter]
             return args
         raise ConfigError(f"Неизвестный test_runner: {self.test_runner}")
 
@@ -239,6 +245,7 @@ def load_config(project_name: str) -> ProjectConfig:
         test_runner=te.get("runner", "vstest"),
         vstest=te.get("vstest", ""),
         test_dll=te.get("dll", ""),
+        test_filter=str(te.get("filter", "") or ""),
         baseline_passed=te.get("baseline_passed"),
         baseline_total=te.get("baseline_total"),
         known_failures=[str(x) for x in (te.get("known_failures") or [])],

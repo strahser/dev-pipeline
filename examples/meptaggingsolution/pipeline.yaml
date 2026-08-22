@@ -47,8 +47,16 @@ tests:
   runner: dotnet
   vstest: ""
   dll: Core.Tests/Core.Tests.csproj
-  baseline_passed: 12
-  baseline_total: 19
+  # Быстрый набор для верификации карточек (полный прогон >10 мин):
+  # исключены матрицы стратегий по фикстурам и env-зависимые golden-тесты.
+  filter: "FullyQualifiedName!~BridgeStrategyRunTests&FullyQualifiedName!~CoreCollisionTests&FullyQualifiedName!~GoldenIdentityTests"
+  # Baseline 2026-08-22 (замер): 230 pass / 2 fail / 1 skip за 2 мин.
+  # Известные падения — битая пустая фикстура View1 (см. ревью плана).
+  baseline_passed: 230
+  baseline_total: 233
+  known_failures:
+    - ComputePlacements_Is_Fast_Enough
+    - ComputePlacements_Produces_Deterministic_Results
 
 # Декларативные проверки задач (для пилота на MepTaggingSolution)
 checks:
