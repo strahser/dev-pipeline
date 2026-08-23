@@ -21,6 +21,16 @@ runner:
   checkpoint_stages: true
   checkpoint_remind_sec: 600
 
+# Crew: автономные сессии проекта (карточка 6.2)
+crew:
+  roles: [executor]
+  model: ""
+  permissions: write
+
+restart_policy:
+  max_restarts: 3
+  cooldown_sec: 300
+
 tasks:
   inbox: Tasks\Входящие
   active: Tasks\Активные
