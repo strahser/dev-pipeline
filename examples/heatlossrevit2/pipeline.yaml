@@ -48,10 +48,9 @@ tests:
   # Известное падение окружения (домашний ПК, D:\Projects\HeatLossRevit2):
   # AddAppServices_AllRegistrationsResolvable — DI-тест не резолвит RevitAPI/RevitAPIUI
   # (AssemblyResolve-хендлер не подхватывает), НЕ регрессия кода. На рабочем ПК (E:\) тест зелёный.
+  # Поэтому база ниже: 104/105.
   baseline_passed: 104
   baseline_total: 105
-  known_failures:
-    - AddAppServices_AllRegistrationsResolvable
 
 # Декларативные проверки задач (порты verify_checks из pipeline.py)
 checks:
