@@ -1,6 +1,6 @@
 # Конфигурация конвейера для самого dev-pipeline (Python, самохостинг).
 # План-раннер ведёт собственную доработку по плану
-# ProjectsPalns\dev-pipeline\_current\2026-08-21_dev-pipeline-plan-runner-v2.md.
+# ProjectsPalns\dev-pipeline\_current\2026-08-23_dev-pipeline-fixes.md.
 
 project:
   name: devpipeline
@@ -11,7 +11,7 @@ project:
 plan:
   repo: [D:\Projects\ProjectsPalns, E:\ПлагиныРевит\ProjectsPalns]
   subdir: dev-pipeline
-  file: 2026-08-21_dev-pipeline-plan-runner-v2.md
+  file: 2026-08-23_dev-pipeline-fixes.md
 
 # Параметры план-раннера
 runner:
