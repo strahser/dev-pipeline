@@ -79,17 +79,17 @@ def accept_pending_work(cfg, log=print) -> list[str]:
 
 
 def _spawner(cfg):
-    """Поднимает session_worker для восстановленной сессии."""
+    """Поднимает session_worker для восстановленной сессии — ВИДИМО в терминале
+    (вкладка WezTerm / окно / консоль), никаких фоновых невидимок."""
     def spawn(session):
-        import subprocess
-
-        from pipeline.proc import no_window_flags
+        from pipeline.proc import spawn_visible
         worker = Path(__file__).resolve().parent.parent / "agents" / \
             "session_worker.py"
-        subprocess.Popen([sys.executable, "-X", "utf8", str(worker),
-                          "--session", session["id"], "--project", cfg.name],
-                         stdout=subprocess.DEVNULL, stderr=subprocess.DEVNULL,
-                         creationflags=no_window_flags())
+        where = spawn_visible(
+            [sys.executable, "-X", "utf8", str(worker),
+             "--session", session["id"], "--project", cfg.name],
+            cwd=cfg.root)
+        print(f"[manager] воркер {session['id']} поднят: {where}")
     return spawn
 
 

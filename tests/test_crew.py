@@ -201,12 +201,26 @@ class TuiCycleTest(unittest.TestCase):
         self.assertIn("ПОРЦИЯ-два", prompts[2],
                       "третья сессия получает handoff второй")
 
-    def test_cycle_stops_after_first_portion_without_handoff(self):
+    def test_no_handoff_retries_same_prompt_then_stops(self):
+        """«Ответил без handoff» — не смерть цикла: та же порция повторяется
+        restart_max раз, затем цикл останавливается."""
         from agents import tui_cycle
         prompts = []
-        runner = self._fake_runner([], prompts)
-        n = tui_cycle.run_cycle(self.cfg, role="executor", runner=runner)
-        self.assertEqual(n, 1, "нет handoff — агент решил, что продолжать нечего")
+        calls = {"n": 0}
+
+        def runner(cfg, prompt):
+            calls["n"] += 1
+            prompts.append(prompt)
+            return 0                       # отчёта/handoff нет ни разу
+
+        with mock.patch("time.sleep", lambda s: None):
+            n = tui_cycle.run_cycle(self.cfg, runner=runner,
+                                    log=lambda *a, **k: None)
+        self.assertEqual(calls["n"], self.cfg.restart_max + 1,
+                         "порция без handoff дёргается повторно")
+        self.assertEqual(len(set(prompts)), 1,
+                         "повторы идут с одним и тем же промптом")
+        self.assertEqual(n, calls["n"])
 
     def test_persistent_failure_retries_then_gives_up(self):
         """Перегрузка провайдера: сбойную порцию ДЁРГАЕМ повторно

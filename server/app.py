@@ -1150,10 +1150,8 @@ async def chat_agent_terminal(body: TerminalIn):
     role=manager — ОБЩИЙ менеджер на все проекты (project не нужен),
     остальные роли — agents/tui_cycle.py по проекту (порция = свежая сессия
     opencode, handoff -> /new-самоперезагрузка). Промпт — env
-    PIPELINE_TUI_PROMPT."""
-    import shutil
-    import subprocess
-
+    PIPELINE_TUI_PROMPT. Открытие — pipeline.proc.spawn_visible (вкладка
+    WezTerm / окно / консоль, внутри cmd /k)."""
     agents_dir = Path(__file__).resolve().parent.parent / "agents"
     py = sys.executable or "python"
     dp_root = Path(__file__).resolve().parent.parent
@@ -1190,34 +1188,12 @@ async def chat_agent_terminal(body: TerminalIn):
     if body.prompt:
         env["PIPELINE_TUI_PROMPT"] = body.prompt
 
-    wt = shutil.which("wezterm")
-    # Внутри панели всегда cmd /k: вкладка/окно НЕ закрывается при ошибке —
-    # трейсбек остаётся видимым (ловушка «окно мелькнуло и исчезло»).
-    inner = (["cmd", "/k"] + base) if os.name == "nt" else list(base)
+    env = dict(os.environ)
+    if body.prompt:
+        env["PIPELINE_TUI_PROMPT"] = body.prompt
 
-    if wt:
-        # ВКЛАДКА в уже открытом WezTerm владельца (без кучи экземпляров);
-        # нет запущенного WezTerm -> cli spawn падает -> новое окно WezTerm.
-        cli = [wt, "cli", "spawn", "--cwd", str(workdir), "--"] + inner
-        try:
-            r = subprocess.run(cli, capture_output=True, text=True,
-                               timeout=20, env=env)
-            opened_tab = r.returncode == 0
-        except Exception:
-            opened_tab = False
-        if opened_tab:
-            ev_where = "вкладка WezTerm"
-        else:
-            subprocess.Popen([wt, "start", "--cwd", str(workdir), "--"] + inner,
-                             cwd=str(workdir), env=env, creationflags=0)
-            ev_where = "новое окно WezTerm"
-    elif os.name == "nt":
-        subprocess.Popen(inner, cwd=str(workdir), env=env,
-                         creationflags=subprocess.CREATE_NEW_CONSOLE)
-        ev_where = "новое окно консоли"
-    else:
-        subprocess.Popen(base, cwd=str(workdir), env=env)
-        ev_where = "терминал"
+    from pipeline.proc import spawn_visible
+    ev_where = spawn_visible(base, workdir, env=env)
 
     ev = store.add_event("agent_terminal_opened", "server", "feed",
                          project=project_out, task="",

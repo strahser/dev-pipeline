@@ -208,6 +208,17 @@ def _register_server_session(client, cfg, role: str, base_prompt: str):
             proc = registry.get("proc")
             if proc is not None and proc.poll() is None:
                 proc.terminate()
+        elif ev.get("type") in ("session_instruction", "message"):
+            # Владелец пишет из панели (💬 чат -> агент tui-*): подтверждаем,
+            # чтобы диалог был двусторонним, а не «только исходящие».
+            src = ev.get("from") or "dashboard"
+            try:
+                client.send_message(
+                    src, f"[tui-{role}] принял: {(ev.get('text') or '')[:200]} | "
+                         f"статус: работаю в окне терминала; срочное — напишите "
+                         f"прямо в окно opencode или Tasks\\Вопросы.")
+            except Exception:
+                pass
 
     threading.Thread(target=_hb, daemon=True, name=f"hb-{sid}").start()
     try:
@@ -242,6 +253,7 @@ def run_cycle(cfg, *, role: str = "executor", user_prompt: str = "",
     prompt = base
     done = 0
     fails = 0
+    misses = 0
     try:
         for i in range(limit):
             started = time.time()
@@ -263,9 +275,19 @@ def run_cycle(cfg, *, role: str = "executor", user_prompt: str = "",
             done += 1
             h = newest_handoff(cfg, started - 1)
             if h is None:
-                log(f"[tui] порция {i + 1}: handoff нет — агент считает работу "
-                    f"завершённой, цикл окончен")
+                # Агент ответил, но протокол порции (handoff-файл) не выполнил:
+                # «движуха» не должна гаснуть — повторяем ту же порцию.
+                misses += 1
+                if misses <= int(getattr(cfg, "restart_max", 3)):
+                    cd = min(60, max(5, int(getattr(
+                        cfg, "restart_cooldown_sec", 30)) // 2))
+                    log(f"[tui] порция {i + 1}: handoff нет (ответил без "
+                        f"протокола?) — повтор через {cd} с ({misses}/{limit})")
+                    time.sleep(cd)
+                    continue
+                log(f"[tui] порций без handoff подряд исчерпано — цикл окончен")
                 break
+            misses = 0
             body = h.read_text(encoding="utf-8", errors="replace")[-HANDOFF_TAIL_LIMIT:]
             prompt = (base + "\n\nHANDOFF ПРЕДЫДУЩЕЙ СЕССИИ (продолжи с этого места):\n"
                       + body)

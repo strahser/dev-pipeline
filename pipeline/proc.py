@@ -73,3 +73,32 @@ def smart_decode(data) -> str:
     if best_txt is not None:
         return best_txt
     return data.decode("utf-8", errors="replace")
+
+
+def spawn_visible(cmd, cwd, env=None) -> str:
+    """Открыть команду ВИДИМЫМ терминалом (ничего скрытого — ОС 2026-08-23).
+
+    Приоритет: вкладка в уже открытом WezTerm (wezterm cli spawn) -> новое
+    окно WezTerm -> новое окно консоли Windows. Внутри всегда cmd /k — панель
+    не закрывается при ошибке, лог/трейсбек остаётся видимым.
+    Возвращает, где открыто («вкладка WezTerm» / …)."""
+    import shutil
+    import subprocess
+
+    inner = (["cmd", "/k"] + list(cmd)) if os.name == "nt" else list(cmd)
+    wt = shutil.which("wezterm")
+    if wt:
+        cli = [wt, "cli", "spawn", "--cwd", str(cwd), "--"] + inner
+        try:
+            r = subprocess.run(cli, capture_output=True, text=True,
+                               timeout=20, env=env)
+            if r.returncode == 0:
+                return "вкладка WezTerm"
+        except Exception:
+            pass
+        subprocess.Popen([wt, "start", "--cwd", str(cwd), "--"] + inner,
+                         cwd=str(cwd), env=env, creationflags=0)
+        return "новое окно WezTerm"
+    flags = subprocess.CREATE_NEW_CONSOLE if os.name == "nt" else 0
+    subprocess.Popen(inner, cwd=str(cwd), env=env, creationflags=flags)
+    return "новое окно консоли"
