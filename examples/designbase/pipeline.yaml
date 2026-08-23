@@ -3,14 +3,14 @@
 
 project:
   name: designbase
-  root: [E:\ПлагиныРевит\DesignBase]
-  branch: master
+  root: [D:\Projects\DesignBase, E:\ПлагиныРевит\DesignBase]
+  branch: main
 
 # План проекта в ProjectsPalns
 plan:
   repo: [D:\Projects\ProjectsPalns, E:\ПлагиныРевит\ProjectsPalns]
   subdir: DesignBase
-  file: 2026-08-21_regulatory-compliance-cross-analysis.md
+  file: 2026-08-23_markdown-mirror-layer.md
 
 # Параметры план-раннера
 runner:
@@ -41,8 +41,8 @@ tests:
   runner: pytest
   vstest: ""
   dll: tests
-  baseline_passed: 29
-  baseline_total: 29
+  baseline_passed: 45
+  baseline_total: 45
 
 checks:
   - id: A-01
