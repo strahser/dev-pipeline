@@ -877,6 +877,33 @@ class TerminalEndpointTest(unittest.TestCase):
                                  json={"project": "нет_такого"})
         self.assertEqual(r.status_code, 404)
 
+    def test_manager_global_without_project(self):
+        """ОБЩИЙ менеджер на все проекты: project не нужен."""
+        captured = {}
+
+        def fake_popen(cmd, cwd=None, env=None, creationflags=0):
+            captured["cmd"] = list(cmd)
+            captured["cwd"] = cwd
+            return mock.Mock()
+
+        with mock.patch("shutil.which", lambda name: None), \
+             mock.patch("subprocess.Popen", fake_popen):
+            r = self.client.post("/api/chat/agents/terminal",
+                                 json={"role": "manager"})
+        self.assertEqual(r.status_code, 200)
+        joined = " ".join(captured["cmd"])
+        self.assertIn("project_manager.py", joined)
+        self.assertNotIn("--project", captured["cmd"],
+                         "глобальный менеджер ведёт все проекты сразу")
+        self.assertEqual(captured["cwd"],
+                         str(Path(app_mod.__file__).resolve().parent.parent))
+
+    def test_executor_role_requires_project(self):
+        with mock.patch("subprocess.Popen", lambda *a, **k: mock.Mock()):
+            r = self.client.post("/api/chat/agents/terminal",
+                                 json={"role": "executor"})
+        self.assertEqual(r.status_code, 400)
+
 
 class MetaVersionTest(unittest.TestCase):
     """Баннер «перезапустите сервер»: версия кода в healthz и /api/meta."""

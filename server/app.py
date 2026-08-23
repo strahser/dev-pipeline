@@ -1122,41 +1122,73 @@ async def chat_agent_restart(name: str):
 
 
 class TerminalIn(BaseModel):
-    project: str
+    project: str = ""          # пусто допустимо только для role=manager
     role: str = "executor"
     prompt: str = ""
 
 
-@app.post("/api/chat/agents/terminal")
-async def chat_agent_terminal(body: TerminalIn):
-    """Открыть ВИДИМЫЙ терминал с автономным агентом (карточка 2.1).
-
-    В окне крутится agents/tui_cycle.py: порция = свежая сессия opencode TUI,
-    handoff предыдущей подставляется в следующую (/new-эквивалент). Промпт —
-    через env PIPELINE_TUI_PROMPT (cmd /k ломается на кавычках аргументов)."""
+@app.get("/api/chat/agents/auto_task")
+async def chat_auto_task(project: str):
+    """Автозадание проекта — предзаполнение окна «🖥 Терминал/🛡 Менеджер»,
+    чтобы владелец видел и мог отредактировать то, что уйдёт агенту."""
     try:
-        cfg = load_config(body.project)
+        cfg = load_config(project)
     except ConfigError as e:
         raise HTTPException(404, f"проект не найден: {e}")
-    from pipeline.crew import ensure_permissions
+    from agents.tui_cycle import auto_task
     try:
-        ensure_permissions(cfg)
-    except Exception:
-        pass
-    agents_dir = Path(__file__).resolve().parent.parent / "agents"
-    if body.role == "manager":
-        script = agents_dir / "project_manager.py"
-    else:
-        script = agents_dir / "tui_cycle.py"
-    py = sys.executable or "python"
-    base = [py, "-X", "utf8", str(script),
-            "--project", body.project, "--role", body.role]
+        return {"project": cfg.name, "task": auto_task(cfg)}
+    except Exception as e:
+        return {"project": cfg.name, "task": "", "note": f"автозадание недоступно: {e}"}
+
+
+@app.post("/api/chat/agents/terminal")
+async def chat_agent_terminal(body: TerminalIn):
+    """Открыть ВИДИМОЕ окно терминала с агентом (карточка 2.1 + ОС 2026-08-23).
+
+    Любой запуск из панели = полноценное окно opencode TUI с автопромптом:
+    role=manager — ОБЩИЙ менеджер на все проекты (project не нужен),
+    остальные роли — agents/tui_cycle.py по проекту (порция = свежая сессия
+    opencode, handoff -> /new-самоперезагрузка). Промпт — env
+    PIPELINE_TUI_PROMPT."""
     import shutil
     import subprocess
+
+    agents_dir = Path(__file__).resolve().parent.parent / "agents"
+    py = sys.executable or "python"
+    dp_root = Path(__file__).resolve().parent.parent
+
+    if body.role == "manager":
+        # ОБЩИЙ менеджер на ВСЕ проекты: приёмка работы + восстановление сессий
+        script = agents_dir / "project_manager.py"
+        base = [py, "-X", "utf8", str(script)]
+        if body.project:
+            base += ["--project", body.project]
+        workdir = dp_root
+        label = f"менеджер ({body.project or 'все проекты'})"
+        project_out = body.project or ""
+    else:
+        if not body.project:
+            raise HTTPException(400, "для роли нужен project")
+        try:
+            cfg = load_config(body.project)
+        except ConfigError as e:
+            raise HTTPException(404, f"проект не найден: {e}")
+        from pipeline.crew import ensure_permissions
+        try:
+            ensure_permissions(cfg)
+        except Exception:
+            pass
+        script = agents_dir / "tui_cycle.py"
+        base = [py, "-X", "utf8", str(script),
+                "--project", body.project, "--role", body.role]
+        workdir = cfg.root
+        label = f"агент ({body.role}) для {cfg.name}"
+        project_out = cfg.name
+
     wt = shutil.which("wezterm")
     if wt:
-        # WezTerm владельца: отдельное окно его любимого терминала
-        cmd = [wt, "start", "--cwd", str(cfg.root), "--"] + base
+        cmd = [wt, "start", "--cwd", str(workdir), "--"] + base
         creationflags = 0
         where = "WezTerm"
     elif os.name == "nt":
@@ -1167,18 +1199,18 @@ async def chat_agent_terminal(body: TerminalIn):
         cmd = list(base)
         creationflags = 0
         where = "терминал"
+
     env = dict(os.environ)
     if body.prompt:
         env["PIPELINE_TUI_PROMPT"] = body.prompt
-    subprocess.Popen(cmd, cwd=str(cfg.root), env=env,
+    subprocess.Popen(cmd, cwd=str(workdir), env=env,
                      creationflags=creationflags)
     ev = store.add_event("agent_terminal_opened", "server", "feed",
-                         project=cfg.name, task="",
+                         project=project_out, task="",
                          payload={"role": body.role, "terminal": where})
     hub.publish(ev)
-    return {"ok": True, "project": cfg.name, "role": body.role,
-            "terminal": where,
-            "message": f"агент ({body.role}) запущен в {where} для {cfg.name}"}
+    return {"ok": True, "project": project_out, "role": body.role,
+            "terminal": where, "message": f"{label} запущен в {where}"}
 
 
 @app.get("/api/chat/history")

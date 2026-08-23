@@ -1,9 +1,9 @@
 # -*- coding: utf-8 -*-
-"""Общий менеджер проекта: видимая терминальная сессия вместо локального
-контролёра (обратная связь владельца 2026-08-23).
+"""ОБЩИЙ менеджер: видимая терминальная сессия НА ВСЕ проекты (вместо
+локального контролёра; обратная связь владельца 2026-08-23).
 
 Что делает в цикле (TICK_SEC):
-1. ВОССТАНОВЛЕНИЕ: опрашивает сервер — упавшие (failed/stalled) сессии проекта
+1. ВОССТАНОВЛЕНИЕ: опрашивает сервер — упавшие (failed/stalled) сессии проектов
    перезапускает, порции с handoff продолжает (pipeline.crew.supervise_once,
    лимит restart_policy + cooldown). Это «разрешение восстанавливать сессию,
    если упала».
@@ -11,9 +11,13 @@
    но БЕЗ вердикта, проходят механический verify (pipeline.cli.cmd_verify) —
    принимает работу, когда контролёр-агент не запущен.
 
-Запуск из панели: кнопка «🛡 Менеджер» -> POST /api/chat/agents/terminal
-(role=manager). Вручную:
-    python -X utf8 agents/project_manager.py --project <p> [--interval 30]
+Сами агенты (tui_cycle) перезагружают себя сами: порция завершена -> handoff ->
+свежая сессия opencode (/new). Менеджер только страхует падения и принимает.
+
+Запуск из панели: кнопка «🛡 Менеджер» в шапке -> POST /api/chat/agents/terminal
+(role=manager, без проекта = все проекты). Вручную:
+    python -X utf8 agents/project_manager.py                # все проекты
+    python -X utf8 agents/project_manager.py --project <p>  # один проект
 """
 from __future__ import annotations
 
@@ -116,41 +120,64 @@ def manage_once(cfg, client, counters, *, spawner=None, log=print):
     return restored, accepted
 
 
+def run_manager(projects, client, counters, *, spawner=None, log=print):
+    """Один проход менеджера по СПИСКУ проектов (общий менеджер на все проекты).
+    Возвращает [(имя проекта, восстановления[], принятые[])]."""
+    out = []
+    for cfg in projects:
+        try:
+            restored, accepted = manage_once(cfg, client, counters,
+                                             spawner=spawner, log=log)
+            if restored or accepted:
+                out.append((cfg.name, restored, accepted))
+        except Exception as e:
+            log(f"[manager] {cfg.name}: ошибка прохода: {e}")
+    return out
+
+
 def main(argv=None) -> int:
     ap = argparse.ArgumentParser(prog="agents.project_manager",
-                                 description="Общий менеджер проекта: восстановление "
-                                             "сессий + приёмка работы")
-    ap.add_argument("--project", required=True)
+                                 description="ОБЩИЙ менеджер: восстановление сессий + "
+                                             "приёмка работы (по всем проектам или одному)")
+    ap.add_argument("--project", default="",
+                    help="один проект (пусто = ВСЕ проекты из examples/)")
     ap.add_argument("--interval", type=int, default=TICK_SEC_DEFAULT,
                     help="период цикла, сек")
     a = ap.parse_args(argv)
 
-    from pipeline.config import ConfigError, load_config
-    try:
-        cfg = load_config(a.project)
-    except ConfigError as e:
-        print(f"[manager] проект не найден: {e}")
+    from pipeline.config import ConfigError, list_projects, load_config
+    names = [a.project] if a.project else list_projects()
+    cfgs = []
+    for name in names:
+        try:
+            cfgs.append(load_config(name))
+        except ConfigError as e:
+            print(f"[manager] {name} пропущен: {e}")
+    if not cfgs:
+        print("[manager] нет ни одного валидного проекта — нечего вести")
         return 2
 
-    try:
-        from pipeline.crew import ensure_permissions
-        ensure_permissions(cfg)
-    except Exception:
-        pass
+    for cfg in cfgs:
+        try:
+            from pipeline.crew import ensure_permissions
+            ensure_permissions(cfg)
+        except Exception:
+            pass
 
     from pipeline.client import Client
-    client = Client(f"manager-{cfg.name}", project=cfg.name)
+    client = Client("manager", project="")
     if not client.server_alive():
-        print("[manager] сервер не отвечает — продолжаю только приёмку работы; "
-              "Ctrl+C — выход")
+        print("[manager] сервер не отвечает — восстановление сессий недоступно, "
+              "работает только приёмка; Ctrl+C — выход")
         client = None
 
     counters: dict = {}
-    print(f"[manager] менеджер проекта {cfg.name} запущен: восстановление сессий + "
-          f"приёмка работы каждые {a.interval} с. Ctrl+C — стоп.")
+    scope = a.project or f"все проекты ({len(cfgs)})"
+    print(f"[manager] ОБЩИЙ менеджер запущен: {scope}; приёмка работы + "
+          f"восстановление сессий каждые {a.interval} с. Ctrl+C — стоп.")
     try:
         while True:
-            manage_once(cfg, client, counters)
+            run_manager(cfgs, client, counters)
             time.sleep(max(10, a.interval))
     except KeyboardInterrupt:
         print("\n[manager] остановлен владельцем")

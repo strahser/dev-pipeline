@@ -316,6 +316,31 @@ class ManagerTest(unittest.TestCase):
         self.assertEqual(restored, ["U2.2"])
         self.assertEqual(len(spawned), 1)
 
+    def test_run_manager_covers_all_projects(self):
+        from agents import project_manager as pm
+        tmp2 = Path(tempfile.mkdtemp(prefix="pcrew_mgr2_"))
+        for sub in ("Tasks/Активные", "Tasks/Отчёты"):
+            (tmp2 / sub).mkdir(parents=True, exist_ok=True)
+        cfg2 = make_cfg(tmp2)
+        # по одной приёмке в каждом проекте
+        for c in (self.cfg, cfg2):
+            (c.abs_tasks_dir("active") / "A-01_дело.md").write_text(
+                "---\nid: A-01\nстатус: done_report\n---\nx", encoding="utf-8")
+            (c.abs_tasks_dir("reports") / "A-01_Отчёт_2026-08-23.md").write_text(
+                "# ОТЧЁТ\n", encoding="utf-8")
+
+        def fake_verify(cfg_, args):
+            vd = cfg_.abs_tasks_dir("reports") / \
+                f"{args.task}_Вердикт_менеджера_test.md"
+            vd.write_text("PASS\n", encoding="utf-8")
+            return 0
+
+        with mock.patch("pipeline.cli.cmd_verify", fake_verify):
+            out = pm.run_manager([self.cfg, cfg2], None, {},
+                                 log=lambda *a, **k: None)
+        self.assertEqual(sorted(name for name, _, _ in out),
+                         ["proj", "proj"], "оба проекта обслужены")
+
 
 if __name__ == "__main__":
     unittest.main(verbosity=2)

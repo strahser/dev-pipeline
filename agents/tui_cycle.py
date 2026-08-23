@@ -41,7 +41,29 @@ ROLE_STARTERS = {
         "Ты КОНТРОЛЁР проекта {project}: ведёшь план ProjectsPalns, запускаешь "
         "карточки план-раннером, принимаешь вердикты, отвечаешь на вопросы агентов. "
         "Каждую порцию завершай handoff-файлом Tasks\\Конвейер\\handoff\\<метка>.md."),
+    "reviewer": (
+        "Ты НЕЗАВИСИМЫЙ РЕВЬЮЕР проекта {project}: проверяешь выполненную работу "
+        "(git diff/log, тесты, соответствие цели), пишешь вердикты; код не правишь. "
+        "Каждую порцию завершай handoff-файлом Tasks\\Конвейер\\handoff\\<метка>.md."),
+    "planner": (
+        "Ты ПЛАНИРОВЩИК проекта {project}: декомпозируешь цели в план ProjectsPalns "
+        "(этапы -> карточки с критериями приёмки и зависимостями). Каждую порцию "
+        "завершай handoff-файлом Tasks\\Конвейер\\handoff\\<метка>.md."),
+    "browser": (
+        "Ты ОБЛАЧНЫЙ МОСТ проекта {project}: забираешь задания из "
+        "Tasks\\Конвейер\\Браузер\\*.txt, передаёшь промпты облачному ИИ (LocalAssitent) "
+        "и сохраняешь ответы. Каждую порцию завершай handoff-файлом."),
 }
+
+
+def _starter(role: str) -> str:
+    """Стартовый текст роли; неизвестные роли получают универсальный."""
+    if role in ROLE_STARTERS:
+        return ROLE_STARTERS[role]
+    return (f"Ты АВТОНОМНЫЙ АГЕНТ роли «{role}» проекта {{project}}. Работай по "
+            "правилам AGENTS.md репозитория конвейера и цели проекта ниже. Каждую "
+            "порцию завершай handoff-файлом "
+            "Tasks\\Конвейер\\handoff\\<метка времени>.md.")
 
 
 def auto_task(cfg) -> str:
@@ -93,7 +115,7 @@ def auto_task(cfg) -> str:
 def build_base_prompt(cfg, role: str = "executor", user_prompt: str = "") -> str:
     """Базовый промпт каждой порции: роль + цель проекта + задание владельца.
     Без явного задания — автозадание по контексту существующего проекта."""
-    starter = ROLE_STARTERS.get(role, ROLE_STARTERS["executor"])
+    starter = _starter(role)
     parts = [starter.format(project=cfg.name)]
     try:
         from pipeline.brief import goal_section
@@ -115,9 +137,9 @@ def newest_handoff(cfg, after_ts: float) -> Path | None:
     return max(fresh, key=lambda p: p.stat().st_mtime) if fresh else None
 
 
-def default_runner(cfg, role: str):
-    """Реальный запуск: видимая сессия opencode TUI в текущей консоли."""
-    from agents.session_worker import _opencode_base
+def default_runner(cfg, role: str, registry: dict | None = None):
+    """Реальный запуск: видимая сессия opencode TUI в текущей консоли.
+    registry["proc"] — текущий процесс opencode (для «⛔ Убить» из панели)."""
 
     def _run(c, prompt: str) -> int:
         import subprocess
@@ -126,40 +148,121 @@ def default_runner(cfg, role: str):
         cmd = _opencode_base() + [str(c.root), "--prompt", prompt]
         print(f"[tui] opencode-сессия запущена ({c.name}, {len(prompt)} символов "
               f"промпта) — работайте в окне; выход завершит порцию")
-        return subprocess.call(cmd, cwd=str(c.root),
-                               creationflags=no_window_flags())
+        proc = subprocess.Popen(cmd, cwd=str(c.root),
+                                creationflags=no_window_flags())
+        if registry is not None:
+            registry["proc"] = proc
+        return proc.wait()
     return _run
 
 
+def _register_server_session(client, cfg, role: str, base_prompt: str):
+    """Регистрация в панели: сессия с PID/heartbeat — видна и убиваема."""
+    import os as _os
+    import threading
+
+    try:
+        s = client.create_session(
+            project=cfg.name, task=f"tui:{role}", agent=f"tui-{role}",
+            role=role, model="", skill="",
+            instruction={"mode": "tui_cycle", "prompt_head": base_prompt[:300]})
+        if not s:
+            return "", None
+        sid = s.get("id", "")
+        client.session_start(
+            sid, pid=_os.getpid(),
+            cmd=(f"{Path(sys.executable).name} -X utf8 agents/tui_cycle.py "
+                 f"--project {cfg.name} --role {role}"))
+        client.session_status(sid, "running", note="терминальный агент запущен")
+    except Exception as e:
+        print(f"[tui] регистрация сессии не удалась (работаю без панели): {e}")
+        return "", None
+
+    registry: dict = {}
+    stop = threading.Event()
+
+    def _hb():
+        while not stop.is_set():
+            try:
+                client.session_heartbeat(sid)
+            except Exception:
+                pass
+            stop.wait(20)
+
+    def _on_event(ev):
+        text = (ev.get("text") or "").lower()
+        if ev.get("type") in ("session_instruction", "message") and \
+                ("abort" in text or "stop" in text):
+            print("[tui] инструкция из панели: прерываю")
+            proc = registry.get("proc")
+            if proc is not None and proc.poll() is None:
+                proc.terminate()
+
+    threading.Thread(target=_hb, daemon=True, name=f"hb-{sid}").start()
+    try:
+        threading.Thread(target=client.subscribe,
+                         args=(_on_event, stop),
+                         daemon=True, name=f"sse-{sid}").start()
+    except Exception:
+        pass
+    return sid, {"stop": stop, "registry": registry}
+
+
 def run_cycle(cfg, *, role: str = "executor", user_prompt: str = "",
-              runner=None, log=print) -> int:
+              runner=None, log=print, client=None) -> int:
     """Цикл порций. Возвращает число выполненных сессий.
 
     Стоп: нет handoff после порции (агент решил, что продолжать нечего),
-    rc != 0 (падение сессии), лимит restart_policy.max_restarts + 1."""
+    rc != 0 (падение сессии), лимит restart_policy.max_restarts + 1.
+    client (опционально): регистрация в панели — сессия с PID видна в
+    «🗂 Сессии», heartbeat держит её «живой», «⛔ Убить» прерывает opencode."""
     if runner is None:
-        runner = default_runner(cfg, role)
+        registry = {} if client is not None else None
+        runner = default_runner(cfg, role, registry)
+    else:
+        registry = None
     base = build_base_prompt(cfg, role, user_prompt)
+
+    sid, ctl = ("", None)
+    if client is not None:
+        sid, ctl = _register_server_session(client, cfg, role, base)
+
     limit = int(getattr(cfg, "restart_max", 3)) + 1
     prompt = base
     done = 0
-    for i in range(limit):
-        started = time.time()
-        rc = runner(cfg, prompt)
-        done += 1
-        if rc != 0:
-            log(f"[tui] порция {i + 1}: сессия завершилась с rc={rc} — цикл окончен")
-            break
-        h = newest_handoff(cfg, started - 1)
-        if h is None:
-            log(f"[tui] порция {i + 1}: handoff нет — агент считает работу "
-                f"завершённой, цикл окончен")
-            break
-        body = h.read_text(encoding="utf-8", errors="replace")[-HANDOFF_TAIL_LIMIT:]
-        prompt = (base + "\n\nHANDOFF ПРЕДЫДУЩЕЙ СЕССИИ (продолжи с этого места):\n"
-                  + body)
-        log(f"[tui] порция {i + 1} готова, handoff: {h.name} — новая чистая "
-            f"сессия (/new)")
+    try:
+        for i in range(limit):
+            started = time.time()
+            rc = runner(cfg, prompt)
+            done += 1
+            if rc != 0:
+                log(f"[tui] порция {i + 1}: сессия завершилась с rc={rc} — цикл окончен")
+                break
+            h = newest_handoff(cfg, started - 1)
+            if h is None:
+                log(f"[tui] порция {i + 1}: handoff нет — агент считает работу "
+                    f"завершённой, цикл окончен")
+                break
+            body = h.read_text(encoding="utf-8", errors="replace")[-HANDOFF_TAIL_LIMIT:]
+            prompt = (base + "\n\nHANDOFF ПРЕДЫДУЩЕЙ СЕССИИ (продолжи с этого места):\n"
+                      + body)
+            log(f"[tui] порция {i + 1} готова, handoff: {h.name} — новая чистая "
+                f"сессия (/new)")
+            if client is not None and sid:
+                try:
+                    client.session_status(sid, "running",
+                                          note=f"порций выполнено: {done}")
+                except Exception:
+                    pass
+    finally:
+        if client is not None and sid:
+            try:
+                client.session_status(sid, "done",
+                                      note=f"цикл завершён, порций: {done}")
+            except Exception:
+                pass
+            if ctl is not None:
+                ctl["stop"].set()
     return done
 
 
@@ -188,7 +291,18 @@ def main(argv=None) -> int:
         print(f"[tui] профиль прав не проверён: {e}")
 
     prompt = a.prompt or __import__("os").environ.get("PIPELINE_TUI_PROMPT", "")
-    n = run_cycle(cfg, role=a.role, user_prompt=prompt)
+
+    client = None
+    try:
+        from pipeline.client import Client
+        c = Client(f"tui-{a.role}", project=cfg.name)
+        if c.server_alive():
+            client = c
+            print("[tui] регистрируюсь в панели (🗂 Сессии) — там виден PID и «Убить»")
+    except Exception:
+        client = None
+
+    n = run_cycle(cfg, role=a.role, user_prompt=prompt, client=client)
     print(f"[tui] цикл завершён: сессий {n}")
     return 0
 

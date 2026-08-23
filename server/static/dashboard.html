@@ -224,6 +224,7 @@ pre.json { background:var(--code); border:1px solid var(--border); border-radius
 <header>
   <h1>dev-pipeline · Панель конвейера</h1>
   <button onclick="openSessions()" title="Явные сессии субагентов" style="background:var(--panel);color:var(--text);border:1px solid var(--border);border-radius:8px;padding:6px 12px;font-size:13px;cursor:pointer;">🗂 Сессии</button>
+  <button onclick="openTerminal('', 'manager')" title="ОБЩИЙ менеджер на все проекты: принимает работу (verify), восстанавливает упавшие сессии" style="background:var(--panel);color:var(--text);border:1px solid var(--border);border-radius:8px;padding:6px 12px;font-size:13px;cursor:pointer;">🛡 Менеджер</button>
   <button onclick="openQA()" title="Вопросы агентов (grill) и чекпоинты план-раннера" style="background:var(--panel);color:var(--text);border:1px solid var(--border);border-radius:8px;padding:6px 12px;font-size:13px;cursor:pointer;">❓ Вопросы · ⏸ Чекпоинты <span id="qaCount" style="color:var(--muted)">0/0</span></button>
   <span class="status" id="status">…</span>
 </header>
@@ -393,61 +394,60 @@ let currentTaskId = null;
 let allRows = [];          // все задачи из API (сырые)
 const collapsed = new Set(); // свёрнутые WBS-коды (дерево)
 
-/* --- Crew: поднять проект (карточка 6.2), кнопки на карточке проекта (план 2026-08-23, 1.1) --- */
+/* --- Запуск агентов из панели: ВСЕГДА полноценное видимое окно opencode
+       с автопромптом (обратная связь владельца 2026-08-23) --- */
+async function launchTerminal(proj, role, prompt){
+  const r = await fetch('/api/chat/agents/terminal',{method:'POST',
+    headers:{'Content-Type':'application/json'},
+    body: JSON.stringify({project: proj, role: role, prompt: prompt||''})});
+  if(!r.ok) throw new Error(r.status+' '+(await r.text()).slice(0,150));
+  return await r.json();
+}
+
+async function fetchAutoTask(proj){
+  try{
+    const d = await get('/api/chat/agents/auto_task?project='+encodeURIComponent(proj));
+    return (d && d.task) || '';
+  }catch(e){ return ''; }
+}
+
 async function crewUp(proj){
   proj = proj || activeProject;
   if(!proj){ alert('сначала выберите проект'); return; }
   try{
     const c = await get('/api/crew/'+encodeURIComponent(proj));
     if(!c.roles || !c.roles.length){ alert('в pipeline.yaml нет секции crew'); return; }
-    let failed = [];
     for(const role of c.roles){
-      const r = await fetch('/api/agents',{method:'POST',
-        headers:{'Content-Type':'application/json'},
-        body: JSON.stringify({role: role, project: proj, model: c.model||''})});
-      if(!r.ok) failed.push(role+':'+r.status);
+      const task = await fetchAutoTask(proj);
+      try{ await launchTerminal(proj, role, task); }
+      catch(e){ alert('роль '+role+' не поднята: '+(e.message||e)); }
     }
-    if(failed.length){ alert('crew '+proj+' — отказ по ролям: '+failed.join(', ')); return; }
-    alert('crew поднят ('+proj+'): ' + c.roles.join(', ') + (c.model? ' ('+c.model+')' : '')
-      + '\nправа: ' + (c.permissions||'write'));
+    alert('crew поднят ('+proj+'): по окну терминала на роль — '
+      + c.roles.join(', ') + '\nКаждый агент сам перезагружается (/new) после порции.');
   }catch(e){ alert('crew: '+(e.message||e)); }
 }
 
-/* Запуск агента роли для проекта (контролёр и т.д.) — живая сессия opencode */
 async function spawnRoleAgent(role, proj){
-  proj = proj || activeProject;
-  if(!proj){ alert('выберите проект'); return; }
-  try{
-    const r = await fetch('/api/agents',{method:'POST',
-      headers:{'Content-Type':'application/json'},
-      body: JSON.stringify({role: role, project: proj})});
-    if(!r.ok){ alert('отклонено: '+r.status+' '+(await r.text()).slice(0,200)); return; }
-    const s = await r.json();
-    alert('Агент «'+role+'» поднят: сессия '+s.id+' (проект '+proj+')');
-    if(typeof loadSessions==='function'
-       && $('sessionsOverlay').classList.contains('show')) loadSessions();
-  }catch(e){ alert(role+': '+(e.message||e)); }
+  /* Оставлена для совместимости: теперь тоже открывает видимое окно opencode */
+  return openTerminal(proj, role);
 }
 
-/* Автономный терминал агента: цикл порций (handoff → свежая сессия, /new-эквивалент)
-   или общий менеджер проекта (role=manager) */
+/* Терминальный агент (/new-цикл) или контролёр: полноценное окно opencode,
+   промпт предзаполнен автозаданием проекта — видно, что уйдёт агенту */
 async function openTerminal(proj, role){
-  proj = proj || activeProject;
-  if(!proj){ alert('выберите проект'); return; }
+  proj = proj || activeProject || '';
   role = role || 'executor';
-  const hint = role === 'manager'
-    ? 'Менеджер: восстановление упавших сессий + приёмка работы. Стартовое задание менеджеру (можно пусто):'
-    : 'Стартовое задание агенту (можно пусто — подставится автозадание по контексту проекта: цель, план, открытые задачи):';
-  const prompt = window.prompt(hint,'') || '';
-  if(prompt === null) return;
+  let prefill = '';
+  if(proj) prefill = await fetchAutoTask(proj);
+  const prompt = window.prompt(
+    'Окно opencode для ' + (proj ? ('проекта '+proj) : 'всех проектов') +
+    '. Промпт агенту (предзаполнен автозаданием — можно отредактировать):',
+    prefill);
+  if(prompt === null || prompt.trim() === '') return;
   try{
-    const r = await fetch('/api/chat/agents/terminal',{method:'POST',
-      headers:{'Content-Type':'application/json'},
-      body: JSON.stringify({project: proj, role: role, prompt: prompt})});
-    if(!r.ok){ alert('терминал отклонён: '+r.status+' '+(await r.text()).slice(0,200)); return; }
-    const d = await r.json();
-    alert(d.message || ('терминал открыт для '+proj)
-      + '\nОтдельное окно терминала.');
+    const d = await launchTerminal(proj, role, prompt);
+    alert((d.message || 'терминал запущен')
+      + '\nАгент сам перезагружается свежей сессией после каждой порции (/new).');
   }catch(e){ alert('терминал: '+(e.message||e)); }
 }
 
@@ -1527,10 +1527,9 @@ function renderProjectCard(p){
        ((p.running_card)?(' · сейчас: '+esc(p.running_card)):'')+
        ((p.runner&&p.runner.note)?(' · '+esc(String(p.runner.note).slice(0,60))):'')+'</div>';
   h += '<div style="display:flex;gap:6px;margin-top:8px;flex-wrap:wrap">'+
-       '<button style="padding:4px 10px;font-size:12px" title="Сессия на каждую роль из pipeline.yaml (crew), права write" onclick="crewUp(\''+esc(p.project)+'\')">▶ Поднять проект</button>'+
-       '<button style="padding:4px 10px;font-size:12px" title="Контролёр/планировщик (Агент-1) для проекта" onclick="spawnRoleAgent(\'controller\',\''+esc(p.project)+'\')">🧭 Контролёр</button>'+
-       '<button style="padding:4px 10px;font-size:12px" title="Видимый терминал opencode с автономным циклом порций (handoff → свежая сессия, /new-эквивалент); пусто = автозадание по контексту проекта" onclick="openTerminal(\''+esc(p.project)+'\',\'executor\')">🖥 Терминал</button>'+
-       '<button style="padding:4px 10px;font-size:12px" title="Общий менеджер в терминале: восстанавливает упавшие сессии, принимает работу (verify) при отсутствии контролёра" onclick="openTerminal(\''+esc(p.project)+'\',\'manager\')">🛡 Менеджер</button>'+
+       '<button style="padding:4px 10px;font-size:12px" title="Сессия на каждую роль из pipeline.yaml (crew) — каждое в СВОЁМ видимом окне терминала, с автопромптом" onclick="crewUp(\''+esc(p.project)+'\')">▶ Поднять проект</button>'+
+       '<button style="padding:4px 10px;font-size:12px" title="Контролёр (Агент-1): полноценное окно opencode с автопромптом по контексту проекта" onclick="openTerminal(\''+esc(p.project)+'\',\'controller\')">🧭 Контролёр</button>'+
+       '<button style="padding:4px 10px;font-size:12px" title="Исполнитель: полноценное окно opencode (/new-цикл порций, автопромпт)" onclick="openTerminal(\''+esc(p.project)+'\',\'executor\')">🤖 Исполнитель</button>'+
        '</div>';
   h += '</div>';
   return h;
