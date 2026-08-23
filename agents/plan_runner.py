@@ -451,8 +451,14 @@ id: {card.id}
                 self._state(phase="executing", card=card.id, attempt=attempt,
                             title=card.title)
                 if self.dry_run:
+                    from pipeline.brief import goal_section
                     print(f"[dry-run] выполнил бы карточку {card.id} — {card.title} "
                           f"(таймаут вопроса {self.cfg.question_timeout_sec} c)")
+                    goal = goal_section(self.cfg)
+                    if goal:
+                        head = "\n".join(goal.splitlines()[:6])
+                        print("[dry-run] цель проекта (GOAL.md) попадёт в промпт:\n"
+                              + head)
                     return 0
 
                 # Уникальное имя отчёта: иначе вчерашний/приёмочный отчёт с тем же

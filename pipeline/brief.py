@@ -110,9 +110,38 @@ def _state_section(cfg) -> list[str]:
     return out or ["- конвейер простаивает"]
 
 
+def goal_path(cfg) -> Path | None:
+    """ProjectsPalns\\<Проект>\\GOAL.md (рядом с каталогом _current)."""
+    try:
+        d = cfg.plan_dir()
+    except Exception:
+        return None
+    if d is None:
+        return None
+    p = Path(d).parent / "GOAL.md"
+    return p if p.is_file() else None
+
+
+def goal_section(cfg) -> str:
+    """Полный текст GOAL.md ('' если файла нет) — Цель / Результат / Не делать."""
+    p = goal_path(cfg)
+    if p is None:
+        return ""
+    try:
+        return p.read_text(encoding="utf-8-sig", errors="replace").strip()
+    except OSError:
+        return ""
+
+
 def build_brief(cfg, card=None) -> str:
     lines = [f"# КОНТЕКСТ ПРОЕКТА {cfg.name} "
              f"(авто-дайджест; сомнительное проверь по коду сам)", ""]
+
+    goal = goal_section(cfg)
+    if goal:
+        lines.append("## Цель проекта")
+        lines.append(goal)
+        lines.append("")
 
     lines.append("## План и этап")
     lines += _plan_section(cfg, card)
