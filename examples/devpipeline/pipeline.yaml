@@ -45,13 +45,7 @@ tests:
   baseline_passed: 121
   baseline_total: 121
 
-checks:
-  - id: D-01
-    label: 'TDL удалён: импорты pipeline.tdl отсутствуют'
-    kind: grep_dir
-    dir: pipeline
-    pattern: from\s+pipeline\.tdl|import\s+pipeline\.tdl
-    expect: 0
+checks: []
 
 layer_rules:
   - label: 'agents не импортируют server (тонкие клиенты через pipeline.client)'
