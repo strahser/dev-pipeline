@@ -11,7 +11,7 @@ project:
 plan:
   repo: [D:\Projects\ProjectsPalns, E:\ПлагиныРевит\ProjectsPalns]
   subdir: dev-pipeline
-  file: 2026-08-23_dev-pipeline-fixes.md
+  file: 2026-08-24_dev-pipeline-crew-manager-ui.md
 
 # Параметры план-раннера
 runner:
