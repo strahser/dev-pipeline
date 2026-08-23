@@ -249,11 +249,17 @@ def _build_subprompt(cfg, task_id: str, task_file: Path, report_path: Path,
                   if skill else "") + ""
 
     if prompt_override:
-        prompt = prompt_override.format(
-            task_file=task_file,
-            report=report_path,
-            task_id=task_id,
-            project=cfg.name,
+        # Безопасное форматирование: неизвестные/лишние {placeholder} в тексте
+        # карточки (например, /buildings/{id}) не должны ронять раннер KeyError'ом.
+        class _SafeDict(dict):
+            def __missing__(self, key):
+                return "{" + key + "}"
+
+        prompt = prompt_override.format_map(
+            _SafeDict(task_file=task_file,
+                      report=report_path,
+                      task_id=task_id,
+                      project=cfg.name)
         )
     else:
         prompt = SUBPROMPT.format(
