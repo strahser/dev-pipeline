@@ -54,6 +54,44 @@ def make_cfg(tmp: Path) -> ProjectConfig:
                          checkpoint_stages=False)
 
 
+def make_valid_run():
+    """Фейковый субагент: создаёт валидный отчёт (>200 байт), возвращает rc=0."""
+    calls = []
+
+    def _run(cfg, tid, report, log, **kw):
+        calls.append(tid)
+        report.parent.mkdir(parents=True, exist_ok=True)
+        report.write_text(
+            f"# ОТЧЁТ карточка:{tid}\n## Что было не так\n—\n"
+            "## Что сделано\nправки по карточке " + tid + "\n"
+            "## Доказательства\nbuild EXIT 0; tests passed\n" + "pad" * 40 + "\n",
+            encoding="utf-8")
+        return 0
+    return _run, calls
+
+
+PLAN_CP = """# План: тест чекпоинтов
+
+## Сводная таблица СДР
+
+| СДР | Наименование | Тип | Статус |
+|---|---|---|---|
+| `1` | Этап 1 | summary | Открыто |
+| `1.1` | Первая | execution | Открыто |
+
+---
+
+### Карточка 1.1 — Первая
+
+- **Статус**: `open`
+- **Чекпоинт**: да
+- **Цель**: первое дело с чекпоинтом.
+- **Критерии приёмки**:
+  1. Файл X существует.
+- **Зависимости**: нет.
+"""
+
+
 class RunnerTest(unittest.TestCase):
     def setUp(self):
         self.tmp = Path(tempfile.mkdtemp(prefix="prunner_"))
@@ -242,6 +280,63 @@ class RunnerTest(unittest.TestCase):
         with mock.patch.object(pr, "run_subagent", silent_run):
             res = r._verify(card, report_path=reports_dir / "нет_такого_отчёта.md")
         self.assertEqual(res, "FAIL")
+
+
+class CheckpointRetryTest(unittest.TestCase):
+    """Карточка 1.2: рестарт чекпоинта владельцем не расходует бюджет попыток."""
+
+    def setUp(self):
+        self.tmp = Path(tempfile.mkdtemp(prefix="prunner_cp_"))
+        self.cfg = make_cfg(self.tmp)
+        self.plan_path = self.tmp / "plan_cp.md"
+        self.plan_path.write_text(PLAN_CP, encoding="utf-8")
+
+    def _fake_client(self):
+        events = []
+
+        class FakeClient:
+            def notify(self, ev_type, to="", task="", payload=None):
+                events.append((ev_type, task, dict(payload or {})))
+
+        return FakeClient(), events
+
+    def test_checkpoint_retry_gives_full_budget(self):
+        from agents import plan_runner as pr
+        client, _ = self._fake_client()
+        r = pr.PlanRunner(self.cfg, plan_path=self.plan_path, once=True, retries=1,
+                          client=client)
+        fake_run, calls = make_valid_run()
+        # волна 1: FAIL→PASS; рестарт; волна 2: FAIL→PASS; рестарт; волна 3: PASS
+        with mock.patch.object(pr, "run_subagent", fake_run), \
+             mock.patch.object(pr.PlanRunner, "_verify",
+                               side_effect=["FAIL", "PASS", "FAIL", "PASS", "PASS"]), \
+             mock.patch.object(pr.PlanRunner, "_wait_decision",
+                               side_effect=["retry", "retry", "approve"]):
+            rc = r.run()
+        self.assertEqual(rc, 0, "рестарты владельцем не должны приводить к rc=3")
+        plan = load_plan(self.plan_path)
+        self.assertEqual(plan.card("1.1").status, "done")
+        self.assertEqual(len(calls), 5,
+                         "5 попыток: 2 волны по (FAIL,PASS) + финальный PASS; "
+                         "разделяемый бюджет дал бы rc=3 раньше")
+
+    def test_card_retried_by_owner_event_with_wave_number(self):
+        from agents import plan_runner as pr
+        client, events = self._fake_client()
+        r = pr.PlanRunner(self.cfg, plan_path=self.plan_path, once=True, retries=1,
+                          client=client)
+        fake_run, _ = make_valid_run()
+        with mock.patch.object(pr, "run_subagent", fake_run), \
+             mock.patch.object(pr.PlanRunner, "_verify",
+                               side_effect=["FAIL", "PASS", "FAIL", "PASS", "PASS"]), \
+             mock.patch.object(pr.PlanRunner, "_wait_decision",
+                               side_effect=["retry", "retry", "approve"]):
+            rc = r.run()
+        self.assertEqual(rc, 0)
+        retried = [(t, p.get("wave")) for (ev, t, p) in events
+                   if ev == "card_retried_by_owner"]
+        self.assertEqual(retried, [("1.1", 1), ("1.1", 2)],
+                         "событие card_retried_by_owner с нарастающим номером волны")
 
 
 if __name__ == "__main__":

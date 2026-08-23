@@ -342,6 +342,7 @@ id: {card.id}
             return 1
         print(f"[runner] план: {pp}")
         self._state(phase="running")
+        owner_waves: dict[str, int] = {}
 
         while True:
             plan = load_plan(pp)
@@ -441,8 +442,14 @@ id: {card.id}
                 self._state(phase="checkpoint", card=card.id, note=reason)
                 action = self._wait_decision(card)
                 if action == "retry":
+                    owner_waves[card.id] = owner_waves.get(card.id, 0) + 1
+                    owner_wave = owner_waves[card.id]
+                    attempt = 0
                     set_card_status(pp, card.id, "open")
-                    print(f"[runner] {card.id}: перезапуск по решению пользователя")
+                    self._notify("card_retried_by_owner", task=card.id,
+                                 payload={"wave": owner_wave})
+                    print(f"[runner] {card.id}: перезапуск по решению пользователя "
+                          f"(волна владельца {owner_wave}, бюджет попыток обновлён)")
                     continue
 
             set_card_status(pp, card.id, "done")
