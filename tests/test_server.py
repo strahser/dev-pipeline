@@ -824,6 +824,7 @@ class TerminalEndpointTest(unittest.TestCase):
             return mock.Mock()
 
         with mock.patch.object(app_mod, "load_config", lambda n: self.cfg), \
+             mock.patch("shutil.which", lambda name: None), \
              mock.patch("subprocess.Popen", fake_popen):
             r = self.client.post("/api/chat/agents/terminal",
                                  json={"project": "termproj", "role": "executor",
@@ -839,6 +840,33 @@ class TerminalEndpointTest(unittest.TestCase):
         self.assertEqual(captured["env"].get("PIPELINE_TUI_PROMPT"), "дело")
         self.assertEqual(captured["cwd"], str(self.tmp))
 
+    def test_wezterm_preferred_when_available(self):
+        """Владелец пользуется WezTerm: окно агента открывается в нём."""
+        captured = {}
+
+        def fake_popen(cmd, cwd=None, env=None, creationflags=0):
+            captured["cmd"] = list(cmd)
+            captured["cwd"] = cwd
+            captured["env"] = dict(env or {})
+            return mock.Mock()
+
+        wt = "C:\\Program Files\\WezTerm\\wezterm.exe"
+        with mock.patch.object(app_mod, "load_config", lambda n: self.cfg), \
+             mock.patch("shutil.which", lambda name: wt if name == "wezterm" else None), \
+             mock.patch("subprocess.Popen", fake_popen):
+            r = self.client.post("/api/chat/agents/terminal",
+                                 json={"project": "termproj", "role": "executor",
+                                       "prompt": "дело"})
+        self.assertEqual(r.status_code, 200)
+        self.assertEqual(r.json()["terminal"], "WezTerm")
+        cmd = captured["cmd"]
+        self.assertEqual(cmd[0], wt)
+        self.assertEqual(cmd[1], "start")
+        self.assertIn("--cwd", cmd)
+        self.assertIn("tui_cycle.py", " ".join(cmd))
+        self.assertEqual(captured["cwd"], str(self.tmp))
+        self.assertEqual(captured["env"].get("PIPELINE_TUI_PROMPT"), "дело")
+
     def test_unknown_project_404(self):
         def cfg_err(name):
             raise app_mod.ConfigError("не найден")
@@ -848,3 +876,26 @@ class TerminalEndpointTest(unittest.TestCase):
             r = self.client.post("/api/chat/agents/terminal",
                                  json={"project": "нет_такого"})
         self.assertEqual(r.status_code, 404)
+
+
+class MetaVersionTest(unittest.TestCase):
+    """Баннер «перезапустите сервер»: версия кода в healthz и /api/meta."""
+
+    @classmethod
+    def setUpClass(cls):
+        from fastapi.testclient import TestClient
+        cls.client = TestClient(app_mod.app)
+
+    def test_healthz_reports_code_version_key(self):
+        data = self.client.get("/healthz").json()
+        self.assertTrue(data["ok"])
+        self.assertIn("head", data)
+
+    def test_meta_start_vs_now(self):
+        m = self.client.get("/api/meta").json()
+        self.assertEqual(m["head_at_start"], app_mod._SERVER_HEAD)
+        self.assertIn("head_now", m)
+
+    def test_git_head_is_8_chars_in_repo(self):
+        self.assertEqual(len(app_mod._git_head()), 8,
+                         "тесты выполняются в git-репозитории")

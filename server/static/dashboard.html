@@ -1545,10 +1545,40 @@ async function loadPulseAll(){
 
 async function boot(){
   buildShellLite();
+  checkServerFreshness();                 // баннер «перезапустите сервер»
   await loadPulseAll();                   // карточки всех проектов
   setInterval(loadPulseAll, 20000);
   await qaCounts();                       // счётчики вопросов/чекпоинтов в шапке
   setInterval(qaCounts, 15000);
+}
+
+/* Рассинхрон кода: панель отдаётся с диска свежей, а процесс сервера держит
+   старый код (кнопки есть — API за ними 404/не спавнит агентов). */
+function warnBanner(html){
+  const host = $('pulseBody');
+  if (!host || document.getElementById('staleServerBanner')) return;
+  const b = document.createElement('div');
+  b.id = 'staleServerBanner';
+  b.style.cssText = 'margin:0 0 10px;padding:10px 12px;border-radius:8px;font-size:13px;'+
+                    'border:1px solid #eab308;background:rgba(234,179,8,.08)';
+  b.innerHTML = html;
+  host.insertBefore(b, host.firstChild);
+}
+async function checkServerFreshness(){
+  try{
+    const h = await get('/healthz');
+    if (!h.head){
+      warnBanner('⚠ Сервер запущен до обновления кода (в /healthz нет версии): часть API '+
+                 'отвечает 404, агенты из панели не запускаются. <b>Перезапустите сервер</b> '+
+                 '(окно сервера: Ctrl+C → start-server.bat).');
+      return;
+    }
+    const m = await get('/api/meta');
+    if (m.head_now && m.head_now !== m.head_at_start){
+      warnBanner('🔄 Код dev-pipeline обновился после старта сервера ('+esc(m.head_at_start)+
+                 ' → '+esc(m.head_now)+'). Перезапустите сервер, чтобы новые API и кнопки заработали.');
+    }
+  }catch(e){ /* сервер недоступен — обычная индикация ошибки */ }
 }
 
 /* Баннер над таблицей: почему пусто / какой план выбран */

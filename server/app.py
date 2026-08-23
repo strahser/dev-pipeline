@@ -1145,26 +1145,36 @@ async def chat_agent_terminal(body: TerminalIn):
         pass
     script = Path(__file__).resolve().parent.parent / "agents" / "tui_cycle.py"
     py = sys.executable or "python"
-    if os.name == "nt":
-        import subprocess
-        cmd = ["cmd", "/k", py, "-X", "utf8", str(script),
-               "--project", body.project, "--role", body.role]
-        creationflags = subprocess.CREATE_NEW_CONSOLE
-    else:
-        import subprocess
-        cmd = [py, "-X", "utf8", str(script),
-               "--project", body.project, "--role", body.role]
+    base = [py, "-X", "utf8", str(script),
+            "--project", body.project, "--role", body.role]
+    import shutil
+    import subprocess
+    wt = shutil.which("wezterm")
+    if wt:
+        # WezTerm владельца: отдельное окно его любимого терминала
+        cmd = [wt, "start", "--cwd", str(cfg.root), "--"] + base
         creationflags = 0
+        where = "WezTerm"
+    elif os.name == "nt":
+        cmd = ["cmd", "/k"] + base
+        creationflags = subprocess.CREATE_NEW_CONSOLE
+        where = "новое окно консоли"
+    else:
+        cmd = list(base)
+        creationflags = 0
+        where = "терминал"
     env = dict(os.environ)
     if body.prompt:
         env["PIPELINE_TUI_PROMPT"] = body.prompt
     subprocess.Popen(cmd, cwd=str(cfg.root), env=env,
                      creationflags=creationflags)
     ev = store.add_event("agent_terminal_opened", "server", "feed",
-                         project=cfg.name, task="", payload={"role": body.role})
+                         project=cfg.name, task="",
+                         payload={"role": body.role, "terminal": where})
     hub.publish(ev)
     return {"ok": True, "project": cfg.name, "role": body.role,
-            "message": f"терминал агента ({body.role}) открыт для {cfg.name}"}
+            "terminal": where,
+            "message": f"агент ({body.role}) запущен в {where} для {cfg.name}"}
 
 
 @app.get("/api/chat/history")
@@ -1531,7 +1541,36 @@ async def dashboard_page():
 
 @app.get("/healthz")
 async def healthz():
-    return {"ok": True}
+    return {"ok": True, "head": _SERVER_HEAD}
+
+
+def _git_head() -> str:
+    """Короткий HEAD dev-pipeline — версия кода на диске."""
+    try:
+        import subprocess
+
+        from pipeline.proc import no_window_flags
+        r = subprocess.run(
+            ["git", "-C", str(Path(__file__).resolve().parent.parent),
+             "rev-parse", "--short=8", "HEAD"],
+            capture_output=True, text=True, timeout=5,
+            creationflags=no_window_flags())
+        return (r.stdout or "").strip()
+    except Exception:
+        return ""
+
+
+_SERVER_HEAD = _git_head()   # версия кода в момент старта сервера
+
+
+@app.get("/api/meta")
+async def api_meta():
+    """Версия кода: при старте сервера vs сейчас на диске.
+
+    Панель сверяет и показывает баннер «перезапустите сервер» (панель отдаёт
+    свежий HTML с диска, а процесс держит старый код — классическая ловушка)."""
+    return {"head_at_start": _SERVER_HEAD, "head_now": _git_head(),
+            "started_at": _now_iso()}
 
 
 def main():
