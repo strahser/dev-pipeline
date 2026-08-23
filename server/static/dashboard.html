@@ -411,6 +411,24 @@ async function crewUp(){
   }catch(e){ alert('crew: '+(e.message||e)); }
 }
 
+/* --- Активность из git (карточка 5.1) --- */
+async function refreshActivity(){
+  if(!activeProject) return;
+  try{
+    const d = await get('/api/activity?project='+encodeURIComponent(activeProject)+'&days=7&limit=30');
+    const el = $('actList'); if(!el) return;
+    el.innerHTML = (d.commits||[]).map(c=>
+      '<div style="padding:2px 0;border-bottom:1px dashed var(--border)">'
+      + esc(c.date.slice(5,16).replace('T',' '))
+      + ' <span class="badge">'+esc(c.prefix||'—')+'</span>'
+      + ' <b>'+esc(c.repo)+'</b> '+esc(c.subject)
+      + (c.card? ' <span class="badge warn">'+esc(c.card)+'</span>' : '')
+      + '</div>').join('')
+      || '<div class="muted">коммитов за 7 дней нет</div>';
+  }catch(e){}
+}
+setInterval(refreshActivity, 60000);
+
 /* --- Вопросы агентов (grill) и чекпоинты план-раннера --- */
 function qaQuery(){
   return activeProject ? '?project='+encodeURIComponent(activeProject) : '';
@@ -1393,11 +1411,14 @@ function buildShell(){
         '</div>'+
       '</div>'+
     '</div>'+
-    '<div class="stats-row" id="statsRow"></div>'+
+      '<div class="stats-row" id="statsRow"></div>'+
+      '<details style="margin:10px 0"><summary>📜 Активность (git, 7 дней)</summary>'+
+        '<div id="actList" class="muted" style="max-height:260px;overflow:auto">…</div></details>'+
       '<div class="table-card"><div id="tblWrap"></div></div>'+
     '</details>';
   $('content').innerHTML = html;
   refreshPlanBanner();
+  refreshActivity();
 }
 
 async function setProject(name){

@@ -462,10 +462,8 @@ async def api_ledger(limit: int = 200, project: str = ""):
     return store.recent_events(limit=min(limit, 500), project=project)
 
 
-@app.get("/api/activity")
-async def api_activity(limit: int = 50, project: str = ""):
-    """Человекочитаемая лента «что происходит» для панели."""
-    return store.activity(limit=min(limit, 200), project=project)
+# (legacy /api/activity «что происходит» удалён — вкладка давно на /api/pulse;
+#  /api/activity теперь git-активность проекта, карточка 5.1)
 
 
 @app.get("/api/projects")
@@ -1246,6 +1244,19 @@ class AgentIn(BaseModel):
     project: str = ""
     model: str = ""
     task: str = ""
+
+
+@app.get("/api/activity")
+async def activity(project: str = "", days: int = 7, limit: int = 50):
+    """Git-активность проекта (карточка 5.1): коммиты root + plan.repo."""
+    try:
+        cfg = load_config(project)
+    except ConfigError as e:
+        raise HTTPException(404, f"проект не найден: {e}")
+    from pipeline.activity import collect, project_repos
+    commits = collect(project_repos(cfg),
+                      days=min(max(days, 1), 90), limit=min(max(limit, 1), 200))
+    return {"project": cfg.name, "commits": commits}
 
 
 @app.get("/api/crew/{project}")

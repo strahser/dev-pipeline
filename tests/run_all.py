@@ -24,6 +24,7 @@ MODULES = [
     "test_plan_runner",
     "test_checkpoint",
     "test_crew",
+    "test_activity",
 ]
 
 
