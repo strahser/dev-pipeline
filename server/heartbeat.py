@@ -15,12 +15,45 @@
 from __future__ import annotations
 
 import asyncio
+import datetime
+import json
 import os
+import time
+from pathlib import Path
+
+
+def find_checkpoint_orphans(load_cfg, names, now: float | None = None) -> list:
+    """[(name, updated_iso, age_sec)] — раннер проекта в фазе checkpoint,
+    но pending-файл пропал: ожидание стало невидимым для панели."""
+    now = time.time() if now is None else now
+    out = []
+    for name in names:
+        try:
+            cfg = load_cfg(name)
+            conv = Path(cfg.conveyor_dir())
+            st = conv / "runner_state.json"
+            if not st.is_file():
+                continue
+            state = json.loads(st.read_text(encoding="utf-8"))
+            if state.get("phase") != "checkpoint":
+                continue
+            if any((conv / "checkpoints").glob("*.pending.json")):
+                continue
+            updated = str(state.get("updated", ""))
+            age = now - datetime.datetime.fromisoformat(updated).timestamp()
+            remind = int(getattr(cfg, "checkpoint_remind_sec", 600))
+            if age < max(60, remind * 2):
+                continue
+            out.append((name, updated, int(age)))
+        except Exception:
+            continue
+    return out
 
 
 async def zombie_watchdog(store, hub, check_interval_sec: int = 30,
                           max_age_sec: int = 90, controller: str = "controller",
                           session_max_age_sec: int = 300):
+    orphan_seen: dict[str, str] = {}
     while True:
         await asyncio.sleep(check_interval_sec)
         try:
@@ -39,6 +72,20 @@ async def zombie_watchdog(store, hub, check_interval_sec: int = 30,
                 ev = store.add_event("session_stalled", "server", controller,
                                      project=s.get("project", ""), task=s.get("task", ""),
                                      payload={"session_id": s["id"], "agent": s.get("agent", "")})
+                hub.publish(ev)
+        except Exception:
+            pass
+        try:
+            from pipeline.config import list_projects as _projects
+            from pipeline.config import load_config as _load
+            for name, updated, age in find_checkpoint_orphans(
+                    _load, _projects()):
+                if orphan_seen.get(name) == updated:
+                    continue  # одно событие на эпизод ожидания
+                orphan_seen[name] = updated
+                ev = store.add_event("checkpoint_orphan", "server", controller,
+                                     project=name,
+                                     payload={"phase_age_sec": age})
                 hub.publish(ev)
         except Exception:
             pass

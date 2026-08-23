@@ -22,6 +22,7 @@ MODULES = [
     "test_session_e2e",
     "test_plans",
     "test_plan_runner",
+    "test_checkpoint",
 ]
 
 
