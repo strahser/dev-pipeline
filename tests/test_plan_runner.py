@@ -5,8 +5,10 @@
 """
 from __future__ import annotations
 
+import json
 import sys
 import tempfile
+import time
 import unittest
 from pathlib import Path
 from unittest import mock
@@ -209,6 +211,36 @@ class RunnerTest(unittest.TestCase):
         r.run()
         self.assertFalse((self.tmp / "Tasks" / "Конвейер" / "runner.lock").exists(),
                          "лок снят после нормального завершения")
+
+    def test_second_runner_run_returns_rc5(self):
+        """Карточка 1.3: второй конвейер на каталоге получает отказ rc=5."""
+        from agents import plan_runner as pr
+        r1 = pr.PlanRunner(self.cfg, plan_path=self.plan_path, once=True, dry_run=True)
+        self.assertTrue(r1._lock_acquire())
+        r2 = pr.PlanRunner(self.cfg, plan_path=self.plan_path, once=True, dry_run=True)
+        self.assertEqual(r2.run(), 5, "второй старт упирается в занятый лок")
+        r1._lock_release()
+
+    def test_lock_stale_takeover_rules(self):
+        """Карточка 1.3: свежий лок без pid не отдаётся; протухший перехватывается."""
+        import agents.agent_manager as am
+        from agents import plan_runner as pr
+        r = pr.PlanRunner(self.cfg, plan_path=self.plan_path, once=True, dry_run=True)
+        lp = self.tmp / "Tasks" / "Конвейер" / "runner.lock"
+        stale_ts = time.time() - pr.PlanRunner.LOCK_STALE_SEC - 60
+
+        lp.write_text(json.dumps({"pid": 0, "ts": time.time()}), encoding="utf-8")
+        self.assertFalse(r._lock_acquire(), "свежий лок без живого pid — отказ")
+
+        lp.write_text(json.dumps({"pid": 0, "ts": stale_ts}), encoding="utf-8")
+        self.assertTrue(r._lock_acquire(), "протухший лок без pid перехватывается")
+        r._lock_release()
+
+        lp.write_text(json.dumps({"pid": 4242424, "ts": stale_ts}), encoding="utf-8")
+        with mock.patch.object(am, "_pid_alive", return_value=False):
+            self.assertTrue(r._lock_acquire(), "протухший лок с мёртвым pid "
+                                               "перехватывается")
+        r._lock_release()
 
     def test_verdict_uses_current_attempt_report(self):
         """Карточка 1.1: в Отчётах лежат отчёты двух разных карточек — вердикт

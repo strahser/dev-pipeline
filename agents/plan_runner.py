@@ -279,46 +279,64 @@ id: {card.id}
 
     LOCK_STALE_SEC = 6 * 3600
 
+    @staticmethod
+    def _read_lock(lp: Path):
+        """(pid, ts, plan) из файла лока; при любой ошибке — нули ('?')."""
+        try:
+            data = json.loads(Path(lp).read_text(encoding="utf-8"))
+            return (int(data.get("pid", 0)), float(data.get("ts", 0)),
+                    str(data.get("plan", "?")))
+        except Exception:
+            return 0, 0.0, "?"
+
     def _lock_acquire(self) -> bool:
-        """Единственный конвейер на проект: Tasks\\Конвейер\\runner.lock."""
+        """Единственный конвейер на проект: Tasks\\Конвейер\\runner.lock.
+        Эксклюзивное создание (os.open c O_CREAT|O_EXCL): между двумя стартами
+        окно гонки отсутствует — файл либо создаётся один раз, либо создание
+        падает и второй старт получает отказ. Протухший лок перехватывается."""
         from agents.agent_manager import _pid_alive
         d = self.cfg.conveyor_dir()
         d.mkdir(parents=True, exist_ok=True)
         lp = d / "runner.lock"
-        if lp.exists():
-            pid, ts, plan = 0, 0.0, "?"
+        payload = json.dumps({
+            "pid": os.getpid(), "ts": time.time(),
+            "started": _now_ts(),
+            "plan": str(self._current_plan_path() or ""),
+        }, ensure_ascii=False)
+        for _ in range(2):
             try:
-                data = json.loads(lp.read_text(encoding="utf-8"))
-                pid = int(data.get("pid", 0))
-                ts = float(data.get("ts", 0))
-                plan = str(data.get("plan", "?"))
-            except Exception:
-                pass
-            age = time.time() - ts
-            if pid and _pid_alive(pid):
-                print(f"[runner] ЗАПРЕЩЕНО: на проекте уже работает конвейер "
-                      f"(pid={pid}, план {plan}, {int(age // 60)} мин). "
-                      f"Два конвейера на один проект смешивают артефакты "
-                      f"(инцидент с ложным PASS 2026-08-22).")
+                fd = os.open(str(lp), os.O_CREAT | os.O_EXCL | os.O_WRONLY)
+            except FileExistsError:
+                pid, ts, plan = self._read_lock(lp)
+                age = time.time() - ts
+                if pid and _pid_alive(pid):
+                    print(f"[runner] ЗАПРЕЩЕНО: на проекте уже работает конвейер "
+                          f"(pid={pid}, план {plan}, {int(age // 60)} мин). "
+                          f"Два конвейера на один проект смешивают артефакты "
+                          f"(инцидент с ложным PASS 2026-08-22).")
+                    return False
+                if age < self.LOCK_STALE_SEC and not pid:
+                    print("[runner] свежий runner.lock без pid — не рискую")
+                    return False
+                print("[runner] устаревший runner.lock — перехватываю")
+                try:
+                    lp.unlink()
+                except OSError as e:
+                    print(f"[runner] не смог удалить протухший runner.lock: {e}")
+                    return False
+                continue
+            except OSError as e:
+                print(f"[runner] не смог создать runner.lock: {e}")
                 return False
-            if age < self.LOCK_STALE_SEC and not pid:
-                return False  # непонятный свежий lock без пидa — не рискуем
-            print("[runner] устаревший runner.lock — перехватываю")
-        try:
-            lp.write_text(json.dumps({
-                "pid": os.getpid(), "ts": time.time(),
-                "started": _now_ts(),
-                "plan": str(self._current_plan_path() or ""),
-            }, ensure_ascii=False), encoding="utf-8")
-        except OSError as e:
-            print(f"[runner] не смог создать runner.lock: {e}")
-            return False
-        self._lock_path = lp
-        return True
+            with os.fdopen(fd, "w", encoding="utf-8") as f:
+                f.write(payload)
+            self._lock_path = lp
+            return True
+        print("[runner] runner.lock занят конкурирующим конвейером — отказ")
+        return False
 
     def _lock_release(self):
         try:
-            getattr(self, "_lock_path", None)
             if getattr(self, "_lock_path", None):
                 self._lock_path.unlink(missing_ok=True)
         except Exception:
