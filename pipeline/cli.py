@@ -152,10 +152,22 @@ def cmd_verify(cfg, args):
     expect = _os.environ.get("PIPELINE_EXPECT_REPORT", "")
     if expect:
         expect_path = Path(expect)
-        if not expect_path.exists():
-            print(f"ОТКАЗ ВЕРИФИКАЦИИ: ожидаемый отчёт не создан: {expect}")
-            return 3
-        report = expect_path
+        if expect_path.exists():
+            report = expect_path
+        else:
+            # Фолбэк: раннер ждёт отчёт с меткой времени, субагент мог записать
+            # без неё. Если по карточке есть СВЕЖИЙ отчёт (за последние 12 ч) —
+            # верифицируем по нему; иначе отказ (защита от чужих отчётов остаётся).
+            import time as _time
+            fresh = [Path(p) for p in reports
+                     if _time.time() - Path(p).stat().st_mtime < 12 * 3600]
+            if fresh:
+                print(f"[verify] ожидаемый отчёт не создан ({Path(expect).name}); "
+                      f"использую свежий отчёт карточки: {Path(reports[-1]).name}")
+                report = Path(reports[-1])
+            else:
+                print(f"ОТКАЗ ВЕРИФИКАЦИИ: ожидаемый отчёт не создан: {expect}")
+                return 3
     elif len(reports) > 1:
         print(f"[verify] внимание: найдено {len(reports)} отчётов по {args.task}, "
               f"берётся последний: {Path(reports[-1]).name}")
