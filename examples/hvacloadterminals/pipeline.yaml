@@ -1,0 +1,80 @@
+# Конфигурация конвейера для проекта HVACLoadTerminals
+# (расстановка ВРУ/фанкойлов/отопительных приборов; C# net48: Core + Infrastructure + WPF App + Revit 2024).
+# Быстрые проверки — через Core.Tests (net48, xUnit, без Revit SDK и без WPF-стенда).
+# Базовое состояние на 2026-08-23: ветка refactoring/solid-clean-architecture,
+# Core.Tests 74/74, sln EXITCODE=0 (ba7a274).
+
+project:
+  name: HVACLoadTerminals
+  root: [D:\Projects\HVACLoadTerminals]
+  branch: refactoring/solid-clean-architecture
+
+# План проекта в репозитории ProjectsPalns (источник карточек план-раннера)
+plan:
+  repo: [D:\Projects\ProjectsPalns]
+  subdir: HVACLoadTerminals
+  file: 2026-08-23_ui-usability-critique-fixes.md
+
+# Параметры план-раннера (python -m agents.plan_runner --project hvacloadterminals)
+runner:
+  model: opencode-go/deepseek-v4-flash
+  retries: 2
+  question_timeout_sec: 1200   # тишина по вопросу 20 мин -> работа по допущениям
+  checkpoint_stages: true      # пауза после закрытия карточки до одобрения в панели
+
+tasks:
+  inbox: Tasks\Входящие
+  active: Tasks\Активные
+  reports: Tasks\Отчёты
+  archive: Tasks\Архив
+  protocol: Tasks\00_Протокол_агентов.md
+  status: Tasks\Статус_конвейера.md
+  conveyor: Tasks\Конвейер
+  notif: Tasks\Конвейер\Уведомления
+
+build:
+  # Быстрая сборка без Revit: ядро + тесты (Revit-проект требует RevitAPI.dll — вне конвейера)
+  msbuild: dotnet
+  sln: src\Core.Tests\HVACLoadTerminals.Core.Tests.csproj
+  configuration: Debug
+  platform: Any CPU
+  extra_args:
+    - --nologo
+    - -v
+    - q
+
+tests:
+  runner: dotnet
+  vstest: ""
+  dll: src\Core.Tests\HVACLoadTerminals.Core.Tests.csproj
+  # Правило: passed >= базы И total >= базы (карточке разрешено добавлять тесты).
+  baseline_passed: 74
+  baseline_total: 74
+
+# Декларативные проверки задач
+checks:
+  - id: A-01
+    label: 'Core не ссылается на Revit/WPF (чистая доменная логика)'
+    kind: grep_dir
+    dir: src/Core
+    pattern: using\s+(Autodesk\.Revit|System\.Windows)
+    expect: 0
+
+  - id: A-02
+    label: 'В App нет легаси WebBrowser (после U1.3 — только WebView2)'
+    kind: grep_dir
+    dir: src/App
+    pattern: <WebBrowser
+    expect: 0
+
+layer_rules:
+  - label: Core без Autodesk.Revit (guard-слой)
+    pattern: using\s+Autodesk\.Revit
+    expect: 0
+    dirs: [src/Core]
+  - label: Core без WPF (guard-слой)
+    pattern: using\s+System\.Windows
+    expect: 0
+    dirs: [src/Core]
+
+audit_dirs: [src/Core.Tests]
