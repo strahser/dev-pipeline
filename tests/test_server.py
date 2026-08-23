@@ -405,6 +405,29 @@ class TestAppAPI(unittest.TestCase):
         r2 = self.client.post(f"/api/sessions/{sid}/kill")
         self.assertFalse(r2.json()["ok"])
 
+    def test_session_cleanup(self):
+        """cleanup удаляет только мёртвые терминальные сессии; created/running
+        и живые pid не трогает."""
+        dead = self.client.post("/api/sessions", json={"project": "P", "task": "A-1"}).json()
+        self.client.post(f"/api/sessions/{dead['id']}/kill")
+        running = self.client.post("/api/sessions", json={"project": "P", "task": "A-2"}).json()
+        handoff = self.client.post("/api/sessions", json={"project": "P", "task": "A-3"}).json()
+        self.store.update_session(handoff["id"], status="done", note="handoff:Tasks/x.md")
+        r = self.client.post("/api/sessions/cleanup")
+        self.assertEqual(r.status_code, 200)
+        data = r.json()
+        self.assertIn(dead["id"], data["deleted"])
+        # created/running не удаляются даже без cleanup-фильтров
+        self.assertIsNotNone(self.store.get_session(running["id"]))
+        # keep_handoff=0 (по умолчанию): done+handoff удаляется, живых pid нет
+        self.assertIn(handoff["id"], data["deleted"])
+        # keep_handoff=1: done+handoff сохраняется
+        h2 = self.client.post("/api/sessions", json={"project": "P", "task": "A-4"}).json()
+        self.store.update_session(h2["id"], status="done", note="handoff:Tasks/y.md")
+        r2 = self.client.post("/api/sessions/cleanup", params={"keep_handoff": True}).json()
+        self.assertNotIn(h2["id"], r2["deleted"])
+        self.assertIsNotNone(self.store.get_session(h2["id"]))
+
     def test_session_instruction_published_to_channel(self):
         s = self.client.post("/api/sessions", json={"project": "P", "task": "A-9"}).json()
         sid = s["id"]

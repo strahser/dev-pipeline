@@ -378,6 +378,13 @@ class Store:
                            (now_iso(), session_id))
         self._conn.commit()
 
+    def delete_session(self, session_id: str) -> bool:
+        """Удалить запись сессии из БД (очистка мёртвых терминальных сессий).
+        Живые процессы и статусы created/running удалять нельзя — проверяет API."""
+        cur = self._conn.execute("DELETE FROM sessions WHERE id=?", (session_id,))
+        self._conn.commit()
+        return cur.rowcount > 0
+
     def stale_sessions(self, max_age_sec: int) -> list[dict]:
         """Сессии в работе (running/created) с heartbeat старше max_age_sec."""
         from datetime import datetime as dt

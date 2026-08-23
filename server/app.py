@@ -25,6 +25,7 @@
     POST  /api/sessions/{id}/heartbeat
     POST  /api/sessions/{id}/instruction  контролёр -> SSE-канал session-<id>
     POST  /api/sessions/{id}/kill    убить процесс субагента (taskkill /T)
+    POST  /api/sessions/cleanup      удалить мёртвые терминальные сессии
 """
 from __future__ import annotations
 
@@ -1545,6 +1546,55 @@ async def session_instruction(sid: str, body: MessageIn):
                  "created_at": msg["created_at"], "delivery": msg["delivery"],
                  "payload": {"session_id": sid, "chat": True, "event_id": ev["id"]}})
     return msg
+
+
+def _pid_alive(pid: int | None) -> bool:
+    """Жив ли процесс (без psutil; OpenProcess/os.kill(0)). PID может быть
+    переиспользован чужим процессом — в спорных случаях считаем живым (safe)."""
+    if pid is None or int(pid) <= 0:
+        return False
+    if os.name == "nt":
+        import ctypes
+        PROCESS_QUERY_LIMITED_INFORMATION = 0x1000
+        kernel32 = ctypes.windll.kernel32
+        h = kernel32.OpenProcess(PROCESS_QUERY_LIMITED_INFORMATION, False, int(pid))
+        if not h:
+            return False
+        kernel32.CloseHandle(h)
+        return True
+    try:
+        os.kill(int(pid), 0)
+        return True
+    except OSError:
+        return False
+
+
+@app.post("/api/sessions/cleanup")
+async def sessions_cleanup(project: str = "", keep_handoff: bool = False):
+    """Очистить список сессий: удалить терминальные (done/failed/killed/stalled),
+    у которых процесс уже мёртв. created/running и сессии с живым pid не трогаем;
+    keep_handoff=1 сохраняет done-сессии с заметкой handoff: (кандидаты рестарта)."""
+    deleted, kept_alive, kept_handoff = [], [], []
+    for s in store.list_sessions(project=project):
+        sid = s.get("id", "")
+        status = s.get("status", "")
+        if status not in ("done", "failed", "killed", "stalled"):
+            continue  # created/running — только вручную через kill
+        if _pid_alive(s.get("pid")):
+            kept_alive.append(sid)
+            continue
+        note = str(s.get("note", "") or "")
+        if keep_handoff and status == "done" and note.startswith("handoff:"):
+            kept_handoff.append(sid)
+            continue
+        if store.delete_session(sid):
+            deleted.append(sid)
+    ev = store.add_event("session_cleanup", "server", "feed",
+                         payload={"deleted": len(deleted), "kept_alive": kept_alive,
+                                  "kept_handoff": len(kept_handoff)})
+    hub.publish(ev)
+    return {"ok": True, "deleted": deleted, "count": len(deleted),
+            "kept_alive": kept_alive, "kept_handoff": kept_handoff}
 
 
 @app.post("/api/sessions/{sid}/kill")
