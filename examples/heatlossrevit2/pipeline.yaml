@@ -21,6 +21,9 @@ runner:
   retries: 2
   question_timeout_sec: 1200
   checkpoint_stages: true
+  # Независимая reviewer-фаза после PASS (карточка 4.2): ревьюер во временном
+  # git worktree сверяет факт с GOAL.md и планом; FAIL = штатный ретрай.
+  semantic_review: false
 
 tasks:
   inbox: Tasks\Входящие
