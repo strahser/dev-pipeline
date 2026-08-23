@@ -43,6 +43,31 @@ from agents.agent_manager import run_subagent, slug          # noqa: E402
 
 CHECKPOINTS_POLL_SEC = 15
 
+REVIEWER_PROMPT = """Ты НЕЗАВИСИМЫЙ РЕВЬЮЕР этапа {stage} проекта {project} —
+принимаешь этап вместо владельца (флаг runner.stage_approver=reviewer).
+
+ВХОДНЫЕ:
+- План проекта: {plan_path}
+- Цель проекта: {goal_path} (если файла нет — раздел «Миссия» в плане)
+- Карточка этапа: {card}; последний коммит:
+  git -C "{root}" log -1 --stat   и   git -C "{root}" show --stat HEAD
+- Отчёты/вердикты карточек этапа: Tasks\\Отчёты\\{card}_*.md (рядом)
+
+ПРОВЕРЬ:
+1. Факт соответствует цели проекта и карточке (без ухода в сторону).
+2. Нет правок вне задачи (git diff/stat).
+3. Доказательства реальны: сборка/тесты прогнаны, цифры не выдуманы.
+
+ИТОГ (обязательно оба артефакта):
+1. Вердикт по-русски в файл: {report}
+   секции «Вердикт» (PASS/FAIL), «Goal alignment», «Правки вне задачи»,
+   «Доказательства», «Инструкции при retry».
+2. РЕШЕНИЕ — создай ровно файл
+   {decision_path}
+   с JSON: {{"decision": "approve"}} или {{"decision": "retry", "comment": "что исправить"}}
+Без файла решения этап останется ждать владельца.
+"""
+
 
 # ---------------------------------------------------------------------------
 # Промпт исполнителя карточки (grill-фаза встроена)
@@ -268,6 +293,45 @@ id: {card.id}
         core = card.id.split("-", 1)[-1]
         return card.id.rsplit(".", 1)[0] if "." in core else ""
 
+    def _request_stage_review(self, card, reason: str) -> None:
+        """Мягкий режим: ревьюер-сессия готовит decision.json. Не смогла —
+        предупреждение, этап ждёт владельца (карточка не блокируется навсегда)."""
+        import time as _t
+        pp = self._current_plan_path()
+        review_report = self.cfg.abs_tasks_dir("reports") / \
+            f"{card.id}_Ревью_{_today()}_{_t.strftime('%H%M%S')}.md"
+        log = self.cfg.conveyor_dir() / "logs" / f"{card.id}-review.log"
+        from agents.checkpoint import cp_dir
+        decision_path = cp_dir(self.cfg) / f"{card.id}.decision.json"
+        goal = Path(self.cfg.root) / "GOAL.md"
+        prompt = (REVIEWER_PROMPT
+                  .replace("{stage}", self._stage_id(card) or card.id)
+                  .replace("{project}", self.cfg.name)
+                  .replace("{plan_path}", str(pp or ""))
+                  .replace("{goal_path}", str(goal))
+                  .replace("{card}", card.id)
+                  .replace("{root}", str(self.cfg.root))
+                  .replace("{report}", str(review_report))
+                  .replace("{decision_path}", str(decision_path)))
+        rc = run_subagent(self.cfg, f"{card.id}-review", review_report, log,
+                          model=self.model,
+                          client=self.client, prompt_override=prompt)
+        if rc != 0:
+            print(f"[runner] {card.id}: ревьюер завершился с rc={rc} — "
+                  f"этап будет ждать владельца")
+
+    def _tag_stage_done(self, stage: str) -> str:
+        import subprocess
+        try:
+            from pipeline.proc import no_window_flags
+            name = f"stage/{stage}-done"
+            subprocess.run(["git", "-C", str(self.cfg.root), "tag", name],
+                           capture_output=True, timeout=15,
+                           creationflags=no_window_flags())
+            return name
+        except Exception:
+            return ""
+
     # --- основной цикл ----------------------------------------------------------
 
     # --- блокировка второго конвейера (инцидент 2026-08-22) ------------------
@@ -473,7 +537,14 @@ id: {card.id}
                 reason = "marked" if card.checkpoint else \
                     f"этап завершён ({self._stage_id(card) or '—'})"
                 self._checkpoint_pending(card, reason)
-                self._state(phase="checkpoint", card=card.id, note=reason)
+                approver = getattr(self.cfg, "stage_approver", "owner")
+                if approver == "reviewer":
+                    self._state(phase="checkpoint", card=card.id, note=reason,
+                                approver="reviewer")
+                    self._request_stage_review(card, reason)
+                else:
+                    self._state(phase="checkpoint", card=card.id, note=reason,
+                                approver="owner")
                 action = self._wait_decision(card)
                 if action == "retry":
                     owner_waves[card.id] = owner_waves.get(card.id, 0) + 1
@@ -487,6 +558,8 @@ id: {card.id}
                     continue
 
             set_card_status(pp, card.id, "done")
+            if need_cp and self._stage_id(card):
+                self._tag_stage_done(self._stage_id(card))
             commit = self._git_commit(
                 pp.parent, f"plan/{card.id}: выполнено — {card.title[:60]}")
             self._notify("card_done", task=card.id,

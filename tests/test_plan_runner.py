@@ -48,12 +48,13 @@ PLAN = """# План: тест раннера
 """
 
 
-def make_cfg(tmp: Path) -> ProjectConfig:
+def make_cfg(tmp: Path, **extra) -> ProjectConfig:
     for sub in ("Tasks/Активные", "Tasks/Отчёты", "Tasks/Архив", "Tasks/Конвейер"):
         (tmp / sub).mkdir(parents=True, exist_ok=True)
-    return ProjectConfig(name="_runner", root=tmp, msbuild="dotnet",
-                         sln="X.csproj", test_runner="dotnet",
-                         checkpoint_stages=False)
+    base = dict(name="_runner", root=tmp, msbuild="dotnet",
+                sln="X.csproj", test_runner="dotnet", checkpoint_stages=False)
+    base.update(extra)
+    return ProjectConfig(**base)
 
 
 def make_valid_run():
@@ -453,6 +454,72 @@ class CheckpointWaitTest(unittest.TestCase):
                          "время ожидания в напоминаниях нарастает")
         self.assertTrue(all(p.get("waiting_sec") >= 600 for p in waiting),
                         "напоминания не раньше checkpoint_remind_sec")
+
+
+class CheckpointApproverTest(unittest.TestCase):
+    """Карточка 6.3: stage_approver=reviewer — этап принимает ревьюер."""
+
+    def setUp(self):
+        self.tmp = Path(tempfile.mkdtemp(prefix="prunner_appr_"))
+        self.cfg = make_cfg(self.tmp, stage_approver="reviewer")
+        self.plan_path = self.tmp / "plan_cp.md"
+        self.plan_path.write_text(PLAN_CP, encoding="utf-8")
+
+    def _decision_path(self) -> Path:
+        from agents.checkpoint import cp_dir
+        return cp_dir(self.cfg) / "1.1.decision.json"
+
+    def test_reviewer_approves_stage(self):
+        from agents import plan_runner as pr
+        from agents.checkpoint import cp_dir
+        r = pr.PlanRunner(self.cfg, plan_path=self.plan_path, once=True,
+                          retries=0)
+        calls = []
+
+        def dispatcher(cfg, tid, report, log, **kw):
+            calls.append(tid)
+            if tid.endswith("-review"):
+                d = cp_dir(cfg)
+                d.mkdir(parents=True, exist_ok=True)
+                (d / "1.1.decision.json").write_text(
+                    json.dumps({"decision": "approve"}), encoding="utf-8")
+            else:
+                report.parent.mkdir(parents=True, exist_ok=True)
+                report.write_text("# ОТЧЁТ\n## Что сделано\nработа есть\n"
+                                  "## Доказательства\nтесты зелёные\n" + "pad" * 60,
+                                  encoding="utf-8")
+            return 0
+
+        with mock.patch.object(pr, "run_subagent", dispatcher), \
+             mock.patch.object(pr.PlanRunner, "_verify", return_value="PASS"):
+            rc = r.run()
+        self.assertEqual(rc, 0)
+        self.assertTrue(any(t.endswith("-review") for t in calls),
+                        "ревьюер запускается отдельной сессией")
+        self.assertEqual(load_plan(self.plan_path).card("1.1").status, "done")
+
+    def test_reviewer_failure_falls_back_to_owner_wait(self):
+        """Мягкий режим: ревьюер не смог — этап ждёт владельца, не блокируется."""
+        from agents import plan_runner as pr
+        r = pr.PlanRunner(self.cfg, plan_path=self.plan_path, once=True,
+                          retries=0)
+
+        def dispatcher(cfg, tid, report, log, **kw):
+            if tid.endswith("-review"):
+                return 1
+            report.parent.mkdir(parents=True, exist_ok=True)
+            report.write_text("# ОТЧЁТ\n## Что сделано\nработа есть\n"
+                              "## Доказательства\nтесты зелёные\n" + "pad" * 60,
+                              encoding="utf-8")
+            return 0
+
+        with mock.patch.object(pr, "run_subagent", dispatcher), \
+             mock.patch.object(pr.PlanRunner, "_verify", return_value="PASS"), \
+             mock.patch.object(pr.PlanRunner, "_wait_decision",
+                               return_value="approve") as wd:
+            rc = r.run()
+        self.assertEqual(rc, 0)
+        wd.assert_called_once()
 
 
 if __name__ == "__main__":
