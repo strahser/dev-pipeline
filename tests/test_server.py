@@ -840,32 +840,60 @@ class TerminalEndpointTest(unittest.TestCase):
         self.assertEqual(captured["env"].get("PIPELINE_TUI_PROMPT"), "дело")
         self.assertEqual(captured["cwd"], str(self.tmp))
 
-    def test_wezterm_preferred_when_available(self):
-        """Владелец пользуется WezTerm: окно агента открывается в нём."""
+    def test_wezterm_tab_in_running_instance(self):
+        """WezTerm запущен: ВКЛАДКА через `wezterm cli spawn`, без новых окон."""
         captured = {}
 
-        def fake_popen(cmd, cwd=None, env=None, creationflags=0):
+        def fake_run(cmd, capture_output=True, text=True, timeout=0, env=None):
             captured["cmd"] = list(cmd)
-            captured["cwd"] = cwd
             captured["env"] = dict(env or {})
-            return mock.Mock()
+            return mock.Mock(returncode=0)
 
         wt = "C:\\Program Files\\WezTerm\\wezterm.exe"
         with mock.patch.object(app_mod, "load_config", lambda n: self.cfg), \
              mock.patch("shutil.which", lambda name: wt if name == "wezterm" else None), \
-             mock.patch("subprocess.Popen", fake_popen):
+             mock.patch("subprocess.run", fake_run), \
+             mock.patch("subprocess.Popen") as popen_mock:
             r = self.client.post("/api/chat/agents/terminal",
                                  json={"project": "termproj", "role": "executor",
                                        "prompt": "дело"})
         self.assertEqual(r.status_code, 200)
-        self.assertEqual(r.json()["terminal"], "WezTerm")
+        self.assertEqual(r.json()["terminal"], "вкладка WezTerm")
         cmd = captured["cmd"]
-        self.assertEqual(cmd[0], wt)
-        self.assertEqual(cmd[1], "start")
+        self.assertEqual(cmd[:3], [wt, "cli", "spawn"])
         self.assertIn("--cwd", cmd)
-        self.assertIn("tui_cycle.py", " ".join(cmd))
-        self.assertEqual(captured["cwd"], str(self.tmp))
+        joined = " ".join(cmd)
+        self.assertIn("tui_cycle.py", joined)
+        self.assertIn("--project", cmd)
+        # внутри панели cmd /k — панель не закрывается при ошибке агента
+        self.assertIn("cmd", cmd)
+        self.assertIn("/k", cmd)
         self.assertEqual(captured["env"].get("PIPELINE_TUI_PROMPT"), "дело")
+        popen_mock.assert_not_called()
+
+    def test_wezterm_fallback_new_window_when_cli_fails(self):
+        """`cli spawn` не удался (WezTerm не запущен) -> новое окно WezTerm."""
+        popen_calls = []
+
+        def fake_popen(cmd, cwd=None, env=None, creationflags=0):
+            popen_calls.append(list(cmd))
+            return mock.Mock()
+
+        def fake_run_fail(*a, **k):
+            return mock.Mock(returncode=1)
+
+        wt = "C:\\Program Files\\WezTerm\\wezterm.exe"
+        with mock.patch.object(app_mod, "load_config", lambda n: self.cfg), \
+             mock.patch("shutil.which", lambda name: wt if name == "wezterm" else None), \
+             mock.patch("subprocess.run", fake_run_fail), \
+             mock.patch("subprocess.Popen", fake_popen):
+            r = self.client.post("/api/chat/agents/terminal",
+                                 json={"project": "termproj", "role": "executor"})
+        self.assertEqual(r.status_code, 200)
+        self.assertEqual(r.json()["terminal"], "новое окно WezTerm")
+        cmd = popen_calls[-1]
+        self.assertEqual(cmd[:2], [wt, "start"])
+        self.assertIn("--cwd", cmd)
 
     def test_unknown_project_404(self):
         def cfg_err(name):

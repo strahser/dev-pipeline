@@ -1186,31 +1186,45 @@ async def chat_agent_terminal(body: TerminalIn):
         label = f"агент ({body.role}) для {cfg.name}"
         project_out = cfg.name
 
-    wt = shutil.which("wezterm")
-    if wt:
-        cmd = [wt, "start", "--cwd", str(workdir), "--"] + base
-        creationflags = 0
-        where = "WezTerm"
-    elif os.name == "nt":
-        cmd = ["cmd", "/k"] + base
-        creationflags = subprocess.CREATE_NEW_CONSOLE
-        where = "новое окно консоли"
-    else:
-        cmd = list(base)
-        creationflags = 0
-        where = "терминал"
-
     env = dict(os.environ)
     if body.prompt:
         env["PIPELINE_TUI_PROMPT"] = body.prompt
-    subprocess.Popen(cmd, cwd=str(workdir), env=env,
-                     creationflags=creationflags)
+
+    wt = shutil.which("wezterm")
+    # Внутри панели всегда cmd /k: вкладка/окно НЕ закрывается при ошибке —
+    # трейсбек остаётся видимым (ловушка «окно мелькнуло и исчезло»).
+    inner = (["cmd", "/k"] + base) if os.name == "nt" else list(base)
+
+    if wt:
+        # ВКЛАДКА в уже открытом WezTerm владельца (без кучи экземпляров);
+        # нет запущенного WezTerm -> cli spawn падает -> новое окно WezTerm.
+        cli = [wt, "cli", "spawn", "--cwd", str(workdir), "--"] + inner
+        try:
+            r = subprocess.run(cli, capture_output=True, text=True,
+                               timeout=20, env=env)
+            opened_tab = r.returncode == 0
+        except Exception:
+            opened_tab = False
+        if opened_tab:
+            ev_where = "вкладка WezTerm"
+        else:
+            subprocess.Popen([wt, "start", "--cwd", str(workdir), "--"] + inner,
+                             cwd=str(workdir), env=env, creationflags=0)
+            ev_where = "новое окно WezTerm"
+    elif os.name == "nt":
+        subprocess.Popen(inner, cwd=str(workdir), env=env,
+                         creationflags=subprocess.CREATE_NEW_CONSOLE)
+        ev_where = "новое окно консоли"
+    else:
+        subprocess.Popen(base, cwd=str(workdir), env=env)
+        ev_where = "терминал"
+
     ev = store.add_event("agent_terminal_opened", "server", "feed",
                          project=project_out, task="",
-                         payload={"role": body.role, "terminal": where})
+                         payload={"role": body.role, "terminal": ev_where})
     hub.publish(ev)
     return {"ok": True, "project": project_out, "role": body.role,
-            "terminal": where, "message": f"{label} запущен в {where}"}
+            "terminal": ev_where, "message": f"{label} запущен в {ev_where}"}
 
 
 @app.get("/api/chat/history")

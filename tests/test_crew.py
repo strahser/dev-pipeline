@@ -208,12 +208,50 @@ class TuiCycleTest(unittest.TestCase):
         n = tui_cycle.run_cycle(self.cfg, role="executor", runner=runner)
         self.assertEqual(n, 1, "нет handoff — агент решил, что продолжать нечего")
 
-    def test_nonzero_rc_ends_cycle(self):
+    def test_persistent_failure_retries_then_gives_up(self):
+        """Перегрузка провайдера: сбойную порцию ДЁРГАЕМ повторно
+        (restart_max раз), затем цикл завершается."""
+        from agents import tui_cycle
+        calls = []
+
+        def runner(cfg, prompt):
+            calls.append(prompt)
+            return 3
+
+        with mock.patch("time.sleep", lambda s: None):
+            n = tui_cycle.run_cycle(self.cfg, runner=runner,
+                                    log=lambda *a, **k: None)
+        self.assertEqual(n, 0, "успешных порций нет")
+        self.assertEqual(len(calls), self.cfg.restart_max + 1,
+                         f"1 первая + {self.cfg.restart_max} повторов")
+
+    def test_transient_failure_then_success_continues(self):
+        """Одиночный сбой (перегрузка) — порция повторяется с тем же промптом,
+        затем цикл продолжается по handoff."""
         from agents import tui_cycle
         prompts = []
-        runner = self._fake_runner(["раз"], prompts, rc=3)
-        n = tui_cycle.run_cycle(self.cfg, runner=runner)
-        self.assertEqual(n, 1, "падение сессии завершает цикл")
+        calls = {"n": 0}
+
+        def runner(cfg, prompt):
+            calls["n"] += 1
+            prompts.append(prompt)
+            d = cfg.conveyor_dir() / "handoff"
+            d.mkdir(parents=True, exist_ok=True)
+            (d / f"S-{calls['n']}.md").write_text(f"ПОРЦИЯ-{calls['n']}",
+                                                  encoding="utf-8")
+            time.sleep(0.01)
+            return 1 if calls["n"] == 1 else 0   # первый запуск — перегрузка
+
+        with mock.patch("time.sleep", lambda s: None):
+            n = tui_cycle.run_cycle(self.cfg, runner=runner,
+                                    log=lambda *a, **k: None)
+        self.assertEqual(calls["n"], 3, "сбой -> повтор той же порции -> далее")
+        self.assertEqual(n, 2, "успешных порций: повторная первая + вторая")
+        self.assertEqual(prompts[1], prompts[0],
+                         "повтор идёт с тем же промптом (без handoff)")
+        self.assertEqual(prompts[1], prompts[0],
+                         "повтор идёт с тем же промптом (без handoff)")
+        self.assertEqual(n, 2, "успешных порций: повторная первая + вторая")
 
     def test_base_prompt_contains_role_and_user_text(self):
         from agents import tui_cycle

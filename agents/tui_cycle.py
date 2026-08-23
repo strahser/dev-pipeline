@@ -41,6 +41,11 @@ ROLE_STARTERS = {
         "Ты КОНТРОЛЁР проекта {project}: ведёшь план ProjectsPalns, запускаешь "
         "карточки план-раннером, принимаешь вердикты, отвечаешь на вопросы агентов. "
         "Каждую порцию завершай handoff-файлом Tasks\\Конвейер\\handoff\\<метка>.md."),
+    "creator": (
+        "Ты КРЕАТОР интерфейсов проекта {project}: генерируешь идеи и конкретные "
+        "UI-улучшения по референсам, оформляешь их в Tasks\\00_Референсы\\*.md "
+        "(проблема -> предложение -> где в коде применить -> приоритет). Каждую "
+        "порцию завершай handoff-файлом Tasks\\Конвейер\\handoff\\<метка>.md."),
     "reviewer": (
         "Ты НЕЗАВИСИМЫЙ РЕВЬЮЕР проекта {project}: проверяешь выполненную работу "
         "(git diff/log, тесты, соответствие цели), пишешь вердикты; код не правишь. "
@@ -129,12 +134,18 @@ def build_base_prompt(cfg, role: str = "executor", user_prompt: str = "") -> str
 
 
 def newest_handoff(cfg, after_ts: float) -> Path | None:
-    """Новейший handoff-файл, появившийся ПОСЛЕ старта порции."""
+    """Новейший handoff-файл, появившийся ПОСЛЕ старта порции.
+    Сравнение по st_mtime_ns (разрешение времени + тай-брейк по имени),
+    чтобы при быстрых порциях не выбирался файл предыдущей итерации."""
     d = cfg.conveyor_dir() / "handoff"
     if not d.is_dir():
         return None
-    fresh = [p for p in d.glob("*.md") if p.stat().st_mtime >= after_ts]
-    return max(fresh, key=lambda p: p.stat().st_mtime) if fresh else None
+    after_ns = int(after_ts * 1e9)
+    fresh = [p for p in d.glob("*.md")
+             if p.stat().st_mtime_ns >= after_ns]
+    if not fresh:
+        return None
+    return max(fresh, key=lambda p: (p.stat().st_mtime_ns, p.name))
 
 
 def default_runner(cfg, role: str, registry: dict | None = None):
@@ -165,7 +176,7 @@ def _register_server_session(client, cfg, role: str, base_prompt: str):
         s = client.create_session(
             project=cfg.name, task=f"tui:{role}", agent=f"tui-{role}",
             role=role, model="", skill="",
-            instruction={"mode": "tui_cycle", "prompt_head": base_prompt[:300]})
+            instruction={"mode": "tui_cycle", "prompt": base_prompt})
         if not s:
             return "", None
         sid = s.get("id", "")
@@ -230,14 +241,26 @@ def run_cycle(cfg, *, role: str = "executor", user_prompt: str = "",
     limit = int(getattr(cfg, "restart_max", 3)) + 1
     prompt = base
     done = 0
+    fails = 0
     try:
         for i in range(limit):
             started = time.time()
             rc = runner(cfg, prompt)
-            done += 1
             if rc != 0:
-                log(f"[tui] порция {i + 1}: сессия завершилась с rc={rc} — цикл окончен")
+                # Провайдер ИИ периодически перегружен: НЕ умираем, а дёргаем
+                # повтор порции (свежая сессия), пока не исчерпан лимит.
+                fails += 1
+                if fails <= int(getattr(cfg, "restart_max", 3)):
+                    cd = min(120, max(5, int(getattr(
+                        cfg, "restart_cooldown_sec", 30))))
+                    log(f"[tui] порция {i + 1}: rc={rc} (перегрузка провайдера?) "
+                        f"— повтор через {cd} с ({fails}/{limit})")
+                    time.sleep(cd)
+                    continue
+                log(f"[tui] неудачных попыток подряд исчерпано — цикл окончен")
                 break
+            fails = 0
+            done += 1
             h = newest_handoff(cfg, started - 1)
             if h is None:
                 log(f"[tui] порция {i + 1}: handoff нет — агент считает работу "
