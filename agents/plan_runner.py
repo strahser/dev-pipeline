@@ -415,7 +415,7 @@ id: {card.id}
                 ok_report = report.exists() and report.stat().st_size > 200
                 verdict = "FAIL"
                 if ok_report:
-                    verdict = self._verify(card)
+                    verdict = self._verify(card, report_path=report)
 
                 if verdict == "PASS":
                     break

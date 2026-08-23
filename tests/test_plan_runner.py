@@ -172,6 +172,77 @@ class RunnerTest(unittest.TestCase):
         self.assertFalse((self.tmp / "Tasks" / "Конвейер" / "runner.lock").exists(),
                          "лок снят после нормального завершения")
 
+    def test_verdict_uses_current_attempt_report(self):
+        """Карточка 1.1: в Отчётах лежат отчёты двух разных карточек — вердикт
+        строится по отчёту текущей карточки/попытки (PIPELINE_EXPECT_REPORT
+        установлен на время вызова и восстановлен после)."""
+        import os
+        from agents import plan_runner as pr
+        import pipeline.cli as cli_mod
+
+        reports_dir = self.cfg.abs_tasks_dir("reports")
+        foreign = reports_dir / "9.9_Отчёт_другая_карточка.md"
+        foreign.write_text("# ОТЧЁТ ЧУЖОЙ КАРТОЧКИ\n## Что сделано\nне наше\n",
+                           encoding="utf-8")
+
+        seen = {}
+
+        def fake_verify(cfg, args):
+            seen["env_during"] = os.environ.get("PIPELINE_EXPECT_REPORT")
+            exp = Path(seen["env_during"]) if seen["env_during"] else None
+            ok = bool(exp and exp.exists()
+                      and f"карточка:{args.task}" in exp.read_text(encoding="utf-8"))
+            vf = cfg.abs_tasks_dir("reports") / f"{args.task}_Вердикт_контролёра_test.md"
+            vf.write_text(f"Вердикт: **{'PASS' if ok else 'FAIL'}**\n"
+                          f"отчёт: {exp.name if exp else '—'}\n", encoding="utf-8")
+            return 0 if ok else 2
+
+        def fake_run(cfg, tid, report, log, **kw):
+            report.parent.mkdir(parents=True, exist_ok=True)
+            report.write_text(
+                f"# ОТЧЁТ карточка:{tid}\n## Что было не так\n—\n## Что сделано\nправки\n"
+                "## Доказательства\nbuild EXIT 0; тесты зелёные\n" + "pad" * 40 + "\n",
+                encoding="utf-8")
+            seen["attempt_report"] = Path(report)
+            return 0
+
+        r = pr.PlanRunner(self.cfg, plan_path=self.plan_path, once=True, retries=0)
+        with mock.patch.object(pr, "run_subagent", fake_run), \
+             mock.patch.object(cli_mod, "cmd_verify", fake_verify):
+            rc = r.run()
+
+        self.assertEqual(rc, 0)
+        self.assertEqual(load_plan(self.plan_path).card("1.1").status, "done")
+        # env во время вызова указывал ровно на отчёт текущей попытки
+        self.assertEqual(seen.get("env_during"), str(seen["attempt_report"]))
+        # вердикт построен по отчёту текущей карточки, а не чужому (свежему) файлу
+        vtxt = (reports_dir / "1.1_Вердикт_контролёра_test.md").read_text(encoding="utf-8")
+        self.assertIn("**PASS**", vtxt)
+        self.assertIn(seen["attempt_report"].name, vtxt)
+        self.assertNotIn(foreign.name, vtxt)
+        # env восстановлен после вызова
+        self.assertIsNone(os.environ.get("PIPELINE_EXPECT_REPORT"))
+
+    def test_missing_own_report_with_foreign_present_fails(self):
+        """Карточка 1.1: отчёта своей карточки нет (субагент не создал), чужой
+        отчёт другой карточки лежит рядом — вердикт FAIL, PASS невозможен."""
+        from agents import plan_runner as pr
+        reports_dir = self.cfg.abs_tasks_dir("reports")
+        (reports_dir / "9.9_Отчёт_чужой.md").write_text(
+            "# ОТЧЁТ ЧУЖОЙ\n## Что сделано\nвсё отлично\n## Доказательства\nPASS\n",
+            encoding="utf-8")
+
+        card = load_plan(self.plan_path).card("1.1")
+        r = pr.PlanRunner(self.cfg, plan_path=self.plan_path, once=True, retries=0)
+        r._dispatch_md(card)  # постановка есть, своего отчёта нет
+
+        def silent_run(cfg, tid, report, log, **kw):
+            return 0  # rc=0, но файл отчёта не создан
+
+        with mock.patch.object(pr, "run_subagent", silent_run):
+            res = r._verify(card, report_path=reports_dir / "нет_такого_отчёта.md")
+        self.assertEqual(res, "FAIL")
+
 
 if __name__ == "__main__":
     unittest.main(verbosity=2)
