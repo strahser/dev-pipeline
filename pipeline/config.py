@@ -74,6 +74,7 @@ class ProjectConfig:
     runner_retries: int = 2                          # ретраев карточки с логом ошибки
     question_timeout_sec: int = 1200                 # тишина по вопросу -> работа по допущениям
     checkpoint_stages: bool = True                   # пауза после закрытия этапа (summary)
+    checkpoint_remind_sec: int = 600                 # напоминание checkpoint_waiting каждые N сек ожидания
 
     # Служебные настройки
     skip_dirs: list = field(default_factory=lambda: [
@@ -261,6 +262,7 @@ def load_config(project_name: str) -> ProjectConfig:
         runner_retries=int(rn.get("retries", 2)),
         question_timeout_sec=int(rn.get("question_timeout_sec", 1200)),
         checkpoint_stages=bool(rn.get("checkpoint_stages", True)),
+        checkpoint_remind_sec=int(rn.get("checkpoint_remind_sec", 600)),
     )
 
 

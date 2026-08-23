@@ -371,5 +371,48 @@ class CheckpointRetryTest(unittest.TestCase):
                          "событие card_retried_by_owner с нарастающим номером волны")
 
 
+class CheckpointWaitTest(unittest.TestCase):
+    """Карточка 1.4: напоминания checkpoint_waiting при ожидании чекпоинта."""
+
+    def setUp(self):
+        self.tmp = Path(tempfile.mkdtemp(prefix="prunner_wait_"))
+        self.cfg = make_cfg(self.tmp)
+
+    def test_checkpoint_wait_sends_reminders(self):
+        import types
+        from agents import plan_runner as pr
+        card = types.SimpleNamespace(id="1.1")
+        events = []
+        r = pr.PlanRunner(self.cfg, plan_path=None)
+        r._notify = lambda ev, task="", payload=None: \
+            events.append((ev, dict(payload or {})))
+
+        dec_path = self.tmp / "Tasks" / "Конвейер" / "checkpoints" / "1.1.decision.json"
+        t0 = 1000.0
+        clock = {"t": t0}
+
+        def fake_sleep(sec):
+            clock["t"] += sec
+            # решение владельца приходит на 25-й минуте ожидания
+            if clock["t"] - t0 >= 1500 and not dec_path.exists():
+                dec_path.parent.mkdir(parents=True, exist_ok=True)
+                dec_path.write_text(json.dumps({"decision": "approved"}),
+                                    encoding="utf-8")
+
+        fake_time = types.SimpleNamespace(time=lambda: clock["t"], sleep=fake_sleep)
+        with mock.patch.object(pr, "time", fake_time):
+            action = r._wait_decision(card)
+
+        self.assertEqual(action, "approve", "действие строго из decision.json")
+        waiting = [p for (ev, p) in events if ev == "checkpoint_waiting"]
+        self.assertGreaterEqual(len(waiting), 2,
+                                "за 25 минут минимум два напоминания")
+        waited_sec = [p.get("waiting_sec") for p in waiting]
+        self.assertEqual(waited_sec, sorted(waited_sec),
+                         "время ожидания в напоминаниях нарастает")
+        self.assertTrue(all(p.get("waiting_sec") >= 600 for p in waiting),
+                        "напоминания не раньше checkpoint_remind_sec")
+
+
 if __name__ == "__main__":
     unittest.main(verbosity=2)

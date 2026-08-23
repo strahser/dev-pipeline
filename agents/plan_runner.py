@@ -244,10 +244,22 @@ id: {card.id}
                      payload={"reason": reason, "checkpoint": card.id})
 
     def _wait_decision(self, card) -> str:
-        """Ждёт <id>.decision.json; 'approved' | 'retry'."""
+        """Ждёт <id>.decision.json; 'approved' | 'retry'.
+        Каждые cfg.checkpoint_remind_sec секунд ожидания уходит напоминание
+        checkpoint_waiting с временем ожидания. Автопродолжения нет: цикл
+        выходит только по появлению решения владельца."""
         dec = self.cp_dir / f"{card.id}.decision.json"
+        remind_sec = max(1, int(getattr(self.cfg, "checkpoint_remind_sec", 600)))
+        started = time.time()
+        last_remind = started
         while not dec.exists():
             time.sleep(CHECKPOINTS_POLL_SEC)
+            now = time.time()
+            if now - last_remind >= remind_sec:
+                self._notify("checkpoint_waiting", task=card.id,
+                             payload={"waiting_sec": int(now - started),
+                                      "remind_sec": remind_sec})
+                last_remind = now
         try:
             data = json.loads(dec.read_text(encoding="utf-8"))
         except Exception:
