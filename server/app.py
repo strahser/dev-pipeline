@@ -75,6 +75,21 @@ class HeartbeatIn(BaseModel):
     cmd: str = ""
 
 
+# Белый список команд запуска агентов (имя -> argv). Единственный источник argv
+# для рестарта: POST /heartbeat не должен превращать БД в магазин исполняемых
+# команд (любой локальный процесс мог подложить cmd без авторизации).
+AGENT_LAUNCH_COMMANDS: dict[str, list[str]] = {
+    name: [sys.executable or "python", "-X", "utf8", "-m", module]
+    for name, module in {
+        "executor": "agents.executor_client",
+        "plan-runner": "agents.plan_runner",
+        "controller": "agents.agent_watch",
+        "browser": "agents.browser_client",
+        "agent-manager": "agents.agent_manager",
+    }.items()
+}
+
+
 store = Store(DB_PATH)
 hub = SSEHub()
 watchdog = None
@@ -176,7 +191,9 @@ async def ack_message(msg_id: int):
 
 @app.post("/heartbeat")
 async def heartbeat(body: HeartbeatIn):
-    store.heartbeat(body.agent, project=body.project, pid=body.pid, cmd=body.cmd)
+    # cmd сохраняем только для имён из белого списка — остальные игнорируем
+    cmd = body.cmd if body.agent in AGENT_LAUNCH_COMMANDS else ""
+    store.heartbeat(body.agent, project=body.project, pid=body.pid, cmd=cmd)
     return {"ok": True, "agent": body.agent}
 
 
@@ -1079,23 +1096,27 @@ async def chat_agent_kill(name: str):
 
 @app.post("/api/chat/agents/{name}/restart")
 async def chat_agent_restart(name: str):
-    """Перезапустить агента: убить текущий процесс и поднять заново по сохранённой команде."""
-    import shlex
+    """Перезапуск ТОЛЬКО по белому списку AGENT_LAUNCH_COMMANDS: сохранённая
+    команда сравнивается с реестром дословно, исполняется argv из реестра."""
     try:
+        argv = AGENT_LAUNCH_COMMANDS.get(name)
+        if not argv:
+            raise HTTPException(403, f"агент {name} отсутствует в белом списке запуска")
         a = _agent_proc(name)
-        if not a or not a.get("cmd"):
+        saved = ((a or {}).get("cmd") or "").strip()
+        if not saved:
             raise HTTPException(404, f"у агента {name} нет команды запуска (cmd)")
+        canonical = " ".join(argv)
+        if saved != canonical:
+            raise HTTPException(
+                403, f"сохранённая команда {name} не совпадает с белым списком запуска")
         if a.get("pid") is not None:
             _kill_pid(int(a["pid"]))
-        try:
-            cmd = shlex.split(a["cmd"])
-        except ValueError:
-            cmd = a["cmd"].split()
         root = Path(__file__).resolve().parent.parent  # корень dev-pipeline
-        _run_detached(cmd, cwd=str(root))
+        _run_detached(list(argv), cwd=str(root))
         store.add_event("agent_restarted", "dashboard", "feed",
-                        payload={"agent": name, "cmd": a["cmd"]})
-        return {"ok": True, "agent": name, "cmd": a["cmd"]}
+                        payload={"agent": name, "cmd": canonical})
+        return {"ok": True, "agent": name, "cmd": canonical}
     except HTTPException:
         raise
     except Exception as e:

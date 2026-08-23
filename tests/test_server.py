@@ -13,6 +13,7 @@ import threading
 import time
 import unittest
 from pathlib import Path
+from unittest import mock
 
 sys.path.insert(0, str(Path(__file__).resolve().parent.parent))
 
@@ -202,14 +203,53 @@ class TestAppAPI(unittest.TestCase):
         r = self.client.post("/api/chat/agents/executor/restart")
         self.assertEqual(r.status_code, 404)
 
-    def test_agent_restart_with_cmd(self):
-        self.client.post("/heartbeat", json={
-            "agent": "executor", "pid": 12345,
-            "cmd": "python -c \"pass\""})
-        r = self.client.post("/api/chat/agents/executor/restart")
+    def test_agent_restart_whitelisted_exact_cmd(self):
+        """Карточка 2.1: дословное совпадение с реестром — рестарт разрешён,
+        argv строится из AGENT_LAUNCH_COMMANDS, а не из БД."""
+        canonical = " ".join(app_mod.AGENT_LAUNCH_COMMANDS["executor"])
+        launched = []
+        with mock.patch.object(app_mod, "_run_detached",
+                               lambda cmd, cwd: launched.append(list(cmd))):
+            self.client.post("/heartbeat", json={
+                "agent": "executor", "pid": 12345, "cmd": canonical})
+            r = self.client.post("/api/chat/agents/executor/restart")
         self.assertEqual(r.status_code, 200)
         self.assertTrue(r.json()["ok"])
-        self.assertIn("python", r.json()["cmd"])
+        self.assertEqual(launched, [list(app_mod.AGENT_LAUNCH_COMMANDS["executor"])],
+                         "исполняется ровно argv из реестра")
+
+    def test_agent_restart_rejects_foreign_command(self):
+        """Карточка 2.1: heartbeat с посторонней командой + restart -> 403,
+        команда не исполняется (инцидент: произвольный cmd из БД)."""
+        launched = []
+        with mock.patch.object(app_mod, "_run_detached",
+                               lambda cmd, cwd: launched.append(cmd)):
+            self.client.post("/heartbeat", json={
+                "agent": "executor", "pid": 12345,
+                "cmd": "python -c \"import os; os.system('calc')\""})
+            r = self.client.post("/api/chat/agents/executor/restart")
+            r_unknown = self.client.post("/api/chat/agents/evil/restart")
+        self.assertEqual(r.status_code, 403,
+                         "команда вне реестра отклоняется дословным сравнением")
+        self.assertEqual(r_unknown.status_code, 403,
+                         "имя вне белого списка не рестартуется")
+        self.assertEqual(launched, [], "ни одна посторонняя команда не исполнена")
+
+    def test_heartbeat_ignores_cmd_for_unknown_agents(self):
+        """Карточка 2.1: POST /heartbeat игнорирует cmd имён вне белого списка."""
+        self.client.post("/heartbeat", json={
+            "agent": "evil", "pid": 7, "cmd": "notepad"})
+        agents = {a["name"]: a for a in
+                  self.client.get("/api/chat/agents").json()}
+        self.assertFalse(agents["evil"]["restartable"],
+                         "cmd неизвестного агента не сохраняется в БД")
+        known_cmd = " ".join(app_mod.AGENT_LAUNCH_COMMANDS["executor"])
+        self.client.post("/heartbeat", json={
+            "agent": "executor", "pid": 8, "cmd": known_cmd})
+        agents = {a["name"]: a for a in
+                  self.client.get("/api/chat/agents").json()}
+        self.assertTrue(agents["executor"]["restartable"],
+                        "для известного имени cmd сохраняется как раньше")
 
 
     def test_dashboard_index(self):
