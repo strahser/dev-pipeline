@@ -60,7 +60,9 @@ def _opencode_cmd() -> str:
 
 OPENCODE = _opencode_cmd()
 DEFAULT_MODEL = "opencode-go/deepseek-v4-flash"  # стабильная модель (2x usage); flash-free глючит на длинных промптах
-SUBAGENT_TIMEOUT = 1800  # анти-зависание: субагент без результата > 30 мин убивается
+# Анти-зависание: субагент без результата > N с убивается. Настраивается env
+# SUBAGENT_TIMEOUT_SEC (раннер тяжёлых карточек поднимает до 3600 — U2.1 2026-08-23).
+SUBAGENT_TIMEOUT = int(os.environ.get("SUBAGENT_TIMEOUT_SEC", "1800"))
 SERVER_URL = "http://127.0.0.1:8787"
 DEV_PIPELINE_DIR = Path(__file__).resolve().parent.parent  # корень dev-pipeline (не хардкод E:\)
 
@@ -364,23 +366,24 @@ def run_subagent_legacy(cfg, task_id: str, report_path: Path, log_path: Path,
     try:
         proc = subprocess.Popen(cmd, cwd=str(cfg.root),
                                 stdout=subprocess.PIPE, stderr=subprocess.PIPE,
-                                text=True, encoding="utf-8", errors="replace",
                                 creationflags=no_window_flags())
         # PID-файл: строка 1 — PID, строка 2 — время старта (unix).
         # Сторож (agent_watch) по нему находит сирот: менеджер убит/завис,
         # а субагент продолжает висеть.
         pid_file.write_text(f"{proc.pid}\n{int(time.time())}", encoding="utf-8")
         try:
-            out, err = proc.communicate(timeout=SUBAGENT_TIMEOUT)
+            out_raw, err_raw = proc.communicate(timeout=SUBAGENT_TIMEOUT)
             rc = proc.returncode
         except subprocess.TimeoutExpired:
             # зависший субагент: убить всё дерево (без /T остаётся node-сирота)
             _kill_tree(proc.pid)
             try:
-                out, err = proc.communicate(timeout=10)
+                out_raw, err_raw = proc.communicate(timeout=10)
             except subprocess.TimeoutExpired:
-                out, err = "", ""
+                out_raw, err_raw = b"", b""
             rc = 124
+        from pipeline.proc import smart_decode
+        out, err = smart_decode(out_raw or b""), smart_decode(err_raw or b"")
         log_path.write_text((out or "") + (err or ""), encoding="utf-8")
         return rc
     except Exception as e:

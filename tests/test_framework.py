@@ -30,6 +30,38 @@ class TestConfig(unittest.TestCase):
         self.assertIn("heatlossrevit2", list_projects())
 
 
+class TestSmartDecode(unittest.TestCase):
+    """Карточка 3.2: вывод дочерних процессов без кракозябр (utf-8/OEM/ANSI)."""
+
+    def test_cp866_cyrillic(self):
+        from pipeline.proc import smart_decode
+        raw = "Заголовок отчёта: rc=1; ошибка сборки".encode("cp866")
+        out = smart_decode(raw)
+        self.assertIn("Заголовок", out)
+        self.assertIn("ошибка сборки", out)
+        self.assertNotIn("\ufffd", out)
+
+    def test_valid_utf8_untouched(self):
+        from pipeline.proc import smart_decode
+        raw = "привёт ✅ utf-8".encode("utf-8")
+        self.assertEqual(smart_decode(raw), "привёт ✅ utf-8")
+
+    def test_cp1251_fallback(self):
+        from pipeline.proc import smart_decode
+        raw = "Ошибка пути D:\\Проекты".encode("cp1251")
+        self.assertIn("Ошибка", smart_decode(raw))
+
+    def test_garbage_no_exception(self):
+        from pipeline.proc import smart_decode
+        out = smart_decode(b"\xff\xfe\x00\x81")
+        self.assertIsInstance(out, str)
+
+    def test_empty_and_str_passthrough(self):
+        from pipeline.proc import smart_decode
+        self.assertEqual(smart_decode(b""), "")
+        self.assertEqual(smart_decode("уже строка"), "уже строка")
+
+
 class TestModels(unittest.TestCase):
     def test_frontmatter(self):
         text = "---\nid: A-99\nстатус: open\nприоритет: высокий\n---\n# Т\nТело"

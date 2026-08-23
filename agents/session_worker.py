@@ -213,24 +213,27 @@ def run_session(client: Client, sid: str, cwd: str) -> int:
     try:
         proc = subprocess.Popen(cmd, cwd=cwd,
                                 stdout=subprocess.PIPE, stderr=subprocess.PIPE,
-                                text=True, encoding="utf-8", errors="replace",
                                 creationflags=no_window_flags())
         try:
-            out, err = proc.communicate(timeout=SUBAGENT_TIMEOUT)
+            out_raw, err_raw = proc.communicate(timeout=SUBAGENT_TIMEOUT)
             rc = proc.returncode
         except subprocess.TimeoutExpired:
             _kill_tree(proc.pid)
             try:
-                out, err = proc.communicate(timeout=10)
+                out_raw, err_raw = proc.communicate(timeout=10)
             except subprocess.TimeoutExpired:
-                out, err = "", ""
+                out_raw, err_raw = b"", b""
             rc = 124
     except Exception as e:
-        out, err = "", f"ОШИБКА ЗАПУСКА opencode: {e}"
+        out_raw, err_raw = b"", ("ОШИБКА ЗАПУСКА opencode: %s" % e).encode("utf-8")
         rc = 3
     finally:
         stop_hb.set()
         sse_stop.set()
+
+    # Карточка 3.2: дети пишут в utf-8/OEM/ANSI — декодируем без кракозябр.
+    from pipeline.proc import smart_decode
+    out, err = smart_decode(out_raw or b""), smart_decode(err_raw or b"")
 
     if log_path:
         try:
