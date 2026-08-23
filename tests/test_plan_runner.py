@@ -242,6 +242,45 @@ class RunnerTest(unittest.TestCase):
                                                "перехватывается")
         r._lock_release()
 
+    def test_dispatch_md_contains_exact_report_path(self):
+        """Хотфикс U1.2: постановка называет точный путь отчёта."""
+        from agents import plan_runner as pr
+        r = pr.PlanRunner(self.cfg, plan_path=self.plan_path)
+        card = load_plan(self.plan_path).card("1.1")
+        exact = self.cfg.abs_tasks_dir("reports") / "1.1_Отчёт_2026-08-23_101010.md"
+        md = r._dispatch_md(card, report=exact)
+        self.assertIn(str(exact), md.read_text(encoding="utf-8"))
+
+    def test_report_fallback_accepts_fresh_card_report(self):
+        """Инцидент U1.2: отчёт субагента без метки времени не должен
+        сжигать попытки — свежий отчёт карточки принимается с фолбэком."""
+        from agents import plan_runner as pr
+        r = pr.PlanRunner(self.cfg, plan_path=self.plan_path, once=True, retries=1)
+        reports_dir = self.cfg.abs_tasks_dir("reports")
+        seen = {}
+
+        def fake_run(cfg, tid, report, log, **kw):
+            p = reports_dir / f"{tid}_Отчёт_2026-08-23.md"  # без ЧЧММСС
+            p.parent.mkdir(parents=True, exist_ok=True)
+            p.write_text("# ОТЧЁТ\n## Что сделано\nработа есть\n"
+                         "## Доказательства\nтесты 78/78\n" + "pad" * 40,
+                         encoding="utf-8")
+            return 0
+
+        def spy_verify(runner_self, card, report_path=None):
+            seen["report"] = Path(report_path) if report_path else None
+            return "PASS"
+
+        with mock.patch.object(pr, "run_subagent", fake_run), \
+             mock.patch.object(pr.PlanRunner, "_verify", spy_verify):
+            rc = r.run()
+
+        self.assertEqual(rc, 0, "работа не должна сгорать из-за имени файла")
+        self.assertEqual(load_plan(self.plan_path).card("1.1").status, "done")
+        self.assertIsNotNone(seen["report"])
+        self.assertEqual(seen["report"].name, "1.1_Отчёт_2026-08-23.md",
+                         "вердикт строится по фактическому отчёту")
+
     def test_verdict_uses_current_attempt_report(self):
         """Карточка 1.1: в Отчётах лежат отчёты двух разных карточек — вердикт
         строится по отчёту текущей карточки/попытки (PIPELINE_EXPECT_REPORT
@@ -372,36 +411,38 @@ class CheckpointRetryTest(unittest.TestCase):
 
 
 class CheckpointWaitTest(unittest.TestCase):
-    """Карточка 1.4: напоминания checkpoint_waiting при ожидании чекпоинта."""
+    """Карточки 1.4/6.1: напоминания checkpoint_waiting при ожидании чекпоинта."""
 
     def setUp(self):
         self.tmp = Path(tempfile.mkdtemp(prefix="prunner_wait_"))
         self.cfg = make_cfg(self.tmp)
 
     def test_checkpoint_wait_sends_reminders(self):
-        import types
-        from agents import plan_runner as pr
-        card = types.SimpleNamespace(id="1.1")
+        from agents import checkpoint as cp
         events = []
-        r = pr.PlanRunner(self.cfg, plan_path=None)
-        r._notify = lambda ev, task="", payload=None: \
-            events.append((ev, dict(payload or {})))
-
-        dec_path = self.tmp / "Tasks" / "Конвейер" / "checkpoints" / "1.1.decision.json"
+        dec_path = cp.cp_dir(self.cfg) / "1.1.decision.json"
         t0 = 1000.0
-        clock = {"t": t0}
 
-        def fake_sleep(sec):
-            clock["t"] += sec
-            # решение владельца приходит на 25-й минуте ожидания
-            if clock["t"] - t0 >= 1500 and not dec_path.exists():
-                dec_path.parent.mkdir(parents=True, exist_ok=True)
-                dec_path.write_text(json.dumps({"decision": "approved"}),
-                                    encoding="utf-8")
+        class FakeClock:
+            def __init__(self):
+                self.t = t0
 
-        fake_time = types.SimpleNamespace(time=lambda: clock["t"], sleep=fake_sleep)
-        with mock.patch.object(pr, "time", fake_time):
-            action = r._wait_decision(card)
+            def time(self):
+                return self.t
+
+            def sleep(self, sec):
+                self.t += sec
+                # решение владельца приходит на 25-й минуте ожидания
+                if self.t - t0 >= 1500 and not dec_path.exists():
+                    dec_path.parent.mkdir(parents=True, exist_ok=True)
+                    dec_path.write_text(json.dumps({"decision": "approved"}),
+                                        encoding="utf-8")
+
+        clock = FakeClock()
+        action = cp.wait_decision(self.cfg, "1.1", poll_sec=15, remind_sec=600,
+                                  clock=clock,
+                                  notify=lambda ev, task="", payload=None:
+                                  events.append((ev, dict(payload or {}))))
 
         self.assertEqual(action, "approve", "действие строго из decision.json")
         waiting = [p for (ev, p) in events if ev == "checkpoint_waiting"]

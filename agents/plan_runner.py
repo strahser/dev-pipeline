@@ -94,6 +94,12 @@ C1. Отчёт ПО-РУССКИ в {report}: секции «Что было н�
 C2. Коммит: git add -A && git commit -m "plan/{task_id}: <суть>".
 
 Правила:
+- Пауза должна быть видимой: вопрос — файл Tasks\\Вопросы\\{task_id}_*.md;
+  ожидание решения по карточке — agents\\checkpoint.py create/wait (панель
+  «❓ Вопросы · ⏸ Чекпоинты» видит это по файлам, не по чату).
+- Оформил карточку для ДРУГОГО агента — сам доставь её адресату:
+  agents\\checkpoint.py handoff <project> {task_id} --to <agent> --text "...";
+  владелец не курьер.
 - Временные файлы — в Tasks\\Конвейер\\logs\\ проекта (НЕ в %TEMP%).
 - Не трогай файлы вне задачи; не создавай субагентов.
 - ФАЙЛ ОТЧЁТА {report} ОБЯЗАТЕЛЕН: не завершай сессию без него.
@@ -172,7 +178,7 @@ class PlanRunner:
 
     # --- постановка карточки -------------------------------------------------
 
-    def _dispatch_md(self, card) -> Path:
+    def _dispatch_md(self, card, report: Path | None = None) -> Path:
         """MD-постановка карточки в Активные (переиспользуем существующую)."""
         active = self.cfg.abs_tasks_dir("active")
         active.mkdir(parents=True, exist_ok=True)
@@ -201,7 +207,10 @@ id: {card.id}
 - Не создавать субагентов; статус done ставит контролёр (план-раннер).
 
 ## Результат (куда положить артефакты)
-Отчёт — Tasks\\Отчёты\\{card.id}_Отчёт_<дата>.md; коммит plan/{card.id}.
+Отчёт — строго по точному пути из промпта (имя с меткой времени ЧЧММСС):
+{report if report else 'Tasks\\Отчёты\\' + card.id + '_Отчёт_<дата>_<ЧЧММСС>.md'}.
+Запись под другим именем = верификатор не найдёт отчёт и попытка сгорит.
+Коммит plan/{card.id}.
 """
         dst.write_text(content, encoding="utf-8")
         return dst
@@ -234,42 +243,16 @@ id: {card.id}
     # --- чекпоинты ------------------------------------------------------------
 
     def _checkpoint_pending(self, card, reason: str):
-        self.cp_dir.mkdir(parents=True, exist_ok=True)
-        pend = self.cp_dir / f"{card.id}.pending.json"
-        pend.write_text(json.dumps({
-            "card": card.id, "title": card.title, "reason": reason,
-            "created": _now_ts(),
-        }, ensure_ascii=False, indent=2), encoding="utf-8")
-        self._notify("checkpoint_pending", task=card.id,
-                     payload={"reason": reason, "checkpoint": card.id})
+        from agents.checkpoint import create_pending
+        create_pending(self.cfg, card.id, reason, title=card.title,
+                       client=self.client, notify=self._notify)
 
     def _wait_decision(self, card) -> str:
-        """Ждёт <id>.decision.json; 'approved' | 'retry'.
-        Каждые cfg.checkpoint_remind_sec секунд ожидания уходит напоминание
-        checkpoint_waiting с временем ожидания. Автопродолжения нет: цикл
-        выходит только по появлению решения владельца."""
-        dec = self.cp_dir / f"{card.id}.decision.json"
-        remind_sec = max(1, int(getattr(self.cfg, "checkpoint_remind_sec", 600)))
-        started = time.time()
-        last_remind = started
-        while not dec.exists():
-            time.sleep(CHECKPOINTS_POLL_SEC)
-            now = time.time()
-            if now - last_remind >= remind_sec:
-                self._notify("checkpoint_waiting", task=card.id,
-                             payload={"waiting_sec": int(now - started),
-                                      "remind_sec": remind_sec})
-                last_remind = now
-        try:
-            data = json.loads(dec.read_text(encoding="utf-8"))
-        except Exception:
-            data = {}
-        action = "retry" if data.get("decision") == "retry" else "approve"
-        comment = data.get("comment", "")
-        dec.unlink(missing_ok=True)
-        self._notify("checkpoint_decided", task=card.id,
-                     payload={"action": action, "comment": comment[:200]})
-        return action
+        """Ждёт <id>.decision.json; 'approve' | 'retry' (общий протокол пауз)."""
+        from agents.checkpoint import wait_decision as _wait
+        return _wait(self.cfg, card.id, poll_sec=CHECKPOINTS_POLL_SEC,
+                     remind_sec=int(getattr(self.cfg, "checkpoint_remind_sec", 600)),
+                     client=self.client, notify=self._notify)
 
     def _stage_complete(self, plan, card) -> bool:
         """Карточка закрыла весь свой этап? (для числовых СДР: 3.5 -> этап 3)."""
@@ -408,12 +391,12 @@ id: {card.id}
                           f"(таймаут вопроса {self.cfg.question_timeout_sec} c)")
                     return 0
 
-                md = self._dispatch_md(card)
                 # Уникальное имя отчёта: иначе вчерашний/приёмочный отчёт с тем же
                 # именем «1.4_Отчёт_<дата>.md» маскирует отсутствие работы субагента.
                 import time as _t
                 report = self.cfg.abs_tasks_dir("reports") / \
                     f"{card.id}_Отчёт_{_today()}_{_t.strftime('%H%M%S')}.md"
+                md = self._dispatch_md(card, report=report)
                 log = self.cfg.conveyor_dir() / "logs" / f"{card.id}_run.log"
 
                 extra_error = f"\n\nХВОСТ ОШИБКИ ПРОШЛОЙ ПОПЫТКИ:\n{self._error_tail(card)}\n" \
@@ -424,7 +407,11 @@ id: {card.id}
                           .replace("{card_text}", render_card(card) + extra_error)
                           .replace("{dp}", dp_dir)
                           .replace("{qto_min}", str(max(1, qto // 60)))
-                          .replace("{qto}", str(qto)))
+                          .replace("{qto}", str(qto))
+                          .replace("{project}", self.cfg.name)
+                          .replace("{task_file}", str(md))
+                          .replace("{report}", str(report))
+                          .replace("{task_id}", card.id))
                 # Project Brief (Уровень 1): авто-дайджест в промпт карточки
                 brief_block = ""
                 try:
@@ -448,6 +435,19 @@ id: {card.id}
                                   client=self.client, prompt_override=prompt)
 
                 ok_report = report.exists() and report.stat().st_size > 200
+                if not ok_report:
+                    # Фолбэк: субагент мог записать отчёт без метки времени в имени
+                    # (инциденты U1.1/U1.2 2026-08-23 — попытки сгорали без единого
+                    # вердикта). Свежий (<12 ч) отчёт ЭТОЙ карточки принимается —
+                    # та же логика, что у cmd_verify при отсутствии ожидаемого файла.
+                    cand = [Path(p) for p in glob.glob(
+                        str(self.cfg.abs_tasks_dir("reports") / f"{card.id}_Отчёт_*.md"))]
+                    fresh = [p for p in cand if time.time() - p.stat().st_mtime < 12 * 3600]
+                    if fresh and fresh[-1].stat().st_size > 200:
+                        print(f"[runner] {card.id}: отчёта по точному пути нет — "
+                              f"принят свежий отчёт карточки: {fresh[-1].name}")
+                        report = fresh[-1]
+                        ok_report = True
                 verdict = "FAIL"
                 if ok_report:
                     verdict = self._verify(card, report_path=report)
