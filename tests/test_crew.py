@@ -8,6 +8,7 @@ from __future__ import annotations
 import json
 import sys
 import tempfile
+import time
 import unittest
 from pathlib import Path
 
@@ -158,6 +159,67 @@ class WorkerHandoffTest(unittest.TestCase):
             self.assertIn(sec, txt)
         self.assertIn("U1.2", txt)
         self.assertIn("boom", txt)
+
+
+class TuiCycleTest(unittest.TestCase):
+    """Карточка 2.1: автономный терминал — цикл порций, каждая следующая
+    сессия получает свежий контекст + handoff предыдущей (/new-эквивалент)."""
+
+    def setUp(self):
+        self.tmp = Path(tempfile.mkdtemp(prefix="pcrew_tui_"))
+        self.cfg = make_cfg(self.tmp)
+
+    @staticmethod
+    def _fake_runner(handoff_markers, prompts, rc=0):
+        state = {"n": 0}
+
+        def _run(cfg, prompt):
+            state["n"] += 1
+            prompts.append(prompt)
+            if len(handoff_markers) >= state["n"]:
+                d = cfg.conveyor_dir() / "handoff"
+                d.mkdir(parents=True, exist_ok=True)
+                (d / f"S-{state['n']}.md").write_text(
+                    f"ПОРЦИЯ-{handoff_markers[state['n'] - 1]}", encoding="utf-8")
+            time.sleep(0.01)   # mtime handoff строго больше старта итерации
+            return rc
+        return _run
+
+    def test_cycle_feeds_handforward_and_stops_on_limit(self):
+        from agents import tui_cycle
+        prompts = []
+        # порции 1 и 2 пишут handoff, порция 3 — нет; лимит restart_max+1 = 3
+        runner = self._fake_runner(["один", "два"], prompts)
+        n = tui_cycle.run_cycle(self.cfg, role="executor", user_prompt="ДЕЛО-X",
+                                runner=runner)
+        self.assertEqual(n, 3, f"лимит {self.cfg.restart_max + 1} порций")
+        self.assertEqual(len(prompts), 3)
+        self.assertIn("ДЕЛО-X", prompts[0])
+        self.assertIn("ПОРЦИЯ-один", prompts[1],
+                      "вторая сессия получает handoff первой")
+        self.assertIn("ПОРЦИЯ-два", prompts[2],
+                      "третья сессия получает handoff второй")
+
+    def test_cycle_stops_after_first_portion_without_handoff(self):
+        from agents import tui_cycle
+        prompts = []
+        runner = self._fake_runner([], prompts)
+        n = tui_cycle.run_cycle(self.cfg, role="executor", runner=runner)
+        self.assertEqual(n, 1, "нет handoff — агент решил, что продолжать нечего")
+
+    def test_nonzero_rc_ends_cycle(self):
+        from agents import tui_cycle
+        prompts = []
+        runner = self._fake_runner(["раз"], prompts, rc=3)
+        n = tui_cycle.run_cycle(self.cfg, runner=runner)
+        self.assertEqual(n, 1, "падение сессии завершает цикл")
+
+    def test_base_prompt_contains_role_and_user_text(self):
+        from agents import tui_cycle
+        p = tui_cycle.build_base_prompt(self.cfg, "executor", "почини фильтр")
+        self.assertIn("ИСПОЛНИТЕЛ", p)
+        self.assertIn("proj", p)
+        self.assertIn("почини фильтр", p)
 
 
 if __name__ == "__main__":

@@ -491,6 +491,7 @@ class TestAppAPI(unittest.TestCase):
                                                   "task": "сделай X"})
         self.assertIn("сделай X", r.json()["instruction"]["prompt"])
 
+
     def test_request_create_list_dispatch(self):
         """Сырое задание: БД + файл в Tasks\\Входящие + git-коммит + dispatch."""
         import tempfile, shutil
@@ -704,3 +705,146 @@ class TestWatchdog(unittest.TestCase):
 
 if __name__ == "__main__":
     unittest.main(verbosity=2)
+
+
+class AgentSpawnTest(unittest.TestCase):
+    """Карточка 1.2: POST /api/agents поднимает живой session_worker
+    (права write из crew-профиля проекта, cwd = корень проекта)."""
+
+    @classmethod
+    def setUpClass(cls):
+        from fastapi.testclient import TestClient
+        cls.client = TestClient(app_mod.app)
+
+    def setUp(self):
+        for t in ("events", "messages", "agents", "sessions"):
+            app_mod.store._conn.execute(f"DELETE FROM {t}")
+        app_mod.store._conn.commit()
+        self.tmp = Path(tempfile.mkdtemp(prefix="spawn_"))
+        (self.tmp / "Tasks").mkdir(parents=True, exist_ok=True)
+
+    def _fake_cfg(self):
+        class FakeCfg:
+            name = "spawnproj"
+            root = self.tmp
+            crew_permissions = "write"
+        return FakeCfg()
+
+    def test_spawn_worker_and_write_permissions(self):
+        spawned = []
+        with mock.patch.object(app_mod, "_run_detached",
+                               lambda cmd, cwd: spawned.append((cmd, cwd))), \
+             mock.patch.object(app_mod, "load_config", lambda n: self._fake_cfg()):
+            r = self.client.post("/api/agents", json={"role": "controller",
+                                                      "project": "spawnproj"})
+        self.assertEqual(r.status_code, 200)
+        s = r.json()
+        self.assertEqual(len(spawned), 1, "воркер должен быть запущен один раз")
+        cmd, cwd = spawned[0]
+        self.assertIn("session_worker.py", " ".join(cmd))
+        self.assertIn("--session", cmd)
+        self.assertIn(s["id"], cmd)
+        self.assertIn("--project", cmd)
+        self.assertEqual(cwd, str(self.tmp))
+        perm = self.tmp / ".opencode" / "permissions.json"
+        self.assertTrue(perm.exists(), "шаблон прав write развёрнут при первом спавне")
+        self.assertIn('"allow"', perm.read_text(encoding="utf-8"))
+
+    def test_existing_permissions_not_touched(self):
+        d = self.tmp / ".opencode"
+        d.mkdir(parents=True, exist_ok=True)
+        (d / "permissions.json").write_text('{"permissions": {"edit": "deny"}}',
+                                            encoding="utf-8")
+        with mock.patch.object(app_mod, "_run_detached", lambda cmd, cwd: None), \
+             mock.patch.object(app_mod, "load_config", lambda n: self._fake_cfg()):
+            r = self.client.post("/api/agents", json={"role": "executor",
+                                                      "project": "spawnproj"})
+        self.assertEqual(r.status_code, 200)
+        self.assertEqual((d / "permissions.json").read_text(encoding="utf-8"),
+                         '{"permissions": {"edit": "deny"}}',
+                         "существующий профиль прав не перезаписывается")
+
+    def test_spawn_failure_is_soft(self):
+        def boom(cmd, cwd):
+            raise RuntimeError("нет процесса")
+        with mock.patch.object(app_mod, "_run_detached", boom), \
+             mock.patch.object(app_mod, "load_config", lambda n: self._fake_cfg()):
+            r = self.client.post("/api/agents", json={"role": "controller",
+                                                      "project": "spawnproj"})
+        self.assertEqual(r.status_code == 200, True,
+                         "ошибка спавна не ломает создание сессии")
+        evs = [e for e in app_mod.store.recent_events(limit=10)
+               if e["type"] == "session_created"]
+        self.assertTrue(evs, "событие session_created опубликовано")
+        self.assertIn("spawn", json.dumps(evs[-1].get("payload", {}),
+                                         ensure_ascii=False).lower())
+
+    def test_unknown_project_creates_without_spawn(self):
+        spawned = []
+
+        def cfg_err(name):
+            raise app_mod.ConfigError("не найден")
+
+        with mock.patch.object(app_mod, "_run_detached",
+                               lambda cmd, cwd: spawned.append(cmd)), \
+             mock.patch.object(app_mod, "load_config", cfg_err):
+            r = self.client.post("/api/agents", json={"role": "executor",
+                                                      "project": "нет_такого"})
+        self.assertEqual(r.status_code, 200)
+        self.assertEqual(spawned, [], "без конфига проекта спавна нет")
+
+
+class TerminalEndpointTest(unittest.TestCase):
+    """Карточка 2.1: POST /api/chat/agents/terminal открывает видимый
+    терминал с agents/tui_cycle.py (промпт через env PIPELINE_TUI_PROMPT)."""
+
+    @classmethod
+    def setUpClass(cls):
+        from fastapi.testclient import TestClient
+        cls.client = TestClient(app_mod.app)
+
+    def setUp(self):
+        self.tmp = Path(tempfile.mkdtemp(prefix="term_"))
+        (self.tmp / "Tasks").mkdir(parents=True, exist_ok=True)
+        captured_root = self.tmp
+
+        class FakeCfg:
+            name = "termproj"
+            root = captured_root
+            crew_permissions = "write"
+        self.cfg = FakeCfg
+
+    def test_opens_console_with_tui_cycle(self):
+        captured = {}
+
+        def fake_popen(cmd, cwd=None, env=None, creationflags=0):
+            captured["cmd"] = list(cmd)
+            captured["cwd"] = cwd
+            captured["env"] = dict(env or {})
+            return mock.Mock()
+
+        with mock.patch.object(app_mod, "load_config", lambda n: self.cfg), \
+             mock.patch("subprocess.Popen", fake_popen):
+            r = self.client.post("/api/chat/agents/terminal",
+                                 json={"project": "termproj", "role": "executor",
+                                       "prompt": "дело"})
+        self.assertEqual(r.status_code, 200)
+        data = r.json()
+        self.assertTrue(data["ok"])
+        joined = " ".join(captured["cmd"])
+        self.assertIn("tui_cycle.py", joined)
+        self.assertIn("--project", captured["cmd"])
+        self.assertIn("termproj", captured["cmd"])
+        self.assertIn("--role", captured["cmd"])
+        self.assertEqual(captured["env"].get("PIPELINE_TUI_PROMPT"), "дело")
+        self.assertEqual(captured["cwd"], str(self.tmp))
+
+    def test_unknown_project_404(self):
+        def cfg_err(name):
+            raise app_mod.ConfigError("не найден")
+
+        with mock.patch.object(app_mod, "load_config", cfg_err), \
+             mock.patch("subprocess.Popen", lambda *a, **k: mock.Mock()):
+            r = self.client.post("/api/chat/agents/terminal",
+                                 json={"project": "нет_такого"})
+        self.assertEqual(r.status_code, 404)

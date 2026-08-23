@@ -1121,6 +1121,52 @@ async def chat_agent_restart(name: str):
         return JSONResponse(status_code=500, content={"ok": False, "error": str(e)})
 
 
+class TerminalIn(BaseModel):
+    project: str
+    role: str = "executor"
+    prompt: str = ""
+
+
+@app.post("/api/chat/agents/terminal")
+async def chat_agent_terminal(body: TerminalIn):
+    """Открыть ВИДИМЫЙ терминал с автономным агентом (карточка 2.1).
+
+    В окне крутится agents/tui_cycle.py: порция = свежая сессия opencode TUI,
+    handoff предыдущей подставляется в следующую (/new-эквивалент). Промпт —
+    через env PIPELINE_TUI_PROMPT (cmd /k ломается на кавычках аргументов)."""
+    try:
+        cfg = load_config(body.project)
+    except ConfigError as e:
+        raise HTTPException(404, f"проект не найден: {e}")
+    from pipeline.crew import ensure_permissions
+    try:
+        ensure_permissions(cfg)
+    except Exception:
+        pass
+    script = Path(__file__).resolve().parent.parent / "agents" / "tui_cycle.py"
+    py = sys.executable or "python"
+    if os.name == "nt":
+        import subprocess
+        cmd = ["cmd", "/k", py, "-X", "utf8", str(script),
+               "--project", body.project, "--role", body.role]
+        creationflags = subprocess.CREATE_NEW_CONSOLE
+    else:
+        import subprocess
+        cmd = [py, "-X", "utf8", str(script),
+               "--project", body.project, "--role", body.role]
+        creationflags = 0
+    env = dict(os.environ)
+    if body.prompt:
+        env["PIPELINE_TUI_PROMPT"] = body.prompt
+    subprocess.Popen(cmd, cwd=str(cfg.root), env=env,
+                     creationflags=creationflags)
+    ev = store.add_event("agent_terminal_opened", "server", "feed",
+                         project=cfg.name, task="", payload={"role": body.role})
+    hub.publish(ev)
+    return {"ok": True, "project": cfg.name, "role": body.role,
+            "message": f"терминал агента ({body.role}) открыт для {cfg.name}"}
+
+
 @app.get("/api/chat/history")
 async def chat_history(agent: str, limit: int = 200):
     """Диалог dashboard <-> агент (сообщения в обе стороны)."""
@@ -1294,9 +1340,29 @@ async def agent_create(body: AgentIn):
         role=role, model=body.model or "", skill=skill,
         instruction={"prompt": prompt, "model": body.model or "", "skill": skill,
                      "role": role, "task": body.task or ""})
+
+    # Карточка 1.2: сессия роли = ЖИВОЙ агент. Разворачиваем права opencode
+    # (crew-профиль проекта, write по умолчанию) и поднимаем session_worker
+    # detached от сервера. Любая ошибка — soft: создание сессии не ломаем.
+    spawn_note = ""
+    if body.project:
+        try:
+            cfg = load_config(body.project)
+            from pipeline.crew import ensure_permissions
+            perm = ensure_permissions(cfg)
+            worker = Path(__file__).resolve().parent.parent / "agents" / \
+                "session_worker.py"
+            _run_detached([sys.executable or "python", "-X", "utf8", str(worker),
+                           "--session", sid, "--project", cfg.name],
+                          cwd=str(cfg.root))
+            spawn_note = f"worker spawned ({perm})" if perm else "worker spawned"
+        except Exception as e:
+            spawn_note = f"spawn не удался: {e}"
+
     ev = store.add_event("session_created", "server", "feed", project=body.project,
                          task="", payload={"session_id": sid, "agent": s["agent"],
-                                           "role": role, "agent_role": True})
+                                           "role": role, "agent_role": True,
+                                           "spawn": spawn_note})
     hub.publish(ev)
     return s
 
