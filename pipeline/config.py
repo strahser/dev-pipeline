@@ -55,8 +55,6 @@ class ProjectConfig:
     test_filter: str = ""            # dotnet test --filter (точечный/быстрый набор)
     baseline_passed: int | None = None
     baseline_total: int | None = None
-    # Известные падения тестов (подстроки имён) — не блокируют verify
-    known_failures: list = field(default_factory=list)
 
     # Проверки и правила слоёв (декларативно)
     checks: list = field(default_factory=list)
@@ -70,7 +68,6 @@ class ProjectConfig:
 
     # План-раннер
     runner_model: str = "opencode-go/deepseek-v4-flash"
-    runner_parallel: int = 1
     runner_retries: int = 2                          # ретраев карточки с логом ошибки
     question_timeout_sec: int = 1200                 # тишина по вопросу -> работа по допущениям
     checkpoint_stages: bool = True                   # пауза после закрытия этапа (summary)
@@ -244,7 +241,6 @@ def load_config(project_name: str) -> ProjectConfig:
         test_filter=str(te.get("filter", "") or ""),
         baseline_passed=te.get("baseline_passed"),
         baseline_total=te.get("baseline_total"),
-        known_failures=[str(x) for x in (te.get("known_failures") or [])],
         checks=c,
         layer_rules=lr,
         audit_dirs=ad,
@@ -253,7 +249,6 @@ def load_config(project_name: str) -> ProjectConfig:
         plan_subdir=pl.get("subdir", ""),
         plan_file=pl.get("file", ""),
         runner_model=rn.get("model", "opencode-go/deepseek-v4-flash"),
-        runner_parallel=int(rn.get("parallel", 1)),
         runner_retries=int(rn.get("retries", 2)),
         question_timeout_sec=int(rn.get("question_timeout_sec", 1200)),
         checkpoint_stages=bool(rn.get("checkpoint_stages", True)),

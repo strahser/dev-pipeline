@@ -71,8 +71,8 @@ A2. Если остались БЛОКИРУЮЩИЕ неясности (выб�
       - B) ...
       ## Ответы
 
-    Затем ЗАБЛОКИРУЙСЯ в ожидании ответа одной командой (не больше 20 минут):
-      python -X utf8 "{dp}\\agents\\wait_answer.py" "<путь к файлу вопроса>" --timeout 1200
+    Затем ЗАБЛОКИРУЙСЯ в ожидании ответа одной командой (не больше {qto_min} минут):
+      python -X utf8 "{dp}\\agents\\wait_answer.py" "<путь к файлу вопроса>" --timeout {qto}
     rc=0  — ответ появился, продолжай строго по нему;
     rc=1  — таймаут: продолжай по наиболее обоснованному варианту, а каждое
             допущение пометь в отчёте строкой «ASSUMPTION: <что предположил>».
@@ -404,7 +404,8 @@ id: {card.id}
                 self._state(phase="executing", card=card.id, attempt=attempt,
                             title=card.title)
                 if self.dry_run:
-                    print(f"[dry-run] выполнил бы карточку {card.id} — {card.title}")
+                    print(f"[dry-run] выполнил бы карточку {card.id} — {card.title} "
+                          f"(таймаут вопроса {self.cfg.question_timeout_sec} c)")
                     return 0
 
                 md = self._dispatch_md(card)
@@ -418,9 +419,12 @@ id: {card.id}
                 extra_error = f"\n\nХВОСТ ОШИБКИ ПРОШЛОЙ ПОПЫТКИ:\n{self._error_tail(card)}\n" \
                     if attempt > 1 else ""
                 dp_dir = str(Path(__file__).resolve().parent.parent)
+                qto = int(getattr(self.cfg, "question_timeout_sec", 1200))
                 prompt = (CARD_PROMPT
                           .replace("{card_text}", render_card(card) + extra_error)
-                          .replace("{dp}", dp_dir))
+                          .replace("{dp}", dp_dir)
+                          .replace("{qto_min}", str(max(1, qto // 60)))
+                          .replace("{qto}", str(qto)))
                 # Project Brief (Уровень 1): авто-дайджест в промпт карточки
                 brief_block = ""
                 try:
