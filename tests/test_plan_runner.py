@@ -6,6 +6,9 @@
 from __future__ import annotations
 
 import json
+import os
+import shutil
+import subprocess
 import sys
 import tempfile
 import time
@@ -55,6 +58,13 @@ def make_cfg(tmp: Path, **extra) -> ProjectConfig:
                 sln="X.csproj", test_runner="dotnet", checkpoint_stages=False)
     base.update(extra)
     return ProjectConfig(**base)
+
+
+def _git(repo: Path, *args: str) -> None:
+    env = dict(os.environ, GIT_AUTHOR_NAME="t", GIT_AUTHOR_EMAIL="t@t",
+               GIT_COMMITTER_NAME="t", GIT_COMMITTER_EMAIL="t@t")
+    subprocess.run(["git", "-C", str(repo), *args], check=True,
+                   capture_output=True, text=True, env=env)
 
 
 def make_valid_run():
@@ -520,6 +530,180 @@ class CheckpointApproverTest(unittest.TestCase):
             rc = r.run()
         self.assertEqual(rc, 0)
         wd.assert_called_once()
+
+
+class SemanticReviewTest(unittest.TestCase):
+    """Карточка 4.2: независимая reviewer-фаза ПОСЛЕ механического PASS
+    (runner.semantic_review). Ревьюер-заглушка вместо opencode; реальный git
+    worktree целевого проекта."""
+
+    def setUp(self):
+        self.tmp = Path(tempfile.mkdtemp(prefix="prunner_semrev_"))
+        _git(self.tmp, "init", "-q")
+        (self.tmp / "README.md").write_text("проект", encoding="utf-8")
+        _git(self.tmp, "add", "-A")
+        _git(self.tmp, "commit", "-q", "-m", "init")
+        for p in Path(tempfile.gettempdir()).glob("semrev_1.1_*"):
+            shutil.rmtree(p, ignore_errors=True)
+        self.cfg = make_cfg(self.tmp, semantic_review=True)
+        self.plan_path = self.tmp / "plan.md"
+        self.plan_path.write_text(PLAN, encoding="utf-8")
+
+    def _fixture_verdict(self) -> Path:
+        """Механический вердикт (реальный cmd_verify замокан вместе с _verify)."""
+        vd = self.cfg.abs_tasks_dir("reports") / "1.1_Вердикт_контролёра_fixture.md"
+        vd.write_text("Вердикт: **PASS**\n| сборка | PASS |\n", encoding="utf-8")
+        return vd
+
+    @staticmethod
+    def _executor_report(report: Path, tid: str) -> None:
+        report.parent.mkdir(parents=True, exist_ok=True)
+        report.write_text("# ОТЧЁТ: " + tid + "\n## Что сделано\nправки по карточке\n"
+                          "## Доказательства\nтесты зелёные\n" + "pad" * 60 + "\n",
+                          encoding="utf-8")
+
+    def _worktree_count(self) -> int:
+        out = subprocess.run(
+            ["git", "-C", str(self.tmp), "worktree", "list", "--porcelain"],
+            capture_output=True, text=True).stdout or ""
+        return out.count("worktree ")
+
+    def test_pass_path_appends_section_and_removes_worktree(self):
+        from agents import plan_runner as pr
+        self._fixture_verdict()
+        r = pr.PlanRunner(self.cfg, plan_path=self.plan_path, once=True, retries=0)
+        calls = []
+
+        def dispatcher(cfg, tid, report, log, **kw):
+            calls.append(tid)
+            if tid.endswith("-semrev"):
+                report.parent.mkdir(parents=True, exist_ok=True)
+                report.write_text("# НЕЗАВИСИМОЕ РЕВЬЮ 1.1\n## Вердикт\n**PASS**\n"
+                                  "## Goal alignment\nсоответствует\n"
+                                  "## Правки вне задачи\nнет\n",
+                                  encoding="utf-8")
+                return 0
+            self._executor_report(report, tid)
+            return 0
+
+        with mock.patch.object(pr, "run_subagent", dispatcher), \
+             mock.patch.object(pr.PlanRunner, "_verify", return_value="PASS"):
+            rc = r.run()
+
+        self.assertEqual(rc, 0)
+        self.assertEqual(load_plan(self.plan_path).card("1.1").status, "done")
+        self.assertIn("1.1-semrev", calls, "после PASS запускается reviewer-сессия")
+        # постановка ревьюера видима в Активные (run_subagent ищет файл задачи)
+        self.assertTrue(list((self.tmp / "Tasks" / "Активные").glob("1.1-semrev_*.md")))
+        # заключение дописано в Вердикт секцией «Независимое ревью»
+        vtxt = (self.cfg.abs_tasks_dir("reports") /
+                "1.1_Вердикт_контролёра_fixture.md").read_text(encoding="utf-8")
+        tail = vtxt.split("Независимое ревью")[-1]
+        self.assertIn("**PASS**", tail)
+        self.assertIn("_Ревью_", tail)
+        # worktree удалён после ревью
+        self.assertEqual(self._worktree_count(), 1,
+                         "остался только основной checkout")
+        self.assertFalse(list(Path(tempfile.gettempdir()).glob("semrev_1.1_*")),
+                         "временный каталог worktree удалён")
+
+    def test_fail_review_triggers_retry_with_instructions_then_done(self):
+        from agents import plan_runner as pr
+        self._fixture_verdict()
+        r = pr.PlanRunner(self.cfg, plan_path=self.plan_path, once=True, retries=1)
+        calls, prompts = [], []
+        state = {"rv": "FAIL"}
+
+        def dispatcher(cfg, tid, report, log, **kw):
+            calls.append(tid)
+            prompts.append(kw.get("prompt_override", ""))
+            report.parent.mkdir(parents=True, exist_ok=True)
+            if tid.endswith("-semrev"):
+                rv = state["rv"]
+                state["rv"] = "PASS"
+                report.write_text(f"# НЕЗАВИСИМОЕ РЕВЬЮ 1.1\n## Вердикт\n**{rv}**\n"
+                                  "## Инструкции при retry\nисправить X\n",
+                                  encoding="utf-8")
+                return 0
+            self._executor_report(report, tid)
+            return 0
+
+        with mock.patch.object(pr, "run_subagent", dispatcher), \
+             mock.patch.object(pr.PlanRunner, "_verify",
+                               side_effect=["PASS", "PASS"]):
+            rc = r.run()
+
+        self.assertEqual(rc, 0)
+        self.assertEqual(calls, ["1.1", "1.1-semrev", "1.1", "1.1-semrev"],
+                         "FAIL ревьюера запускает штатный ретрай карточки")
+        self.assertIn("исправить X", prompts[2],
+                      "инструкции ревьюера попадают в хвост ошибки новой попытки")
+        self.assertEqual(load_plan(self.plan_path).card("1.1").status, "done")
+        vtxt = (self.cfg.abs_tasks_dir("reports") /
+                "1.1_Вердикт_контролёра_fixture.md").read_text(encoding="utf-8")
+        parts = vtxt.split("Независимое ревью")
+        self.assertIn("**FAIL**", parts[1],
+                      "первая попытка: FAIL ревьюера зафиксирован в Вердикте")
+        self.assertIn("**PASS**", parts[-1])
+        self.assertEqual(self._worktree_count(), 1)
+
+    def test_reviewer_unavailable_is_soft_mode(self):
+        from agents import plan_runner as pr
+        self._fixture_verdict()
+        r = pr.PlanRunner(self.cfg, plan_path=self.plan_path, once=True, retries=0)
+        calls = []
+
+        def dispatcher(cfg, tid, report, log, **kw):
+            calls.append(tid)
+            if tid.endswith("-semrev"):
+                return 1  # сессия ревьюера упала, заключения нет
+            self._executor_report(report, tid)
+            return 0
+
+        with mock.patch.object(pr, "run_subagent", dispatcher), \
+             mock.patch.object(pr.PlanRunner, "_verify", return_value="PASS"):
+            rc = r.run()
+
+        self.assertEqual(rc, 0, "недоступность ревьюера не блокирует карточку")
+        self.assertEqual(load_plan(self.plan_path).card("1.1").status, "done")
+        vtxt = (self.cfg.abs_tasks_dir("reports") /
+                "1.1_Вердикт_контролёра_fixture.md").read_text(encoding="utf-8")
+        tail = vtxt.split("Независимое ревью")[-1]
+        self.assertIn("ПРОПУЩЕНО", tail)
+        self.assertNotIn("**PASS**", tail)
+        self.assertEqual(self._worktree_count(), 1, "worktree снят даже при сбое")
+
+    def test_disabled_by_default_no_review_session(self):
+        from agents import plan_runner as pr
+        cfg = make_cfg(self.tmp)  # semantic_review не задан -> False
+        plan_path = self.tmp / "plan.md"
+        r = pr.PlanRunner(cfg, plan_path=plan_path, once=True, retries=0)
+        calls = []
+
+        def dispatcher(cfg, tid, report, log, **kw):
+            calls.append(tid)
+            self._executor_report(report, tid)
+            return 0
+
+        with mock.patch.object(pr, "run_subagent", dispatcher), \
+             mock.patch.object(pr.PlanRunner, "_verify", return_value="PASS"):
+            rc = r.run()
+        self.assertEqual(rc, 0)
+        self.assertFalse(any(t.endswith("-semrev") for t in calls),
+                         "флаг выключен — reviewer-фаза не запускается")
+
+    def test_non_git_root_soft_skip_without_temp_litter(self):
+        from agents import plan_runner as pr
+        tmp2 = Path(tempfile.mkdtemp(prefix="prunner_nogit_"))
+        try:
+            cfg2 = make_cfg(tmp2, semantic_review=True)
+            r = pr.PlanRunner(cfg2, plan_path=None)
+            card = mock.Mock(id="1.1", title="x")
+            res = r._semantic_review(card)
+            self.assertEqual(res, "PASS", "нет git/коммитов — мягкий пропуск")
+            self.assertFalse(list(Path(tempfile.gettempdir()).glob("semrev_1.1_*")))
+        finally:
+            shutil.rmtree(tmp2, ignore_errors=True)
 
 
 if __name__ == "__main__":

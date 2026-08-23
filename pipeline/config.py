@@ -73,6 +73,7 @@ class ProjectConfig:
     checkpoint_stages: bool = True                   # пауза после закрытия этапа (summary)
     stage_approver: str = "owner"                    # owner | reviewer — кто одобряет этап
     checkpoint_remind_sec: int = 600                 # напоминание checkpoint_waiting каждые N сек ожидания
+    semantic_review: bool = False                    # независимая reviewer-фаза после PASS (карточка 4.2)
 
     # Crew: автономные сессии проекта (карточка 6.2)
     crew_roles: list = field(default_factory=lambda: ["executor"])
@@ -262,6 +263,7 @@ def load_config(project_name: str) -> ProjectConfig:
         checkpoint_stages=bool(rn.get("checkpoint_stages", True)),
         stage_approver=str(rn.get("stage_approver", "owner")),
         checkpoint_remind_sec=int(rn.get("checkpoint_remind_sec", 600)),
+        semantic_review=bool(rn.get("semantic_review", False)),
         crew_roles=[str(r) for r in ((raw.get("crew") or {}).get("roles")
                                      or ["executor"])],
         crew_model=str((raw.get("crew") or {}).get("model", "")),

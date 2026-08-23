@@ -68,6 +68,31 @@ REVIEWER_PROMPT = """Ты НЕЗАВИСИМЫЙ РЕВЬЮЕР этапа {stag
 Без файла решения этап останется ждать владельца.
 """
 
+SEMANTIC_REVIEW_PROMPT = """Ты НЕЗАВИСИМЫЙ РЕВЬЮЕР карточки {card} проекта {project} —
+второй слой контроля после механического PASS (флаг runner.semantic_review).
+
+Твоя рабочая копия — временный git worktree: {wt_root}
+Читай код ТОЛЬКО в ней; ничего не редактируй и не коммить.
+
+ВХОДНЫЕ:
+- Цель проекта: {goal_path} (если файла нет — раздел «Миссия» плана)
+- План проекта: {plan_path}; карточка: {card}
+- Последний коммит карточки:
+  git -C "{wt_root}" log -3 --stat   и   git -C "{wt_root}" show HEAD --stat
+- Механический вердикт и отчёт исполнителя: {verdict_path}
+
+ПРОВЕРЬ (смысловой контроль):
+1. Goal alignment: изменения ведут к цели проекта и смыслу карточки, а не в сторону.
+2. Правки вне задачи: в diff последнего коммита нет файлов вне темы карточки.
+3. Осмысленность: правки реальны — не заглушки и не имитация зелёных тестов.
+
+ИТОГ — заключение ПО-РУССКИ строго в файл {report}:
+- секция «Вердикт» с однозначной строкой **PASS** или **FAIL**;
+- секции «Goal alignment», «Правки вне задачи», «Доказательства»;
+- при FAIL — секция «Инструкции при retry»: конкретные исправления.
+Кроме файла заключения ничего не создавай.
+"""
+
 
 # ---------------------------------------------------------------------------
 # Промпт исполнителя карточки (grill-фаза встроена)
@@ -332,6 +357,179 @@ id: {card.id}
         except Exception:
             return ""
 
+    # --- независимая reviewer-фаза после PASS (карточка 4.2) -------------------
+
+    def _dispatch_review_md(self, card, task_id: str) -> Path:
+        """Постановка reviewer-сессии в Активные: run_subagent (и сессионный,
+        и legacy) ищет файл задачи по <task_id>_*.md — без него rc=2."""
+        active = self.cfg.abs_tasks_dir("active")
+        active.mkdir(parents=True, exist_ok=True)
+        existing = sorted(active.glob(f"{task_id}_*.md"))
+        if existing:
+            return existing[0]
+        dst = active / f"{task_id}_{slug('независимое ревью')}.md"
+        dst.write_text(f"""---
+id: {task_id}
+приоритет: высокий
+статус: open
+постановщик: план-раннер
+исполнитель: subagent
+дата: {_now_ts()}
+зависимости: {card.id}
+источник_запроса: semantic_review карточки {card.id} ({self.cfg.name})
+---
+
+# ЗАДАЧА: {task_id} — независимое ревью карточки {card.id}
+
+Полная инструкция — в промпте сессии. Заключение строго по указанному там
+пути отчёта; кроме него файлов не создавать.
+""", encoding="utf-8")
+        return dst
+
+    @staticmethod
+    def _review_instructions(txt: str) -> str:
+        """Текст секции «Инструкции при retry» из заключения ревьюера."""
+        m = re.search(r"^#+\s*[^\n]*Инструкции при retry[^\n]*\n(.*?)(?=^#+ |\Z)",
+                      txt or "", re.S | re.M | re.I)
+        body = m.group(1).strip() if m else ""
+        if not body:
+            body = (txt or "").strip()[-400:]
+        return body[:600]
+
+    def _append_review_section(self, verdict_file, lines: list[str]) -> None:
+        """Дописать секцию «Независимое ревью» в механический Вердикт-файл."""
+        if verdict_file is None or not Path(verdict_file).exists():
+            return
+        try:
+            with open(verdict_file, "a", encoding="utf-8") as f:
+                f.write("\n\n---\n\n" + "\n".join(lines).rstrip() + "\n")
+        except Exception as e:
+            print(f"[runner] секция ревью не дописана: {e}")
+
+    def _worktree_add(self, card):
+        """Временный git worktree целевого проекта на HEAD; Path или None."""
+        import tempfile as _tf
+        wt_parent = Path(_tf.mkdtemp(prefix=f"semrev_{card.id}_"))
+        wt = wt_parent / "wt"
+        try:
+            r = subprocess.run(
+                ["git", "-C", str(self.cfg.root), "worktree", "add",
+                 "--detach", str(wt), "HEAD"],
+                capture_output=True, text=True, timeout=120,
+                creationflags=no_window_flags())
+        except Exception as e:
+            print(f"[runner] semantic review {card.id}: worktree не создан ({e})")
+            return None, wt_parent
+        if r.returncode != 0:
+            print(f"[runner] semantic review {card.id}: git worktree отказал "
+                  f"({(r.stderr or '').strip()[-160:]})")
+            return None, wt_parent
+        return wt, wt_parent
+
+    def _worktree_remove(self, card, wt, wt_parent) -> None:
+        try:
+            if wt is not None:
+                subprocess.run(
+                    ["git", "-C", str(self.cfg.root), "worktree",
+                     "remove", "--force", str(wt)],
+                    capture_output=True, timeout=60,
+                    creationflags=no_window_flags())
+                subprocess.run(["git", "-C", str(self.cfg.root), "worktree", "prune"],
+                               capture_output=True, timeout=30,
+                               creationflags=no_window_flags())
+        except Exception:
+            pass
+        finally:
+            import shutil as _shutil
+            _shutil.rmtree(wt_parent, ignore_errors=True)
+
+    def _semantic_review(self, card) -> str:
+        """Карточка 4.2: независимая reviewer-фаза ПОСЛЕ механического PASS
+        (флаг runner.semantic_review). Ревьюер-сессия во временном git worktree
+        сверяет факт с целью (GOAL.md) и планом по diff/log последнего коммита;
+        заключение дописывается в Вердикт секцией «Независимое ревью».
+        FAIL ревьюера -> штатный ретрай с инструкциями. Недоступность ревьюера
+        или git — мягкий режим: предупреждение, карточка не блокируется.
+        Стиль механизма 6.3 (_request_stage_review), не дублирует его."""
+        import time as _t
+        reports = self.cfg.abs_tasks_dir("reports")
+        vf = sorted(glob.glob(str(reports / f"{card.id}_Вердикт_*")))
+        verdict_file = Path(vf[-1]) if vf else None
+
+        wt, wt_parent = self._worktree_add(card)
+        try:
+            if wt is None:
+                self._notify("semantic_review_unavailable", task=card.id,
+                             payload={"note": "временный git worktree не создан"})
+                self._append_review_section(verdict_file, [
+                    "## Независимое ревью", "",
+                    "- Статус: ПРОПУЩЕНО (мягкий режим прототипа).",
+                    "- Причина: временный git worktree не создан "
+                    "(нет git/коммитов в проекте).",
+                    "- Карточка НЕ блокируется."])
+                return "PASS"
+
+            review_report = reports / \
+                f"{card.id}_Ревью_{_today()}_{_t.strftime('%H%M%S')}.md"
+            log = self.cfg.conveyor_dir() / "logs" / f"{card.id}-semrev.log"
+            task_id = f"{card.id}-semrev"
+            self._dispatch_review_md(card, task_id)
+            goal = Path(self.cfg.root) / "GOAL.md"
+            prompt = (SEMANTIC_REVIEW_PROMPT
+                      .replace("{card}", card.id)
+                      .replace("{project}", self.cfg.name)
+                      .replace("{wt_root}", str(wt))
+                      .replace("{goal_path}", str(goal))
+                      .replace("{plan_path}", str(self._current_plan_path() or ""))
+                      .replace("{verdict_path}",
+                               str(verdict_file or "(вердикт не найден)"))
+                      .replace("{report}", str(review_report)))
+            self._notify("semantic_review_started", task=card.id,
+                         payload={"worktree": str(wt)})
+            rc = run_subagent(self.cfg, task_id, review_report, log,
+                              model=self.model, client=self.client,
+                              prompt_override=prompt)
+            txt = ""
+            if review_report.exists():
+                txt = review_report.read_text(encoding="utf-8", errors="replace")
+            m = re.search(r"\*\*(PASS|FAIL)\*\*", txt)
+            if rc != 0 or not m:
+                note = (f"сессия ревьюера упала (rc={rc})" if rc != 0
+                        else "ревьюер не дал однозначный **PASS**/**FAIL**")
+                self._notify("semantic_review_unavailable", task=card.id,
+                             payload={"note": note})
+                self._append_review_section(verdict_file, [
+                    "## Независимое ревью", "",
+                    f"- Статус: ПРОПУЩЕНО (мягкий режим прототипа): {note}.",
+                    "- Карточка НЕ блокируется."])
+                print(f"[runner] {card.id}: независимое ревью пропущено ({note})")
+                return "PASS"
+
+            rv = m.group(1)
+            instructions = self._review_instructions(txt)
+            if rv == "PASS":
+                self._notify("semantic_review_passed", task=card.id, payload={})
+                self._append_review_section(verdict_file, [
+                    "## Независимое ревью", "",
+                    f"- Отчёт ревьюера: `{review_report.name}`",
+                    "- Итог ревьюера: **PASS**",
+                    "- Замечаний, блокирующих карточку, нет."])
+                print(f"[runner] {card.id}: независимое ревью PASS")
+                return "PASS"
+
+            self._notify("semantic_review_failed", task=card.id,
+                         payload={"note": instructions[:200]})
+            self._append_review_section(verdict_file, [
+                "## Независимое ревью", "",
+                f"- Отчёт ревьюера: `{review_report.name}`",
+                "- Итог ревьюера: **FAIL**",
+                f"| Независимое ревью | FAIL | {instructions[:150]} |",
+                "", "Инструкции при retry:", "", instructions])
+            print(f"[runner] {card.id}: независимое ревью FAIL — штатный ретрай")
+            return "FAIL"
+        finally:
+            self._worktree_remove(card, wt, wt_parent)
+
     # --- основной цикл ----------------------------------------------------------
 
     # --- блокировка второго конвейера (инцидент 2026-08-22) ------------------
@@ -521,6 +719,9 @@ id: {card.id}
                 verdict = "FAIL"
                 if ok_report:
                     verdict = self._verify(card, report_path=report)
+                if verdict == "PASS" and getattr(self.cfg, "semantic_review", False):
+                    # Карточка 4.2: независимая reviewer-фаза после PASS.
+                    verdict = self._semantic_review(card)
 
                 if verdict == "PASS":
                     break
