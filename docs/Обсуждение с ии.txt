@@ -1,0 +1,1498 @@
+d:\Projects\dev-pipeline\проект
+d:\Projects\ProjectsPalns\ планы
+Ты критик.ознакомься что можно улучшить?
+
+дополнительные обсуждения
+Да, ты абсолютно правильно понял концепцию! Это архитектурный паттерн **"Planner as Scrum Master" + "Executor Agents as Developers"**. Давай разберём это детально и посмотрим, как это лучше всего реализовать для твоего случая.
+
+## Архитектура, которую ты описал
+
+```
+┌─────────────────────────────────────────┐
+│  Planner Agent (отдельная сессия)       │
+│  - Создаёт/обновляет PLAN.md           │
+│  - Проверяет прогресс через git log    │
+│  - Ревьюит отчёты исполнителей         │
+│  - Запускается периодически            │
+└─────────────────────────────────────────┘
+              ↓
+┌─────────────────────────────────────────┐
+│  Executor Agents (другие сессии)        │
+│  - Читают PLAN.md                      │
+│  - Выполняют конкретные задачи         │
+│  - Делают коммиты с отчётами           │
+│  - Работают параллельно/последовательно│
+└─────────────────────────────────────────┘
+```
+
+## Почему это работает
+
+### 1. **Git как единый источник правды**
+Все агенты координируются через репозиторий, а не через прямой обмен сообщениями:
+- `PLAN.md` - план и статусы
+- `git log` - история изменений
+- `git diff` - что реально сделано
+- `pytest` - качество выполнения
+
+### 2. **Планировщик не постоянный надсмотрщик**
+Он не должен работать 24/7. Это дорого и избыточно. Лучше запускать его:
+- **Утром** - для планирования дня
+- **После завершения milestone** - для ревью и планирования следующего этапа
+- **При возникновении проблем** - для перепланирования
+- **В конце дня** - для подведения итогов
+
+### 3. **Исполнители работают независимо**
+Каждый исполнитель:
+- Читает `PLAN.md`
+- Берёт одну задачу
+- Работает над ней
+- Делает коммит с чётким сообщением
+- Обновляет чекбокс в `PLAN.md`
+
+## Практическая реализация
+
+### Сессия 1: Planner Agent
+
+**Когда запускать:**
+- В начале рабочего дня
+- После завершения большого этапа
+- Когда нужно перепланировать
+
+**Что делает:**
+```bash
+# 1. Читает текущий план
+cat PLAN.md
+
+# 2. Проверяет прогресс через git
+git log --oneline -20
+git diff --stat HEAD~10..HEAD
+
+# 3. Проверяет отчёты исполнителей
+# (если есть отдельный REPORTS.md или комментарии в коммитах)
+
+# 4. Обновляет PLAN.md
+# - Отмечает выполненные задачи
+# - Декомпозирует следующие задачи
+# - Расставляет приоритеты
+
+# 5. Коммитит обновлённый план
+git add PLAN.md
+git commit -m "plan: обновлён план на основе прогресса"
+```
+
+**Пример промпта для Planner Agent:**
+```text
+Ты - планировщик проекта LocalAssistant.
+
+Твоя задача:
+1. Прочитать PLAN.md
+2. Проверить git log - какие коммиты сделаны
+3. Проверить, какие задачи отмечены как выполненные
+4. Если есть расхождения между планом и фактом:
+   - Обновить PLAN.md
+   - Добавить задачи, которые были сделаны вне плана
+   - Отметить проваленные задачи
+5. Декомпозировать следующие задачи
+6. Сделать коммит с обновлённым PLAN.md
+
+Критерии успеха:
+- PLAN.md отражает реальное состояние проекта
+- Следующие задачи чётко определены
+- Каждая задача имеет Definition of Done
+```
+
+### Сессия 2: Executor Agent (исполнитель)
+
+**Когда запускать:**
+- Когда есть конкретная задача для выполнения
+- Можно запускать несколько параллельно для разных задач
+
+**Что делает:**
+```bash
+# 1. Читает план
+cat PLAN.md
+
+# 2. Берёт одну задачу (например, "M3: prompts_db.py")
+
+# 3. Создаёт ветку (опционально)
+git checkout -b task/M3-prompts-db
+
+# 4. Выполняет задачу
+# - Пишет код
+# - Запускает тесты
+# - Фиксит проблемы
+
+# 5. Обновляет PLAN.md (только чекбокс своей задачи)
+# - [x] M3: prompts_db.py
+
+# 6. Коммитит с чётким сообщением
+git add -A
+git commit -m "feat(M3): реализован prompts_db.py
+
+- Добавлена функция get_prompt()
+- Добавлены тесты в tests/test_prompts_db.py
+- Все тесты проходят (pytest: 5 passed)"
+
+# 7. Возвращается в основную ветку
+git checkout main
+```
+
+**Пример промпта для Executor Agent:**
+```text
+Ты - исполнитель задач проекта LocalAssistant.
+
+Твоя задача:
+1. Прочитать PLAN.md
+2. Выбрать ОДНУ невыполненную задачу
+3. Выполнить её
+4. Запустить тесты
+5. Обновить чекбокс в PLAN.md
+6. Сделать коммит с описанием:
+   - Что сделано
+   - Какие файлы изменены
+   - Результат тестов
+
+Правила:
+- Не трогать файлы вне своей задачи
+- Не менять другие чекбоксы в PLAN.md
+- Не создавать субагентов
+- Коммит должен быть атомарным (одна задача)
+
+Definition of Done:
+- Код написан
+- Тесты проходят
+- Чекбокс обновлён
+- Коммит сделан
+```
+
+## Преимущества такой архитектуры
+
+### 1. **Дешевле по токенам**
+- Planner запускается редко (не постоянно)
+- Executor читает только нужный контекст
+- Нет сложной оркестрации с делегированием
+
+### 2. **Проще отлаживать**
+- Каждый агент имеет чёткую роль
+- Легко понять, кто что сделал
+- Проблемы изолированы
+
+### 3. **Масштабируемость**
+- Можно запускать несколько Executor'ов параллельно
+- Planner может обслуживать несколько проектов
+- Можно добавить Reviewer Agent для код-ревью
+
+### 4. **Надёжность**
+- Git как источник правды
+- Чёткий Definition of Done
+- Прозрачная история изменений
+
+## Варианты координации
+
+### Вариант A: Простой (последовательный)
+```
+Planner обновляет PLAN.md
+↓
+Executor 1 берёт задачу, делает, коммитит
+↓
+Executor 2 берёт задачу, делает, коммитит
+↓
+Planner проверяет прогресс
+```
+
+### Вариант B: Параллельный (с ветками)
+```
+Planner обновляет PLAN.md
+↓
+Executor 1: git checkout -b task/M3
+Executor 2: git checkout -b task/M4
+↓
+Оба работают параллельно
+↓
+Мерж веток после тестов
+↓
+Planner проверяет прогресс
+```
+
+### Вариант C: С отчётами
+```
+Executor создаёт отчёт:
+REPORTS/task-M3.md:
+- Статус: done
+- Файлы: prompts_db.py, tests/test_prompts_db.py
+- Тесты: 5 passed
+- Проблемы: нет
+↓
+Planner читает REPORTS/ и обновляет PLAN.md
+```
+
+## Минимальная рабочая реализация
+
+Для твоего случая я бы начал с самого простого:
+
+### 1. Один Planner Agent (отдельная сессия)
+- Запускается утром и вечером
+- Обновляет `PLAN.md`
+- Проверяет `git log`
+
+### 2. Executor Agent (в основной сессии)
+- Читает `PLAN.md`
+- Выполняет задачи
+- Делает коммиты
+- Обновляет чекбоксы
+
+### 3. Файл `PLAN.md`
+```markdown
+# LocalAssistant Plan
+
+## Текущий фокус
+M3: prompts_db.py
+
+## Задачи
+
+- [x] M1: Базовая структура
+- [x] M2: response_ready.py
+- [ ] M3: prompts_db.py
+  - [ ] Восстановить функциональную версию
+  - [ ] Адаптировать тесты
+  - [ ] Прогнать pytest
+- [ ] M4: API
+- [ ] M5: Интеграция
+
+## Прогресс
+- Последний коммит: feat(M2): реализован response_ready.py
+- Тесты: 12 passed
+```
+
+### 4. Файл `EXECUTION_RULES.md`
+```markdown
+# Правила выполнения
+
+## Для Planner Agent
+- Проверять git log перед обновлением плана
+- Отмечать только реально выполненные задачи
+- Декомпозировать задачи до конкретных действий
+
+## Для Executor Agent
+- Брать только одну задачу за раз
+- Не менять файлы вне своей задачи
+- Всегда запускать тесты перед коммитом
+- Коммит должен содержать описание изменений
+```
+
+## Когда стоит усложнять архитектуру
+
+Добавлять больше агентов стоит только если:
+
+1. **Проект большой** - много параллельных задач
+2. **Команда агентов** - нужно специализация (frontend/backend/tests)
+3. **Высокие требования к качеству** - нужен отдельный Reviewer Agent
+4. **Непрерывная работа** - нужен постоянный мониторинг
+
+Для твоего случая (LocalAssistant, один репозиторий, понятные задачи) **простая архитектура Planner + Executor будет оптимальной**.
+
+## Итоговый ответ на твой вопрос
+
+**Да, ты правильно понял!** 
+
+Тебе нужно:
+1. **Отдельная сессия для Planner Agent** - который периодически проверяет прогресс и обновляет план
+2. **Основные сессии для Executor Agent'ов** - которые выполняют конкретные задачи
+3. **Git как координационный механизм** - через `PLAN.md`, `git log`, `git diff`
+
+Это будет намного эффективнее, чем текущий OpenAI Orchestrator с его Worker'ами и delegate_task.
+Да, ты понял правильно. Более того: **для маленьких проектов тебе вообще не нужно, чтобы агенты общались напрямую**. Это только усложняет систему и жрёт токены.
+
+Лучшая модель для тебя:
+
+```text
+Git = доска состояния
+GOAL.md = цель
+PLAN.md = план
+WORKLOG.md / коммиты = факт
+REVIEW.md = независимый контроль и указания
+```
+
+Агенты не переписываются. Они читают и пишут артефакты в git.
+
+---
+
+# Короткий ответ
+
+Тебе нужен не полноценный оркестратор, а лёгкий **независимый reviewer**.
+
+Его работа:
+
+1. Прочитать цель проекта: `GOAL.md`.
+2. Прочитать план: `PLAN.md`.
+3. Посмотреть факт через git:
+   ```bash
+   git status
+   git log --oneline
+   git diff --stat
+   git diff
+   ```
+4. Запустить тесты, если они есть.
+5. Сравнить:
+   - план соответствует цели?
+   - факт соответствует плану?
+   - есть ли фейковый прогресс?
+   - есть ли уход в сторону?
+6. Записать вердикт и указания в `REVIEW.md`.
+7. Опционально закоммитить этот review в git.
+
+То есть reviewer не управляет агентами напрямую. Он оставляет заключение в git, а рабочая сессия читает его и выполняет.
+
+---
+
+# Есть ли готовые решения?
+
+Честный ответ: **идеального готового суперлёгкого решения именно под твою задачу почти нет**.
+
+Потому что тебе нужно не просто:
+
+- вести todo;
+- делать code review;
+- запускать агентов;
+- строить multi-agent workflow.
+
+Тебе нужно:
+
+> независимо проверить, что локальная сессия не ушла от цели, и через git дать указания.
+
+Это очень специфичная вещь. Готовые решения обычно либо слишком простые, либо слишком тяжёлые.
+
+Но есть варианты.
+
+---
+
+## Вариант 1. Самый лёгкий: Git + Markdown + отдельная сессия
+
+Это лучший вариант для маленьких проектов.
+
+Ничего не ставить, кроме git.
+
+Структура:
+
+```text
+project/
+  GOAL.md
+  PLAN.md
+  REVIEW.md
+  WORKLOG.md
+  src/
+  tests/
+```
+
+### `GOAL.md`
+
+Здесь цель. Не задачи, а именно цель.
+
+Пример:
+
+```markdown
+# Goal
+
+Цель: сделать локальный ассистент, который:
+- принимает запрос;
+- выбирает подходящий prompt;
+- возвращает готовый ответ;
+- имеет тесты на базовые сценарии.
+
+Не делать:
+- веб-интерфейс;
+- авторизацию;
+- базу пользователей;
+- сложные оркестраторы.
+```
+
+Это очень важный файл. Reviewer должен сверять именно с ним.
+
+---
+
+### `PLAN.md`
+
+Здесь текущий план.
+
+Пример:
+
+```markdown
+# Plan
+
+## Current focus
+M3: prompts_db.py
+
+## Tasks
+
+- [x] M1: базовая структура проекта
+- [x] M2: response_ready.py
+- [ ] M3: prompts_db.py
+  - [ ] восстановить функциональную версию
+  - [ ]适配ровать тесты
+  - [ ] прогнать pytest
+- [ ] M4: API
+- [ ] M5: интеграция
+```
+
+---
+
+### `WORKLOG.md`
+
+Сюда рабочая сессия пишет фактический отчёт.
+
+Пример:
+
+```markdown
+# Worklog
+
+## 2026-06-16 M3 prompts_db
+
+Status: in_progress
+
+Done:
+- восстановил functional prompts_db.py
+- убрал классовую версию worker'а
+- обновил tests/test_prompts_db.py
+
+Tests:
+- pytest tests/test_prompts_db.py: 5 passed
+
+Next:
+- проверить интеграцию с response_ready.py
+```
+
+---
+
+### `REVIEW.md`
+
+Сюда пишет reviewer.
+
+Пример:
+
+```markdown
+# Review
+
+Date: 2026-06-16
+Reviewer: independent-review-agent
+Commit reviewed: abc1234
+
+## Verdict
+NEEDS_CHANGES
+
+## Goal alignment
+7/10
+
+## Plan vs fact
+План говорит восстановить функциональную версию prompts_db.py.
+Фактически prompts_db.py изменён, но тесты ещё не прогнаны.
+
+## Problems
+1. Нет подтверждения, что тесты пройдены.
+2. Есть изменения в selectors.py вне текущей задачи.
+
+## Instructions
+1. Откатить изменения selectors.py, если они не нужны для M3.
+2. Запустить pytest tests/test_prompts_db.py.
+3. Приложить вывод тестов в WORKLOG.md.
+4. Обновить чекбоксы PLAN.md только после зелёных тестов.
+```
+
+Это и есть «через git дал указания».
+
+---
+
+# Как это запускать
+
+## Рабочая сессия
+
+Ты открываешь одну сессию в OpenCode / Codex / другом агенте и говоришь:
+
+```text
+Ты исполнитель.
+Прочитай GOAL.md, PLAN.md, REVIEW.md.
+Выполняй только текущую задачу из PLAN.md.
+Не создавай субагентов.
+Не меняй файлы вне текущей задачи.
+После работы обнови WORKLOG.md и PLAN.md.
+Сделай git commit.
+```
+
+---
+
+## Ревьюер-сессия
+
+Отдельно открываешь другую сессию в том же репозитории и говоришь:
+
+```text
+Ты независимый reviewer.
+Не доверяй WORKLOG.md и PLAN.md на слово.
+Проверь факт через git:
+- git status
+- git log --oneline -20
+- git diff --stat
+- git diff
+Прочитай GOAL.md и PLAN.md.
+Оцени:
+1. Соответствует ли план цели.
+2. Соответствуют ли коммиты плану.
+3. Есть ли изменения вне текущей задачи.
+4. Есть ли доказательства выполнения.
+5. Есть ли риск ухода в сторону.
+Запиши результат в REVIEW.md.
+Не меняй исходный код.
+```
+
+Это уже рабочая схема. Без установки чего-либо.
+
+---
+
+# Можно ли сделать ещё лучше?
+
+Да. Добавить маленький скрипт, который собирает контекст для reviewer.
+
+Это не оркестратор. Это просто помощник.
+
+Например:
+
+```bash
+python tools/review_context.py > REVIEW_CONTEXT.md
+```
+
+Он соберёт:
+
+```text
+GOAL.md
+PLAN.md
+WORKLOG.md
+git status
+git log
+git diff --stat
+git diff
+pytest output
+```
+
+А reviewer уже читает один файл `REVIEW_CONTEXT.md`.
+
+Это намного дешевле по токенам, чем давать агенту весь репозиторий.
+
+---
+
+# Минимальный Python-скрипт для review-контекста
+
+Ниже — не готовый продукт, а практический шаблон. Его можно расширить до 100–150 строк, и этого хватит.
+
+Файл:
+
+```text
+tools/review_context.py
+```
+
+Код:
+
+```python
+#!/usr/bin/env python3
+import subprocess
+from pathlib import Path
+
+ROOT = Path(__file__).resolve().parent.parent
+
+
+def run(cmd: list[str]) -> str:
+    result = subprocess.run(
+        cmd,
+        cwd=ROOT,
+        capture_output=True,
+        text=True,
+    )
+    output = result.stdout.strip()
+    errors = result.stderr.strip()
+
+    if result.returncode != 0:
+        return f"[command failed: {' '.join(cmd)}]\n{errors}"
+
+    return output
+
+
+def read_file(path: str, limit: int = 5000) -> str:
+    file_path = ROOT / path
+    if not file_path.exists():
+        return f"[{path} not found]"
+
+    text = file_path.read_text(encoding="utf-8", errors="ignore")
+    if len(text) > limit:
+        text = text[:limit] + "\n\n[truncated]"
+    return text
+
+
+def section(title: str, content: str) -> str:
+    return f"\n\n{'=' * 80}\n{title}\n{'=' * 80}\n\n{content}\n"
+
+
+def main() -> None:
+    output = []
+
+    output.append(section("GOAL.md", read_file("GOAL.md")))
+    output.append(section("PLAN.md", read_file("PLAN.md")))
+    output.append(section("REVIEW.md", read_file("REVIEW.md")))
+    output.append(section("WORKLOG.md", read_file("WORKLOG.md", limit=8000)))
+
+    output.append(section("git status", run(["git", "status", "--short"])))
+    output.append(section("git branch", run(["git", "branch", "--show-current"])))
+    output.append(section("git log", run(["git", "log", "--oneline", "-20"])))
+    output.append(section("git diff --stat", run(["git", "diff", "--stat"])))
+    output.append(section("git diff", run(["git", "diff"])))
+
+    # Optional: tests
+    # output.append(section("pytest", run(["pytest", "-q"])))
+
+    print("".join(output))
+
+
+if __name__ == "__main__":
+    main()
+```
+
+Запуск:
+
+```bash
+python tools/review_context.py > REVIEW_CONTEXT.md
+```
+
+Потом в reviewer-сессии:
+
+```text
+Прочитай REVIEW_CONTEXT.md.
+Сравни GOAL.md, PLAN.md и фактические git-изменения.
+Запиши вердикт в REVIEW.md.
+```
+
+---
+
+# Можно ли сделать reviewer полностью автоматическим?
+
+Да. Можно сделать скрипт, который сам вызывает LLM API.
+
+Например:
+
+```bash
+python tools/review.py
+```
+
+Он:
+
+1. Читает `GOAL.md`, `PLAN.md`.
+2. Читает git diff.
+3. Отправляет в LLM.
+4. Получает JSON-вердикт.
+5. Пишет `REVIEW.md`.
+6. Делает коммит.
+
+Но для маленьких проектов я бы не начинал с этого.
+
+Сначала лучше сделать ручной/полуручной вариант:
+
+```text
+скрипт собирает контекст -> отдельная агент-сессия читает -> пишет REVIEW.md
+```
+
+Это проще, дешевле и понятнее.
+
+---
+
+# Если хочется именно готовый инструмент
+
+## 1. `Qodo PR-Agent` / `pr-agent`
+
+Раньше назывался CodiumAI PR-Agent.
+
+Что умеет:
+
+- AI review pull request;
+- комментарии к diff;
+- suggestions;
+- работает с GitHub, GitLab, Bitbucket, Azure DevOps;
+- можно развернуть локально/Docker.
+
+Плюсы:
+
+- готовый;
+- активно развивается;
+- хорошо делает code review.
+
+Минусы для тебя:
+
+- он больше про code review, а не про «план соответствует цели»;
+- для маленького локального проекта может быть тяжеловат;
+- нужно настраивать;
+- не будет сам вести `PLAN.md` и сверять его с `GOAL.md` без дополнительных правил.
+
+Когда брать:
+
+- если у тебя уже есть GitHub/GitLab workflow;
+- если хочешь review pull request’ов;
+- если готов потратить время на настройку.
+
+Для твоей задачи я бы рассматривал его как дополнительный code reviewer, а не как главный контроль плана.
+
+---
+
+## 2. GitHub Pull Request + GitHub Actions
+
+Если проект на GitHub, можно сделать так:
+
+- рабочая ветка делает PR;
+- CI запускает тесты;
+- AI reviewer смотрит PR;
+- review пишется в комментарии.
+
+Это уже готовая инфраструктура.
+
+Но для маленьких локальных проектов это часто избыточно.
+
+Плюсы:
+
+- красиво;
+- история;
+- проверки;
+- можно подключить AI review.
+
+Минусы:
+
+- нужен GitHub;
+- нужен CI;
+- больше настройки;
+- для одного маленького репозитория может быть слишком.
+
+---
+
+## 3. `pre-commit`
+
+Это не AI reviewer, но полезная лёгкая вещь.
+
+Можно автоматически проверять:
+
+- форматирование;
+- линтеры;
+- тесты;
+- наличие `GOAL.md` / `PLAN.md`;
+- что `PLAN.md` не содержит мусора;
+- что коммит не трогает запрещённые файлы.
+
+Пример идеи:
+
+```yaml
+repos:
+  - repo: local
+    hooks:
+      - id: check-plan-exists
+        name: check PLAN.md exists
+        entry: python tools/check_plan.py
+        language: system
+        pass_filenames: false
+```
+
+Это не заменит смыслового reviewer, но уберёт бардак.
+
+---
+
+## 4. `todo.txt` / Taskwarrior / Vikunja / Focalboard
+
+Это готовые трекеры задач.
+
+Плюсы:
+
+- лёгкие;
+- привычные;
+- хорошо для personal todo.
+
+Минусы:
+
+- они не понимают git;
+- они не проверяют цель;
+- они не делают независимый review;
+- AI-агенту сложнее с ними работать, чем с обычным `PLAN.md`.
+
+Для твоей задачи обычный Markdown в git лучше.
+
+---
+
+## 5. Aider / OpenCode / gptme / shell-gpt / llm CLI
+
+Это терминальные AI-инструменты.
+
+Их можно использовать как рабочую сессию или reviewer-сессию.
+
+Но они не являются готовым «plan-goal reviewer» из коробки.
+
+Ты можешь использовать OpenCode примерно так:
+
+```text
+Ты независимый reviewer.
+Работай только в read-only режиме.
+Не исправляй код.
+Прочитай GOAL.md, PLAN.md, git diff, git log.
+Запиши вердикт в REVIEW.md.
+```
+
+Если OpenCode умеет читать файлы, выполнять команды git и писать файлы — этого достаточно.
+
+---
+
+# Моя рекомендация для маленьких проектов
+
+Не ставь большой фреймворк.
+
+Сделай три уровня.
+
+---
+
+## Уровень 1. Минимальный
+
+Только git и markdown:
+
+```text
+GOAL.md
+PLAN.md
+WORKLOG.md
+REVIEW.md
+```
+
+Плюс две сессии:
+
+1. исполнитель;
+2. reviewer.
+
+Этого уже достаточно.
+
+---
+
+## Уровень 2. Полумеханический
+
+Добавь скрипт:
+
+```bash
+python tools/review_context.py > REVIEW_CONTEXT.md
+```
+
+Reviewer читает не весь репозиторий, а один собранный файл.
+
+Это экономит токены и делает review более стабильным.
+
+---
+
+## Уровень 3. Автоматический
+
+Если схема окажется полезной, тогда уже можно написать:
+
+```bash
+python tools/review.py
+```
+
+который сам вызывает LLM и пишет `REVIEW.md`.
+
+Но не начинай с этого. Сначала налади процесс.
+
+---
+
+# Как reviewer должен давать указания через git
+
+Есть три хороших способа.
+
+---
+
+## Способ 1. Просто `REVIEW.md`
+
+Самый простой.
+
+Reviewer пишет:
+
+```markdown
+# Review
+
+Verdict: NEEDS_CHANGES
+
+Instructions:
+1. ...
+2. ...
+```
+
+Рабочая сессия перед стартом читает:
+
+```text
+GOAL.md
+PLAN.md
+REVIEW.md
+```
+
+Если в `REVIEW.md` есть инструкции — сначала выполняет их.
+
+---
+
+## Способ 2. Коммит с review
+
+Reviewer делает коммит:
+
+```bash
+git add REVIEW.md
+git commit -m "review: NEEDS_CHANGES for M3"
+```
+
+Плюс:
+
+- review виден в истории;
+- можно посмотреть, когда были даны указания;
+- ничего не теряется.
+
+Для локального проекта это нормально.
+
+---
+
+## Способ 3. Ветка review
+
+Если хочется больше изоляции:
+
+```bash
+git checkout -b review/2026-06-16-m3
+# изменить REVIEW.md
+git add REVIEW.md
+git commit -m "review: NEEDS_CHANGES for M3"
+git checkout -
+```
+
+Рабочая сессия может читать:
+
+```bash
+git show review/2026-06-16-m3:REVIEW.md
+```
+
+Или можно мержить review-ветку в основную.
+
+Но для маленьких проектов это, скорее всего, избыточно.
+
+---
+
+# Очень полезный приём: review должен быть JSON-like
+
+Чтобы reviewer не писал воду, задай ему формат.
+
+Например:
+
+```markdown
+# Review
+
+## verdict
+PASS | NEEDS_CHANGES | FAIL
+
+## goal_alignment
+0-10
+
+## plan_matches_goal
+yes | no
+
+## evidence
+- ...
+
+## problems
+- ...
+
+## risks
+- ...
+
+## instructions
+1. ...
+2. ...
+3. ...
+
+## next_allowed_task
+...
+```
+
+Такой формат легко читать и человеку, и агенту.
+
+---
+
+# Промпт для reviewer-сессии
+
+Можно использовать почти как есть.
+
+```text
+Ты — независимый reviewer проекта.
+
+Твоя задача — проверить, что текущая работа соответствует цели проекта.
+
+Ты не исполняешь код и не исправляешь файлы.
+Ты только анализируешь и пишешь review.
+
+Источники правды:
+1. GOAL.md — цель проекта.
+2. PLAN.md — ожидаемый план.
+3. WORKLOG.md — отчёт исполнителя, но не доверяй ему полностью.
+4. git status, git log, git diff — фактические изменения.
+5. Вывод тестов, если доступен.
+
+Проверь:
+1. PLAN.md соответствует GOAL.md?
+2. Последние коммиты соответствуют PLAN.md?
+3. Есть ли изменения файлов вне текущей задачи?
+4. Есть ли доказательства выполнения?
+5. Есть ли признаки фиктивного прогресса?
+6. Есть ли риск ухода от цели?
+7. Можно ли отметить текущую задачу как done?
+
+Если доказательств нет, считай задачу невыполненной.
+
+Запиши ответ в REVIEW.md в формате:
+
+# Review
+
+## verdict
+PASS | NEEDS_CHANGES | FAIL
+
+## goal_alignment
+0-10
+
+## plan_matches_goal
+yes | no
+
+## evidence
+- ...
+
+## problems
+- ...
+
+## risks
+- ...
+
+## instructions
+1. ...
+2. ...
+
+## next_allowed_task
+...
+
+Не изменяй исходный код.
+Не изменяй PLAN.md.
+Не изменяй WORKLOG.md.
+Разрешено писать только REVIEW.md.
+```
+
+---
+
+# Промпт для рабочей сессии
+
+```text
+Ты — инженер-исполнитель.
+
+Перед началом работы прочитай:
+1. GOAL.md
+2. PLAN.md
+3. REVIEW.md
+4. WORKLOG.md
+
+Если в REVIEW.md есть instructions, сначала выполни их.
+
+Потом выбери одну текущую задачу из PLAN.md и выполни её.
+
+Правила:
+- не создавай субагентов;
+- не меняй файлы вне текущей задачи;
+- не отмечай задачу done без реального результата;
+- после работы обнови WORKLOG.md;
+- обнови чекбокс PLAN.md только если задача реально сделана;
+- сделай git commit с понятным сообщением.
+
+Definition of Done:
+- код изменён;
+- тесты запущены;
+- тесты прошли;
+- WORKLOG.md обновлён;
+- PLAN.md обновлён;
+- коммит сделан.
+```
+
+---
+
+# Нужно ли, чтобы reviewer был в отдельной сессии?
+
+Да, желательно.
+
+Потому что если reviewer находится в той же сессии, что и исполнитель, он может:
+
+- быть заложником контекста исполнителя;
+- «верить» его объяснениям;
+- не замечать уход в сторону;
+- пытаться сам оправдать изменения.
+
+Отдельная сессия даёт более независимый взгляд.
+
+Но можно сделать ещё жёстче: reviewer работает в отдельном git worktree.
+
+---
+
+# Reviewer через отдельный git worktree
+
+Это хороший вариант, если хочешь изоляцию.
+
+Создаёшь отдельную папку для review:
+
+```bash
+git worktree add ../my-project-review main
+```
+
+Или для конкретной ветки:
+
+```bash
+git worktree add ../my-project-review feature/m3-prompts-db
+```
+
+Потом запускаешь reviewer-сессию там:
+
+```bash
+cd ../my-project-review
+```
+
+Там reviewer:
+
+- читает файлы;
+- смотрит git;
+- пишет `REVIEW.md`;
+- не трогает рабочую папку.
+
+Плюсы:
+
+- рабочая сессия и reviewer не мешают друг другу;
+- меньше риск случайных изменений;
+- удобно сравнивать ветки.
+
+Для маленьких проектов можно и без этого, но идея правильная.
+
+---
+
+# Что насчёт прямого общения агентов?
+
+Ты правильно думаешь: **оно не нужно**.
+
+Прямое общение агентов даёт:
+
+- больше токенов;
+- больше шума;
+- больше непредсказуемости;
+- сложнее отладка;
+- агенты могут «договориться» о неправильном результате.
+
+Лучше использовать модель blackboard / shared artifact:
+
+```text
+Агент A пишет артефакт.
+Агент B читает артефакт.
+Агент C проверяет артефакт.
+```
+
+Артефакты:
+
+- `GOAL.md`;
+- `PLAN.md`;
+- `WORKLOG.md`;
+- `REVIEW.md`;
+- git commits;
+- test reports.
+
+Это надёжнее, чем чат агентов.
+
+---
+
+# Если хочется совсем готовое и на Python
+
+Можно сделать один файл `tools/review.py`.
+
+Примерный скелет:
+
+```python
+#!/usr/bin/env python3
+import json
+import os
+import subprocess
+from datetime import datetime
+from pathlib import Path
+
+from openai import OpenAI
+
+ROOT = Path(__file__).resolve().parent.parent
+MODEL = os.getenv("REVIEW_MODEL", "gpt-4o-mini")
+
+
+def run(cmd: list[str]) -> str:
+    result = subprocess.run(
+        cmd,
+        cwd=ROOT,
+        capture_output=True,
+        text=True,
+    )
+
+    if result.returncode != 0:
+        return f"[command failed: {' '.join(cmd)}]\n{result.stderr.strip()}"
+
+    return result.stdout.strip()
+
+
+def read(path: str, limit: int = 8000) -> str:
+    file_path = ROOT / path
+    if not file_path.exists():
+        return f"[{path} not found]"
+
+    text = file_path.read_text(encoding="utf-8", errors="ignore")
+    if len(text) > limit:
+        text = text[:limit] + "\n\n[truncated]"
+
+    return text
+
+
+def build_context() -> str:
+    parts = []
+
+    parts.append("GOAL.md:\n" + read("GOAL.md"))
+    parts.append("PLAN.md:\n" + read("PLAN.md"))
+    parts.append("WORKLOG.md:\n" + read("WORKLOG.md"))
+    parts.append("REVIEW.md:\n" + read("REVIEW.md"))
+
+    parts.append("git status:\n" + run(["git", "status", "--short"]))
+    parts.append("git branch:\n" + run(["git", "branch", "--show-current"]))
+    parts.append("git log:\n" + run(["git", "log", "--oneline", "-20"]))
+    parts.append("git diff --stat:\n" + run(["git", "diff", "--stat"]))
+    parts.append("git diff:\n" + run(["git", "diff"]))
+
+    return "\n\n".join(parts)
+
+
+def build_prompt(context: str) -> str:
+    return f"""
+Ты независимый reviewer проекта.
+
+Проанализируй контекст ниже.
+
+Ты должен вернуть только JSON без markdown.
+
+Формат ответа:
+
+{{
+  "verdict": "PASS | NEEDS_CHANGES | FAIL",
+  "goal_alignment": 0,
+  "plan_matches_goal": true,
+  "evidence": [],
+  "problems": [],
+  "risks": [],
+  "instructions": [],
+  "next_allowed_task": ""
+}}
+
+Правила:
+- не доверяй отчётам исполнителя полностью;
+- проверяй факт по git diff и git log;
+- если нет доказательств выполнения, не ставь PASS;
+- если изменения вне текущей задачи, отметь это как проблему;
+- если план не соответствует цели, снизь goal_alignment;
+- инструкции должны быть конкретными.
+
+Контекст:
+
+{context}
+""".strip()
+
+
+def write_review_markdown(review: dict) -> str:
+    now = datetime.now().strftime("%Y-%m-%d %H:%M")
+
+    lines = []
+    lines.append("# Review")
+    lines.append("")
+    lines.append(f"Date: {now}")
+    lines.append("")
+    lines.append(f"Verdict: {review.get('verdict', 'UNKNOWN')}")
+    lines.append("")
+    lines.append(f"Goal alignment: {review.get('goal_alignment', 0)}/10")
+    lines.append("")
+    lines.append(f"Plan matches goal: {review.get('plan_matches_goal', False)}")
+    lines.append("")
+
+    lines.append("## Evidence")
+    for item in review.get("evidence", []):
+        lines.append(f"- {item}")
+    lines.append("")
+
+    lines.append("## Problems")
+    for item in review.get("problems", []):
+        lines.append(f"- {item}")
+    lines.append("")
+
+    lines.append("## Risks")
+    for item in review.get("risks", []):
+        lines.append(f"- {item}")
+    lines.append("")
+
+    lines.append("## Instructions")
+    for index, item in enumerate(review.get("instructions", []), start=1):
+        lines.append(f"{index}. {item}")
+    lines.append("")
+
+    lines.append("## Next allowed task")
+    lines.append("")
+    lines.append(review.get("next_allowed_task", ""))
+    lines.append("")
+
+    return "\n".join(lines)
+
+
+def main() -> None:
+    context = build_context()
+    prompt = build_prompt(context)
+
+    client = OpenAI()
+
+    response = client.chat.completions.create(
+        model=MODEL,
+        temperature=0,
+        response_format={"type": "json_object"},
+        messages=[
+            {
+                "role": "system",
+                "content": "Ты независимый reviewer проекта. Отвечай только JSON.",
+            },
+            {
+                "role": "user",
+                "content": prompt,
+            },
+        ],
+    )
+
+    raw = response.choices[0].message.content
+
+    try:
+        review = json.loads(raw)
+    except json.JSONDecodeError:
+        review = {
+            "verdict": "FAIL",
+            "goal_alignment": 0,
+            "plan_matches_goal": False,
+            "evidence": [],
+            "problems": ["Reviewer вернул некорректный JSON"],
+            "risks": [],
+            "instructions": ["Запустить review вручную"],
+            "next_allowed_task": "",
+        }
+
+    markdown = write_review_markdown(review)
+
+    review_path = ROOT / "REVIEW.md"
+    review_path.write_text(markdown, encoding="utf-8")
+
+    print(f"Review written to {review_path}")
+    print(f"Verdict: {review.get('verdict', 'UNKNOWN')}")
+
+
+if __name__ == "__main__":
+    main()
+```
+
+Это уже почти готовый локальный reviewer.
+
+Но повторыюсь: для маленького проекта можно начать без API-скрипта. Сначала сделай ручной вариант с `REVIEW_CONTEXT.md`.
+
+---
+
+# Если хочется на C#
+
+Можно, но для такой задачи Python удобнее из-за короткого скрипта.
+
+На C# это может быть маленькая console app:
+
+```text
+Reviewer/
+  Program.cs
+  Reviewer.csproj
+```
+
+Она делает то же самое:
+
+1. `Process.Start("git", "diff")`
+2. читает `GOAL.md`, `PLAN.md`
+3. вызывает OpenAI API через `OpenAI` NuGet package
+4. пишет `REVIEW.md`
+
+Но если проект маленький, Python/PowerShell будет быстрее.
+
+---
+
+# Что я бы реально выбрал для тебя
+
+Я бы сделал так:
+
+## Шаг 1. Создать файлы
+
+```text
+GOAL.md
+PLAN.md
+WORKLOG.md
+REVIEW.md
+tools/review_context.py
+```
+
+## Шаг 2. Рабочая сессия
+
+В OpenCode:
+
+```text
+Прочитай GOAL.md, PLAN.md, REVIEW.md.
+Выполни только одну текущую задачу.
+Обнови WORKLOG.md и PLAN.md.
+Сделай git commit.
+```
+
+## Шаг 3. Перед review
+
+```bash
+python tools/review_context.py > REVIEW_CONTEXT.md
+```
+
+## Шаг 4. Reviewer-сессия
+
+Открыть отдельную сессию:
+
+```text
+Прочитай REVIEW_CONTEXT.md.
+Ты независимый reviewer.
+Не меняй код.
+Запиши вердикт и указания в REVIEW.md.
+```
+
+## Шаг 5. Коммит review
+
+```bash
+git add REVIEW.md
+git commit -m "review: independent review"
+```
+
+Всё.
+
+Это намного легче, чем OpenAI Orchestrator, CrewAI, AutoGen, LangGraph и прочие agent frameworks.
+
+---
+
+# Итог
+
+Да, ты понял правильно.
+
+Тебе не нужен оркестратор и прямое общение агентов.
+
+Тебе нужен лёгкий **git-based review loop**:
+
+```text
+GOAL.md -> PLAN.md -> рабочая сессия -> git commit -> reviewer -> REVIEW.md -> рабочая сессия читает указания
+```
+
+Из готовых решений:
+
+- для кода: `Qodo PR-Agent`, GitHub PR review, CI;
+- для задач: обычный `PLAN.md` лучше, чем тяжелый трекер;
+- для твоей цели: готового идеального решения нет, лучше собрать минимальную связку из git + markdown + маленького скрипта.
+
+Для маленьких проектов это будет правильнее, дешевле и надёжнее, чем ставить большой multi-agent orchestrator.
