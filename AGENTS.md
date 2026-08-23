@@ -75,7 +75,8 @@ Track table удалена — источник истины о статусах
 
 - Не коммитить: `.idea\`, `.opencode\`, `bin\obj`, `TestResults\`, `__pycache__\`, `*.db`, логи.
 - Коммиты: `pipeline: ...` (каркас), `project/<имя>: ...` (конфиги примеров),
-  в планах — `plan/<CARD>: ...`.
+  в планах — `plan/<CARD>: ...`. Полная конвенция (префиксы, ветки, версии,
+  `Refs: <CARD>`, запрет add -A в общих репо) — protocol.md §7.
 - `runner.stage_approver: reviewer` — этап принимает ревьюер-сессия
   (GOAL.md + план + diff/log + отчёты); владелец утверждает продукт тегом `stage/<N>-done`.
 - Новый проект = `examples\<имя>\pipeline.yaml` (секции project/build/tests/plan/runner)
