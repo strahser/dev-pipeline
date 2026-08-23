@@ -255,12 +255,21 @@ def _build_subprompt(cfg, task_id: str, task_file: Path, report_path: Path,
             def __missing__(self, key):
                 return "{" + key + "}"
 
-        prompt = prompt_override.format_map(
-            _SafeDict(task_file=task_file,
-                      report=report_path,
-                      task_id=task_id,
-                      project=cfg.name)
-        )
+        try:
+            prompt = prompt_override.format_map(
+                _SafeDict(task_file=task_file,
+                          report=report_path,
+                          task_id=task_id,
+                          project=cfg.name)
+            )
+        except Exception:
+            # Хвосты ошибок субагента содержат произвольные '{ ... }'
+            # (PowerShell-однострочники и т.п.) — атрибутный доступ вида
+            # {$_ .Path} роняет format_map AttributeError'ом и убивает
+            # раннер между попытками (инцидент U1.3 2026-08-23). Все
+            # рабочие плейсхолдеры к этому моменту уже подставлены
+            # план-раннером через str.replace — используем текст как есть.
+            prompt = prompt_override
     else:
         prompt = SUBPROMPT.format(
             task_file=task_file,
