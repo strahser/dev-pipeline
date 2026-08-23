@@ -1248,6 +1248,17 @@ class AgentIn(BaseModel):
     task: str = ""
 
 
+@app.get("/api/crew/{project}")
+async def crew_get(project: str):
+    """Crew-конфиг проекта (роли/модель/права) для кнопки «▶ Поднять проект»."""
+    try:
+        cfg = load_config(project)
+    except ConfigError as e:
+        raise HTTPException(404, f"проект не найден: {e}")
+    from pipeline.crew import load_crew
+    return {"project": cfg.name, **load_crew(cfg)}
+
+
 @app.post("/api/agents")
 async def agent_create(body: AgentIn):
     """Создать агента-помощника: сессия с ролью и предзагруженным скиллом.

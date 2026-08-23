@@ -327,6 +327,63 @@ def cmd_status(cfg, _args):
 
 
 # ---------------------------------------------------------------------------
+# Crew: автономные сессии проекта (карточка 6.2)
+# ---------------------------------------------------------------------------
+
+def _crew_client(cfg):
+    from .client import Client
+    c = Client("supervisor", project=cfg.name)
+    return c if c.server_alive() else None
+
+
+def cmd_up(cfg, args):
+    """Поднять crew проекта: права + сессия на каждую роль."""
+    from . import crew
+    perm = crew.ensure_permissions(cfg)
+    print("[crew] права opencode: "
+          + (f"шаблон создан: {perm}" if perm else f"уже есть ({cfg.crew_permissions})"))
+    client = _crew_client(cfg)
+    results = crew.up_project(cfg, client)
+    if not results:
+        return 1
+    return 0 if all(r["ok"] for r in results) else 1
+
+
+def cmd_supervise(cfg, args):
+    """Цикл супервизора: порция -> handoff -> перезапуск (<= restart_policy)."""
+    import time as _time
+    from . import crew
+    from .client import Client
+
+    crew.ensure_permissions(cfg)
+    client = Client("supervisor", project=cfg.name)
+    if not client.server_alive():
+        print("[crew] сервер недоступен — supervise невозможен")
+        return 1
+
+    def spawn(session):
+        import subprocess
+        worker = Path(__file__).resolve().parent.parent / "agents" / "session_worker.py"
+        subprocess.Popen([sys.executable, "-X", "utf8", str(worker),
+                          "--session", session["id"], "--project", cfg.name],
+                         creationflags=0 if os.name != "nt" else 0x00000008,
+                         stdout=subprocess.DEVNULL, stderr=subprocess.DEVNULL)
+
+    counters: dict = {}
+    print(f"[crew] supervise {cfg.name}: роли {cfg.crew_roles}, "
+          f"рестартов <= {cfg.restart_max} через {cfg.restart_cooldown_sec}с. Ctrl+C — стоп.")
+    try:
+        while True:
+            for d in crew.supervise_once(cfg, client, counters, spawn=spawn):
+                print(f"[crew] {d.get('sid')}: {d['action']}"
+                      + (f" -> {d.get('new_sid')}" if d.get("new_sid") else ""))
+            _time.sleep(max(10, args.interval))
+    except KeyboardInterrupt:
+        print("[crew] supervise остановлен владельцем")
+        return 0
+
+
+# ---------------------------------------------------------------------------
 # Главный вход
 # ---------------------------------------------------------------------------
 
@@ -360,6 +417,14 @@ def main(argv=None):
     p.add_argument("card", nargs="?", default="",
                    help="СДР карточки для привязки этапа (необязательно)")
     p.set_defaults(handler=lambda a: cmd_brief(load_config(a.project), a))
+
+    p = sub.add_parser("up"); add_project(p)
+    p.set_defaults(handler=lambda a: cmd_up(load_config(a.project), a))
+
+    p = sub.add_parser("supervise"); add_project(p)
+    p.add_argument("--interval", type=int, default=30,
+                   help="период прохода супервизора, сек")
+    p.set_defaults(handler=lambda a: cmd_supervise(load_config(a.project), a))
 
     args = ap.parse_args(argv)
     if not getattr(args, "cmd", None):

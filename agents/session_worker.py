@@ -31,10 +31,34 @@ from pathlib import Path
 sys.path.insert(0, str(Path(__file__).resolve().parent.parent))
 
 from pipeline.client import Client  # noqa: E402
+from pipeline.crew import HANDOFF_MARK  # noqa: E402
 from pipeline.proc import no_window_flags  # noqa: E402
 
 HEARTBEAT_SEC = 30
 SUBAGENT_TIMEOUT = int(os.environ.get("SUBAGENT_TIMEOUT_SEC", "1800"))
+
+
+def write_handoff(cwd: str, sid: str, *, task_id: str, report: str,
+                  rc: int, error_tail: str = "") -> str | None:
+    """Handoff-файл порции (формат карточки 6.2). Лучшее усилие — не мешает выходу."""
+    try:
+        d = Path(cwd) / "Tasks" / "Конвейер" / "handoff"
+        d.mkdir(parents=True, exist_ok=True)
+        p = d / f"{sid}.md"
+        p.write_text(
+            f"# HANDOFF {sid} — {task_id or '—'}\n\n"
+            f"## Репозитории и коммиты\n- см. git log проекта (коммиты этой порции)\n\n"
+            f"## Контекст\n- сессия {sid}; задача/карточка: {task_id or '—'}\n\n"
+            f"## ГОТОВО\n{'(см. отчёт)' if report else '(не собрано)'}\n\n"
+            f"## ЗАДАЧА (продолжение)\n- доведи задачу до критериев приёмки;\n"
+            f"- отчёт: {report or '(создай по протоколу)'}\n\n"
+            f"## Цикл работы\n- правки -> сборка -> тесты -> коммит -> push -> "
+            f"отметка в плане\n\n"
+            f"## Грабли\n{(error_tail or '—')[-1500:]}\n",
+            encoding="utf-8")
+        return str(p)
+    except Exception:
+        return None
 
 
 def _find_opencode() -> str:
@@ -215,14 +239,21 @@ def run_session(client: Client, sid: str, cwd: str) -> int:
         except Exception:
             pass
 
-    # 4. статус на сервер
+    # 4. handoff + статус на сервер
+    handoff_path = write_handoff(cwd, sid, task_id=task_id, report=report,
+                                 rc=rc, error_tail=(err or out or ""))
     if rc == 0 and report and Path(report).exists():
-        print(f"[session_worker] сессия {sid}: done, отчёт {report}")
-        client.session_status(sid, "done", note="отчёт готов", report=report)
+        note = (f"{HANDOFF_MARK}{handoff_path}"
+                if instr.get("continues") and handoff_path else "отчёт готов")
+        print(f"[session_worker] сессия {sid}: done, отчёт {report}"
+              + (f", handoff {handoff_path}" if handoff_path else ""))
+        client.session_status(sid, "done", note=note, report=report)
         return 0
     err_tail = (err or out or "")[-2000:]
     reason = (f"rc={rc}" + (", abort" if abort.is_set() else "")
               + (f"; {err_tail}" if err_tail else ""))[:2500]
+    if handoff_path:
+        reason += f"; handoff: {handoff_path}"
     print(f"[session_worker] сессия {sid}: {reason}")
     client.session_status(sid, "failed", error=reason)
     return 1

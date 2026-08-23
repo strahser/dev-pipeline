@@ -71,6 +71,26 @@ grill-фаза субагента (вопросы владельцу через 
 - Состояние: `Tasks\Конвейер\runner_state.json` (`GET /api/runner`).
 - Без сервера: добавьте `--legacy` (opencode run напрямую).
 
+## 4.1.1. Crew: автономные сессии проекта (карточка 6.2)
+
+```bat
+:: Поднять crew: права opencode + сессия на каждую роль из crew.roles
+python -X utf8 -m pipeline.cli up devpipeline
+
+:: Цикл супервизора: порция -> handoff -> новая сессия (<= restart_policy)
+python -X utf8 -m pipeline.cli supervise devpipeline --interval 30
+```
+
+- Конфиг: секции `crew:` (roles/model/permissions) и `restart_policy:`
+  (max_restarts/cooldown_sec) в `examples\<проект>\pipeline.yaml`.
+- Права чтения/записи — профиль `.opencode/permissions.json` в корне проекта;
+  создаётся при первом `up`, существующий не перезаписывается.
+- Handoff-цикл: воркер завершает порцию, пишет `Tasks\Конвейер\handoff\<SID>.md`
+  (Репозитории и коммиты · Контекст · ГОТОВО · ЗАДАЧА · Цикл работы · Грабли)
+  и выходит; супервизор поднимает новую сессию, чей промпт = инструкция + handoff.
+- Бюджет: исчерпан `max_restarts` → событие `crew_exhausted`, автоперезапуск стоп.
+- Панель: кнопка «▶ Поднять проект» (план-вью) вызывает тот же `/api/agents`.
+
 ## 4.2. Агент-менеджер (разовые задачи A-NN)
 
 ```powershell

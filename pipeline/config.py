@@ -73,6 +73,13 @@ class ProjectConfig:
     checkpoint_stages: bool = True                   # пауза после закрытия этапа (summary)
     checkpoint_remind_sec: int = 600                 # напоминание checkpoint_waiting каждые N сек ожидания
 
+    # Crew: автономные сессии проекта (карточка 6.2)
+    crew_roles: list = field(default_factory=lambda: ["executor"])
+    crew_model: str = ""                             # пусто = дефолт сервера
+    crew_permissions: str = "write"                  # read | write — профиль opencode
+    restart_max: int = 3                             # перезапусков сессии на порцию
+    restart_cooldown_sec: int = 300                  # пауза между перезапусками
+
     # Служебные настройки
     skip_dirs: list = field(default_factory=lambda: [
         "bin", "obj", ".git", ".idea", ".opencode", "packages",
@@ -253,6 +260,13 @@ def load_config(project_name: str) -> ProjectConfig:
         question_timeout_sec=int(rn.get("question_timeout_sec", 1200)),
         checkpoint_stages=bool(rn.get("checkpoint_stages", True)),
         checkpoint_remind_sec=int(rn.get("checkpoint_remind_sec", 600)),
+        crew_roles=[str(r) for r in ((raw.get("crew") or {}).get("roles")
+                                     or ["executor"])],
+        crew_model=str((raw.get("crew") or {}).get("model", "")),
+        crew_permissions=str((raw.get("crew") or {}).get("permissions", "write")),
+        restart_max=int((raw.get("restart_policy") or {}).get("max_restarts", 3)),
+        restart_cooldown_sec=int((raw.get("restart_policy") or {})
+                                 .get("cooldown_sec", 300)),
     )
 
 

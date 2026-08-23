@@ -393,6 +393,24 @@ let currentTaskId = null;
 let allRows = [];          // все задачи из API (сырые)
 const collapsed = new Set(); // свёрнутые WBS-коды (дерево)
 
+/* --- Crew: поднять проект (карточка 6.2) --- */
+async function crewUp(){
+  const proj = activeProject;
+  if(!proj){ alert('сначала выберите проект'); return; }
+  try{
+    const c = await get('/api/crew/'+encodeURIComponent(proj));
+    if(!c.roles || !c.roles.length){ alert('в pipeline.yaml нет секции crew'); return; }
+    for(const role of c.roles){
+      const r = await fetch('/api/agents',{method:'POST',
+        headers:{'Content-Type':'application/json'},
+        body: JSON.stringify({role: role, project: proj, model: c.model||''})});
+      if(!r.ok) console.warn('crew: роль '+role+' отклонена', r.status);
+    }
+    alert('crew поднят: ' + c.roles.join(', ') + (c.model? ' ('+c.model+')' : '')
+      + '\nправа: ' + (c.permissions||'write'));
+  }catch(e){ alert('crew: '+(e.message||e)); }
+}
+
 /* --- Вопросы агентов (grill) и чекпоинты план-раннера --- */
 function qaQuery(){
   return activeProject ? '?project='+encodeURIComponent(activeProject) : '';
@@ -1370,6 +1388,7 @@ function buildShell(){
           '<button onclick="resetFilters()">Сброс</button>'+
           '<button class="primary" onclick="openTokens()">📊 Токены</button>'+
           '<button class="primary" onclick="openDurations()">⏱ Время</button>'+
+          '<button class="primary" onclick="crewUp()">▶ Поднять проект</button>'+
           '<button class="primary" onclick="refreshData(true)">Обновить</button>'+
         '</div>'+
       '</div>'+
