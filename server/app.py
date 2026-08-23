@@ -1143,7 +1143,11 @@ async def chat_agent_terminal(body: TerminalIn):
         ensure_permissions(cfg)
     except Exception:
         pass
-    script = Path(__file__).resolve().parent.parent / "agents" / "tui_cycle.py"
+    agents_dir = Path(__file__).resolve().parent.parent / "agents"
+    if body.role == "manager":
+        script = agents_dir / "project_manager.py"
+    else:
+        script = agents_dir / "tui_cycle.py"
     py = sys.executable or "python"
     base = [py, "-X", "utf8", str(script),
             "--project", body.project, "--role", body.role]
@@ -1344,6 +1348,15 @@ async def agent_create(body: AgentIn):
     prompt = cfg["prompt"].format(skill_path=skill_path, project=body.project or "?")
     if body.task:
         prompt += f"\n\nДОПОЛНИТЕЛЬНОЕ ЗАДАНИЕ (выполни после подтверждения роли):\n{body.task}"
+    elif body.project:
+        # Существующий проект без явного задания: агент стартует не «в пустоту»,
+        # а с автозаданием по контексту (план/задачи, обратная связь 2026-08-23).
+        try:
+            from agents.tui_cycle import auto_task
+            prompt += "\n\nЗАДАНИЕ (авто, по контексту проекта):\n" + \
+                auto_task(load_config(body.project))
+        except Exception:
+            pass
     sid = _sess_id()
     s = store.create_session(
         sid, project=body.project, task="", agent=f"agent-{role}-{sid[-4:]}",

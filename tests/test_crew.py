@@ -10,6 +10,7 @@ import sys
 import tempfile
 import time
 import unittest
+from unittest import mock
 from pathlib import Path
 
 sys.path.insert(0, str(Path(__file__).resolve().parent.parent))
@@ -220,6 +221,100 @@ class TuiCycleTest(unittest.TestCase):
         self.assertIn("ИСПОЛНИТЕЛ", p)
         self.assertIn("proj", p)
         self.assertIn("почини фильтр", p)
+
+    def test_auto_task_empty_project(self):
+        from agents import tui_cycle
+        txt = tui_cycle.auto_task(self.cfg)
+        self.assertIn("ТЕКУЩЕЕ СОСТОЯНИЕ", txt)
+        self.assertIn("файла плана нет", txt)
+        self.assertIn("ЗАДАНИЕ:", txt)
+
+    def test_auto_task_existing_plan_names_next_card(self):
+        from agents import tui_cycle
+        cur = self.tmp / "proj" / "_current"     # plan_repo=[tmp] + name=proj
+        cur.mkdir(parents=True, exist_ok=True)
+        (cur / "p.md").write_text(
+            "# План\n\n| СДР | Наименование | Тип | Статус |\n|---|---|---|---|\n"
+            "| `1.1` | Первая | execution | Открыто |\n\n"
+            "### Карточка 1.1 — Первая\n\n- **Статус**: `open`\n- **Цель**: дело.\n"
+            "- **Зависимости**: нет.\n", encoding="utf-8")
+        cfg2 = make_cfg(self.tmp, plan_repo=[self.tmp], plan_subdir="proj")
+        txt = tui_cycle.auto_task(cfg2)
+        self.assertIn("выполнено 0/1", txt)
+        self.assertIn("следующая карточка: 1.1", txt)
+        prompt = tui_cycle.build_base_prompt(cfg2, "executor", "")
+        self.assertIn("следующая карточка", prompt,
+                      "без явного задания подставляется автозадание")
+
+    def test_auto_task_warns_when_runner_lock_held(self):
+        from agents import tui_cycle
+        (self.cfg.conveyor_dir() / "runner.lock").write_text("{}", encoding="utf-8")
+        txt = tui_cycle.auto_task(self.cfg)
+        self.assertIn("НЕ трогать", txt)
+
+
+class ManagerTest(unittest.TestCase):
+    """Общий менеджер проекта: восстановление сессий + приёмка работы."""
+
+    def setUp(self):
+        self.tmp = Path(tempfile.mkdtemp(prefix="pcrew_mgr_"))
+        for sub in ("Tasks/Активные", "Tasks/Отчёты", "Tasks/Архив",
+                    "Tasks/Конвейер"):
+            (self.tmp / sub).mkdir(parents=True, exist_ok=True)
+        self.cfg = make_cfg(self.tmp)
+
+    def test_accepts_done_report_without_verdict(self):
+        from agents import project_manager as pm
+        (self.tmp / "Tasks" / "Активные" / "A-01_дело.md").write_text(
+            "---\nid: A-01\nстатус: done_report\n---\n# ЗАДАЧА A-01\n",
+            encoding="utf-8")
+        (self.tmp / "Tasks" / "Отчёты" / "A-01_Отчёт_2026-08-23.md").write_text(
+            "# ОТЧЁТ A-01\n## Что сделано\nработа\n## Доказательства\nтесты\n",
+            encoding="utf-8")
+        seen = []
+
+        def fake_verify(cfg_, args):
+            seen.append(args.task)
+            vd = cfg_.abs_tasks_dir("reports") / \
+                f"{args.task}_Вердикт_менеджера_test.md"
+            vd.write_text(f"Вердикт: **PASS** ({args.task})\n", encoding="utf-8")
+            return 0
+
+        with mock.patch("pipeline.cli.cmd_verify", fake_verify):
+            accepted = pm.accept_pending_work(self.cfg, log=lambda *a, **k: None)
+        self.assertEqual(accepted, ["A-01"])
+        self.assertEqual(seen, ["A-01"])
+
+    def test_skips_verdicted_and_open_tasks(self):
+        from agents import project_manager as pm
+        reports = self.tmp / "Tasks" / "Отчёты"
+        # A-02 уже имеет вердикт; A-03 ещё open; A-04 без отчёта
+        (self.tmp / "Tasks" / "Активные" / "A-02_готово.md").write_text(
+            "---\nid: A-02\nстатус: done_report\n---\nx", encoding="utf-8")
+        (self.tmp / "Tasks" / "Активные" / "A-03_открыта.md").write_text(
+            "---\nid: A-03\nстатус: open\n---\nx", encoding="utf-8")
+        (self.tmp / "Tasks" / "Активные" / "A-04_без_отчёта.md").write_text(
+            "---\nid: A-04\nстатус: done_report\n---\nx", encoding="utf-8")
+        (reports / "A-02_Вердикт_контролёра.md").write_text("PASS", encoding="utf-8")
+
+        def fail_if_called(cfg_, args):
+            raise AssertionError("verify не должен вызываться")
+
+        with mock.patch("pipeline.cli.cmd_verify", fail_if_called):
+            accepted = pm.accept_pending_work(self.cfg, log=lambda *a, **k: None)
+        self.assertEqual(accepted, [])
+
+    def test_manage_once_restores_failed_sessions(self):
+        from agents import project_manager as pm
+        client = FakeClient([
+            {"id": "S9", "project": "proj", "status": "failed", "note": "",
+             "task": "U2.2", "role": "worker", "model": "", "instruction": {}}])
+        spawned = []
+        restored, _ = pm.manage_once(self.cfg, client, {},
+                                     spawner=lambda s: spawned.append(s),
+                                     log=lambda *a, **k: None)
+        self.assertEqual(restored, ["U2.2"])
+        self.assertEqual(len(spawned), 1)
 
 
 if __name__ == "__main__":

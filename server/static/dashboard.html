@@ -429,20 +429,25 @@ async function spawnRoleAgent(role, proj){
   }catch(e){ alert(role+': '+(e.message||e)); }
 }
 
-/* Автономный терминал агента: цикл порций (handoff → свежая сессия, /new-эквивалент) */
-async function openTerminal(proj){
+/* Автономный терминал агента: цикл порций (handoff → свежая сессия, /new-эквивалент)
+   или общий менеджер проекта (role=manager) */
+async function openTerminal(proj, role){
   proj = proj || activeProject;
   if(!proj){ alert('выберите проект'); return; }
-  const prompt = window.prompt('Стартовое задание агенту в терминале (можно пусто — работает по цели и плану проекта):','') || '';
+  role = role || 'executor';
+  const hint = role === 'manager'
+    ? 'Менеджер: восстановление упавших сессий + приёмка работы. Стартовое задание менеджеру (можно пусто):'
+    : 'Стартовое задание агенту (можно пусто — подставится автозадание по контексту проекта: цель, план, открытые задачи):';
+  const prompt = window.prompt(hint,'') || '';
   if(prompt === null) return;
   try{
     const r = await fetch('/api/chat/agents/terminal',{method:'POST',
       headers:{'Content-Type':'application/json'},
-      body: JSON.stringify({project: proj, role: 'executor', prompt: prompt})});
+      body: JSON.stringify({project: proj, role: role, prompt: prompt})});
     if(!r.ok){ alert('терминал отклонён: '+r.status+' '+(await r.text()).slice(0,200)); return; }
     const d = await r.json();
     alert(d.message || ('терминал открыт для '+proj)
-      + '\nОтдельное окно консоли: каждая порция — свежая сессия opencode.');
+      + '\nОтдельное окно терминала.');
   }catch(e){ alert('терминал: '+(e.message||e)); }
 }
 
@@ -1524,7 +1529,8 @@ function renderProjectCard(p){
   h += '<div style="display:flex;gap:6px;margin-top:8px;flex-wrap:wrap">'+
        '<button style="padding:4px 10px;font-size:12px" title="Сессия на каждую роль из pipeline.yaml (crew), права write" onclick="crewUp(\''+esc(p.project)+'\')">▶ Поднять проект</button>'+
        '<button style="padding:4px 10px;font-size:12px" title="Контролёр/планировщик (Агент-1) для проекта" onclick="spawnRoleAgent(\'controller\',\''+esc(p.project)+'\')">🧭 Контролёр</button>'+
-       '<button style="padding:4px 10px;font-size:12px" title="Видимый терминал opencode с автономным циклом порций (handoff → свежая сессия, /new-эквивалент)" onclick="openTerminal(\''+esc(p.project)+'\')">🖥 Терминал</button>'+
+       '<button style="padding:4px 10px;font-size:12px" title="Видимый терминал opencode с автономным циклом порций (handoff → свежая сессия, /new-эквивалент); пусто = автозадание по контексту проекта" onclick="openTerminal(\''+esc(p.project)+'\',\'executor\')">🖥 Терминал</button>'+
+       '<button style="padding:4px 10px;font-size:12px" title="Общий менеджер в терминале: восстанавливает упавшие сессии, принимает работу (verify) при отсутствии контролёра" onclick="openTerminal(\''+esc(p.project)+'\',\'manager\')">🛡 Менеджер</button>'+
        '</div>';
   h += '</div>';
   return h;

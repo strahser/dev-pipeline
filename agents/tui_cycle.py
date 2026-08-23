@@ -44,8 +44,55 @@ ROLE_STARTERS = {
 }
 
 
+def auto_task(cfg) -> str:
+    """Автозадание для СУЩЕСТВУЮЩЕГО проекта: продолжить работу по контексту
+    (панель запускает агента не «в пустоту», а с конкретным состоянием дел)."""
+    lines: list[str] = []
+    runner_active = (cfg.conveyor_dir() / "runner.lock").exists()
+    if runner_active:
+        lines.append("- ВНИМАНИЕ: план-раннер работает (runner.lock) — карточки "
+                     "плана НЕ трогать, возможен конфликт")
+    try:
+        pf = cfg.find_plan_file()
+        if pf:
+            from pipeline.plans import load as load_plan
+            prog = load_plan(pf).progress()
+            lines.append(f"- план: {pf.name} (выполнено {prog['done']}/{prog['total']})")
+            if not runner_active:
+                ready = load_plan(pf).ready_cards()
+                if ready:
+                    c = ready[0]
+                    lines.append(f"- следующая карточка: {c.id} — {c.title}")
+                else:
+                    lines.append("- готовых карточек нет (ждут зависимостей/владельца)")
+        else:
+            lines.append("- файла плана нет (ProjectsPalns\\<проект>\\_current пуст)")
+    except Exception as e:
+        lines.append(f"- план недоступен: {e}")
+    try:
+        active = cfg.abs_tasks_dir("active")
+        open_tasks = []
+        for tf in sorted(active.glob("*.md")) if active.is_dir() else []:
+            try:
+                head = tf.read_text(encoding="utf-8", errors="replace")[:500]
+            except OSError:
+                continue
+            if "статус:" in head and any(
+                    f"статус: {s}" in head for s in ("open", "in_progress")):
+                open_tasks.append(tf.name)
+        if open_tasks:
+            lines.append("- открытые задачи: " + ", ".join(open_tasks[:5]))
+    except Exception:
+        pass
+    tail = ("ЗАДАНИЕ: продолжи работу проекта по контексту выше — возьми верхнюю "
+            "открытую задачу/карточку и доведи до критериев приёмки "
+            "(правки -> сборка/тесты -> коммит по протоколу).")
+    return "\n".join(["ТЕКУЩЕЕ СОСТОЯНИЕ ПРОЕКТА:"] + lines + ["", tail])
+
+
 def build_base_prompt(cfg, role: str = "executor", user_prompt: str = "") -> str:
-    """Базовый промпт каждой порции: роль + цель проекта + задание владельца."""
+    """Базовый промпт каждой порции: роль + цель проекта + задание владельца.
+    Без явного задания — автозадание по контексту существующего проекта."""
     starter = ROLE_STARTERS.get(role, ROLE_STARTERS["executor"])
     parts = [starter.format(project=cfg.name)]
     try:
@@ -55,8 +102,7 @@ def build_base_prompt(cfg, role: str = "executor", user_prompt: str = "") -> str
             parts.append("ЦЕЛЬ ПРОЕКТА:\n" + goal)
     except Exception:
         pass
-    if user_prompt:
-        parts.append("ЗАДАНИЕ ВЛАДЕЛЬЦА:\n" + user_prompt)
+    parts.append(user_prompt if user_prompt else auto_task(cfg))
     return "\n\n".join(parts)
 
 
