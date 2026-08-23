@@ -318,7 +318,7 @@ def run_subagent_legacy(cfg, task_id: str, report_path: Path, log_path: Path,
     """Legacy-режим: opencode run напрямую из bash-процесса (фолбэк без сервера)."""
     task_file = _find_task_file(cfg, task_id)
     if not task_file:
-        print(f"  [manager] задача {task_id} не найдена в Активные и в TDL JSON")
+        print(f"  [manager] задача {task_id} не найдена в Активные (JSON задачи)")
         return 2
 
     # open -> in_progress
@@ -395,7 +395,7 @@ def run_subagent_session(cfg, task_id: str, report_path: Path, log_path: Path,
     0 — done+отчёт; 1 — failed; 124 — killed/stalled/таймаут; 2 — нет задачи."""
     task_file = _find_task_file(cfg, task_id)
     if not task_file:
-        print(f"  [manager] задача {task_id} не найдена в Активные и в TDL JSON")
+        print(f"  [manager] задача {task_id} не найдена в Активные (JSON задачи)")
         return 2
 
     from pipeline.models import Task
@@ -633,7 +633,7 @@ def _print_summary(cfg, ids, results):
 def _ensure_report(cfg, tid: str, rc: int) -> bool:
     """Проверяет наличие отчёта исполнителя. Фейковый отчёт НЕ создаёт —
     он маскирует обрывы/зависания субагента. При rc != 0 или отсутствии
-    отчёта — помечает задачу stalled (TDL history) и возвращает False."""
+    отчёта — помечает задачу stalled в history и возвращает False."""
     reports_dir = cfg.abs_tasks_dir("reports")
     if glob.glob(str(reports_dir / (tid + "_Отчёт_*"))):
         return True

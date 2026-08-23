@@ -64,14 +64,14 @@ def _build_question(task_file: str | None, context_files: list[str], prompt: str
 
 
 def _task_json_human(p: Path) -> str:
-    """Превратить TDL .task.json в человекочитаемую постановку для Qwen."""
+    """Превратить легаси .task.json в человекочитаемую постановку для Qwen."""
     import json
     try:
         t = json.loads(p.read_text(encoding="utf-8"))
     except Exception:
         return (f"### ЗАДАЧА {p.stem} (JSON)\n"
                 + p.read_text(encoding="utf-8", errors="replace"))
-    lines = [f"### ЗАДАЧА {t.get('task_id', p.stem)} (TDL)", ""]
+    lines = [f"### ЗАДАЧА {t.get('task_id', p.stem)} (JSON)", ""]
     for label, key in [("Наименование", "name"), ("Цель", "goal"),
                        ("Описание", "description"), ("Статус", "status"),
                        ("Workflow", "workflow_state"), ("Модуль", "module"),
@@ -151,7 +151,7 @@ def _is_complete(response: str) -> bool:
 
 def main() -> int:
     ap = argparse.ArgumentParser()
-    ap.add_argument("--task", help="путь к файлу задачи (TDL .task.json или legacy)")
+    ap.add_argument("--task", help="путь к файлу задачи (.task.json или legacy)")
     ap.add_argument("--context", action="append", default=[], help="файлы контекста")
     ap.add_argument("--prompt", default="", help="прямая инструкция")
     ap.add_argument("--out", required=True, help="куда сохранить ответ Qwen")

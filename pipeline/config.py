@@ -82,11 +82,6 @@ class ProjectConfig:
         "TestResults", "__pycache__", "Архив",
     ])
 
-    @property
-    def path(self, key: str) -> Path:
-        """Абсолютный путь к папке/файлу Tasks."""
-        return self.root / getattr(self, key)
-
     def resolve(self, rel: str) -> Path:
         return self.root / rel
 

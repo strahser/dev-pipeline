@@ -29,12 +29,35 @@ dev-pipeline\
 
 1. Создать `examples\<project>\pipeline.yaml` (см. `examples\heatlossrevit2\pipeline.yaml`).
 2. Положить в проект папку `Tasks\` по протоколу (`docs\protocol.md`).
-3. Запустить CLI: `python -m pipeline.cli <команда> <project>`.
-4. Запустить сервер + агентов (шаг 3, в разработке).
+3. Проверить регистрацию: `python -m pipeline.cli list` и `python -m pipeline.cli status <project>`.
+
+## Команды CLI
+
+Сигнатуры соответствуют выводу `python -m pipeline.cli --help`:
+
+```
+python -m pipeline.cli list
+python -m pipeline.cli env
+python -m pipeline.cli status <project>
+python -m pipeline.cli dispatch <project> <file> [--id ID] [--title TITLE]
+                                 [--priority PRIORITY] [--requirements REQUIREMENTS]
+                                 [--result RESULT] [--remark REMARK]
+python -m pipeline.cli execute [--engine qwen|manual|parallel] <project> <task>
+python -m pipeline.cli verify <project> <task>
+python -m pipeline.cli brief <project> [card]
+```
+
+- `dispatch` — оформить сырой файл из Входящих как задачу A-NN;
+- `execute` — запустить исполнителя задачи (`--engine manual` — просто показать, что делать);
+- `verify` — механическая проверка отчёта + сборка + тесты → Вердикт;
+- `brief` — авто-дайджест контекста проекта (план/коммиты/артефакты), опционально с привязкой к карточке СДР.
+
+Сервер и агентов удобно поднимать через `dev-pipeline.bat` (пункт 1) или напрямую:
+`python -X utf8 -m server --port 8787`.
 
 ## План-раннер (план ProjectsPalns — источник истины)
 
-Track table (TDL) удалена. План-раннер исполняет карточки плана из репозитория
+Track table удалена. План-раннер исполняет карточки плана из репозитория
 ProjectsPalns: выбор готовой карточки (статус `Открыто`, зависимости закрыты) →
 MD-постановка → grill-фаза → субагент → механический вердикт → статус `Выполнено`
 прямо в файле плана + коммит.
@@ -188,7 +211,7 @@ task_file, report, log, prompt, model, skill), а тонкий `agents/session_w
 - [x] Шаг 3: сервер (FastAPI + SQLite + SSE, `/events`, `/messages`, `/heartbeat`, dashboard)
 - [x] Шаг 4: клиенты агентов (`agents/`): agent_watch, executor_client, browser_client
 - [x] Шаг 5: скилы (pipeline-executor/-controller/-reviewer/-browser-bridge), docs
-- [x] **v2: TDL удалён; план ProjectsPalns — источник истины** (pipeline/plans.py:
+- [x] **v2: план ProjectsPalns — источник истины** (pipeline/plans.py:
   3 формата карточек, set_card_status; server/plan_api.py: /api/plan/*, вопросы,
   чекпоинты, состояние раннера)
 - [x] **v2: план-раннер agents/plan_runner.py** (grill-фаза, wait_answer.py,

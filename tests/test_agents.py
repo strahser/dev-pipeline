@@ -63,7 +63,7 @@ class TestDispatchChunk(unittest.TestCase):
 
     def test_dispatch_creates_task_file_with_boundaries(self):
         """dispatch_chunk создаёт MD-задачу с границами и результатом."""
-        tmp = Path(tempfile.mkdtemp(prefix="am_tdl_"))
+        tmp = Path(tempfile.mkdtemp(prefix="am_mgr_"))
         for sub in ("Tasks/Активные", "Tasks/Отчёты", "Tasks/Архив", "Tasks/Конвейер"):
             (tmp / sub).mkdir(parents=True)
         from pipeline.config import ProjectConfig

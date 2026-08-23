@@ -1,5 +1,5 @@
 # -*- coding: utf-8 -*-
-"""Тесты qwen_bridge: парсинг FILE-блоков, TDL-задача, strip-префикса, полнота.
+"""Тесты qwen_bridge: парсинг FILE-блоков, легаси-задача, strip-префикса, полнота.
 
 Без живого Qwen (только чистые функции).
 Запуск: python -X utf8 tests/test_qwen_bridge.py -v
@@ -70,7 +70,7 @@ class TestIsComplete(unittest.TestCase):
 
 
 class TestTaskJsonHuman(unittest.TestCase):
-    def test_tdl_task(self):
+    def test_legacy_task(self):
         with tempfile.TemporaryDirectory() as tmp:
             p = Path(tmp) / "A-01.task.json"
             p.write_text(json.dumps({
