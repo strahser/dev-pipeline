@@ -116,6 +116,10 @@
     "grep": "allow",
     "glob": "allow",
     "task": "allow",
-    "skill": "allow"
+    "skill": "allow",
+    "external_directory": {
+      "D:\\Projects\\ProjectsPalns\\*": "allow",
+      "D:\\Projects\\ProjectsPalns\\dev-pipeline\\*": "allow"
+    }
   }
 }
