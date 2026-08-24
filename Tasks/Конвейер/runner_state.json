@@ -1,8 +1,8 @@
 {
-  "updated": "2026-08-24T11:39:12",
+  "updated": "2026-08-24T12:04:09",
   "plan": "D:\\Projects\\ProjectsPalns\\dev-pipeline\\_current\\2026-08-24_dev-pipeline-crew-manager-ui.md",
   "phase": "executing",
-  "card": "3.2",
+  "card": "3.3",
   "attempt": 1,
-  "title": "apiFetch + тосты; подтверждение и комментарий чекпоинта"
+  "title": "Сессии: фильтр статуса, kill stalled, кнопка Cleanup, бейдж handoff"
 }

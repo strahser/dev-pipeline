@@ -1,0 +1,59 @@
+# Конфигурация конвейера: HeatLossRevit2 UI-миграция (worktree ветки exp/ui-threejs).
+# Физически отдельная ветка, чтобы не мешать параллельной работе RCB-5..7 на v18.
+# Схема: см. pipeline/config.py.
+
+project:
+  name: heatlossrevit2ui
+  root: [D:\Projects\HeatLossRevit2-UI]
+  branch: exp/ui-threejs
+
+plan:
+  repo: [D:\Projects\ProjectsPalns]
+  subdir: HeatLossRevit2
+  file: 2026-08-24_ui-threejs-migration-prep.md
+
+runner:
+  model: opencode-go/deepseek-v4-flash
+  retries: 2
+  question_timeout_sec: 1200
+  checkpoint_stages: true
+  stage_approver: reviewer
+
+tasks:
+  inbox: Tasks\Входящие
+  active: Tasks\Активные
+  reports: Tasks\Отчёты
+  archive: Tasks\Архив
+  protocol: Tasks\00_Протокол_агентов.md
+  status: Tasks\Статус_конвейера.md
+  conveyor: Tasks\Конвейер
+  notif: Tasks\Конвейер\Уведомления
+
+build:
+  msbuild: C:\Program Files\Microsoft Visual Studio\18\Community\MSBuild\Current\Bin\MSBuild.exe
+  sln: HeatLossRevit.sln
+  configuration: Debug
+  platform: Any CPU
+  extra_args:
+    - /p:DeployAddin=false
+
+tests:
+  runner: vstest
+  vstest: C:\Program Files\Microsoft Visual Studio\18\Community\Common7\IDE\CommonExtensions\Microsoft\TestWindow\vstest.console.exe
+  dll: Core.Tests\bin\Debug\net48\Core.Tests.dll
+  baseline_passed: 380
+  baseline_total: 381
+
+checks: []
+
+layer_rules:
+  - label: Core/HeatLossExport не используют Autodesk
+    pattern: using\s+Autodesk
+    expect: 0
+    dirs: [Core, HeatLossExport]
+  - label: RevitServices не ссылается на MainAppHeatLoss
+    pattern: using\s+RevitServices
+    expect: 0
+    dirs: [RevitServices]
+
+audit_dirs: [Core.Tests]
