@@ -155,6 +155,7 @@ def default_runner(cfg, role: str, registry: dict | None = None):
     def _run(c, prompt: str) -> int:
         import subprocess
 
+        from agents.session_worker import _opencode_base
         from pipeline.proc import no_window_flags
         cmd = _opencode_base() + [str(c.root), "--prompt", prompt]
         print(f"[tui] opencode-сессия запущена ({c.name}, {len(prompt)} символов "
