@@ -1,8 +1,8 @@
 {
-  "updated": "2026-08-24T12:17:34",
+  "updated": "2026-08-24T12:26:54",
   "plan": "D:\\Projects\\ProjectsPalns\\dev-pipeline\\_current\\2026-08-24_dev-pipeline-crew-manager-ui.md",
   "phase": "executing",
-  "card": "4.2",
+  "card": "4.1",
   "attempt": 2,
-  "title": "Динамическая выдача прав записи (API + CLI)"
+  "title": "Роль manager: opencode-сессия с приёмкой этапов"
 }
