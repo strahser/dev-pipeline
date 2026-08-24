@@ -431,6 +431,66 @@ id: {tid}
         import shutil; shutil.rmtree(tmp, ignore_errors=True)
 
 
+class TestSessionWorkerFinal(unittest.TestCase):
+    """Карточка 1.1: честный финал сессии — успех без отчёта = done.
+
+    Ролевые сессии (POST /api/agents) идут БЕЗ ключа report в инструкции;
+    раньше любой успешный прогон маркировался failed -> вечный рестарт
+    супервизором (инцидент 2026-08-23). Для задач раннера отчёт обязателен.
+    """
+
+    class _FinalFakeClient(TestSessionMode.FakeClient):
+        def subscribe(self, on_event, stop_event):
+            stop_event.wait(timeout=30)
+
+        def send_message(self, to, text):
+            pass
+
+    def _run(self, instruction):
+        from agents import session_worker as sw
+        fc = self._FinalFakeClient()
+        sid = "S-T1"
+        fc.sessions[sid] = {"id": sid, "task": "A-T", "status": "created",
+                            "instruction": dict(instruction)}
+        old = sw.OPENCODE
+        sw.OPENCODE = 'python -c "import sys; sys.exit(0)"'
+        tmp = Path(tempfile.mkdtemp(prefix="fin_"))
+        try:
+            rc = sw.run_session(fc, sid, cwd=str(tmp))
+        finally:
+            sw.OPENCODE = old
+            import shutil; shutil.rmtree(tmp, ignore_errors=True)
+        return rc, fc.sessions[sid]
+
+    def test_success_without_report_key_is_done(self):
+        # инструкция БЕЗ report (как у ролей из POST /api/agents), rc=0 -> done
+        rc, s = self._run({"prompt": "Ты контролёр: подтверди роль."})
+        self.assertEqual(rc, 0)
+        self.assertEqual(s["status"], "done")
+        self.assertIn("отчёт не требуется", s.get("note", ""))
+
+    def test_report_required_missing_file_failed(self):
+        # инструкция С report, файл НЕ создан -> прежнее поведение: failed
+        tmp = Path(tempfile.mkdtemp(prefix="fin2_"))
+        rc, s = self._run({"prompt": "выполни задачу и создай отчёт",
+                           "report": str(tmp / "Отчёты" / "A-01_Отчёт.md")})
+        self.assertEqual(rc, 1)
+        self.assertEqual(s["status"], "failed")
+        self.assertIn("rc=0", s.get("error", ""), "причина: отчёт не найден")
+        import shutil; shutil.rmtree(tmp, ignore_errors=True)
+
+    def test_report_required_file_exists_done(self):
+        # инструкция С report, файл есть -> done с отчётом как раньше
+        tmp = Path(tempfile.mkdtemp(prefix="fin3_"))
+        rep = tmp / "A-01_Отчёт_2026-08-24.md"
+        rep.write_text("# ОТЧЁТ: A-01\n## Доказательства\nok\n", encoding="utf-8")
+        rc, s = self._run({"prompt": "выполни задачу", "report": str(rep)})
+        self.assertEqual(rc, 0)
+        self.assertEqual(s["status"], "done")
+        self.assertEqual(s.get("report"), str(rep))
+        import shutil; shutil.rmtree(tmp, ignore_errors=True)
+
+
 class TestSubagentZombies(unittest.TestCase):
     """Сторож: убийство сирот-субагентов по PID-файлам менеджера."""
     def _cfg(self, tmp):

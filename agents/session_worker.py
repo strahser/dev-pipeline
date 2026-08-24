@@ -62,17 +62,27 @@ def write_handoff(cwd: str, sid: str, *, task_id: str, report: str,
 
 
 def _find_opencode() -> str:
-    """Найти opencode: env OPENCODE_CMD, PATH, npm global (как в agent_manager)."""
+    """Найти opencode: env OPENCODE_CMD, PATH, npm global (как в agent_manager).
+    Предпочитаем НАСТОЯЩИЙ exe из node_modules: запуск через cmd /c opencode.CMD
+    упирается в лимит cmd 8191 символов на строку — длинный промпт карточки
+    (+ хвост ошибки прошлой попытки) падает с «Слишком длинная командная
+    строка» (инцидент U3.1 2026-08-23). Прямой exe поднимает лимит до 32767."""
     import shutil
     env = os.environ.get("OPENCODE_CMD")
     if env and os.path.exists(env):
         return env
+    npm_root = Path(os.environ.get("APPDATA", "")) / "npm"
+    exe = npm_root / "node_modules" / "opencode-ai" / "bin" / "opencode.exe"
+    if exe.exists():
+        return str(exe)
     found = shutil.which("opencode")
-    if found:
+    if found and found.lower().endswith(".exe"):
         return found
-    npm = Path(os.environ.get("APPDATA", "")) / "npm" / "opencode.cmd"
-    if npm.exists():
-        return str(npm)
+    if exe.exists():
+        return str(exe)
+    npm_cmd = npm_root / "opencode.cmd"
+    if npm_cmd.exists():
+        return str(npm_cmd)
     return "opencode"
 
 
@@ -242,9 +252,20 @@ def run_session(client: Client, sid: str, cwd: str) -> int:
         except Exception:
             pass
 
-    # 4. handoff + статус на сервер
+    # 4. handoff + статус на сервер.
+    # Карточка 1.1: финал разводим по наличию ключа report в инструкции.
+    # Ролевые сессии (POST /api/agents) без report при rc=0 — done («отчёт не
+    # требуется»; инцидент 2026-08-23: failed при rc=0 -> вечный рестарт).
+    # Для задач раннера отчёт обязателен — логика не ослабляется.
     handoff_path = write_handoff(cwd, sid, task_id=task_id, report=report,
                                  rc=rc, error_tail=(err or out or ""))
+    if rc == 0 and not str(report or "").strip():
+        note = "отчёт не требуется"
+        if handoff_path:
+            note += f"; handoff: {handoff_path}"
+        print(f"[session_worker] сессия {sid}: done (отчёт не требуется)")
+        client.session_status(sid, "done", note=note)
+        return 0
     if rc == 0 and report and Path(report).exists():
         note = (f"{HANDOFF_MARK}{handoff_path}"
                 if instr.get("continues") and handoff_path else "отчёт готов")
