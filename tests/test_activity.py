@@ -127,5 +127,68 @@ class ApiActivityTest(unittest.TestCase):
             capture_output=True, text=True).stdout.strip())
 
 
+class GroupStagesTest(unittest.TestCase):
+    """Карточка 5.1: агрегат /api/activity по этапам (group=stages)."""
+
+    def test_group_stages(self):
+        from pipeline.activity import group_stages
+        commits = [
+            {"subject": "plan/A-1.1: a", "card": "A-1.1", "prefix": "plan",
+             "date": "2026-08-24T10:00:00+00:00"},
+            {"subject": "plan/A-1.2: b", "card": "A-1.2", "prefix": "plan",
+             "date": "2026-08-24T11:00:00+00:00"},
+            {"subject": "fix: баг", "card": None, "prefix": "fix",
+             "date": "2026-08-24T12:00:00+00:00"},
+            {"subject": "совсем без префикса", "card": None, "prefix": "",
+             "date": "2026-08-24T13:00:00+00:00"},
+        ]
+        out = group_stages(commits)
+        by = {g["stage"]: g for g in out}
+        self.assertEqual(set(by.keys()), {"A-1", "—"})
+        a = by["A-1"]
+        self.assertEqual(a["commits"], 2)
+        self.assertEqual(a["last_subject"], "plan/A-1.2: b")
+        self.assertEqual(a["feat_n"], 0)
+        self.assertEqual(a["fix_n"], 0)
+        dash = by["—"]
+        self.assertEqual(dash["commits"], 2)
+        self.assertEqual(dash["fix_n"], 1)
+        self.assertEqual(dash["last_subject"], "совсем без префикса")
+        # свежий этап сверху
+        self.assertEqual(out[0]["stage"], "—")
+
+    def test_api_group_stages_endpoint(self):
+        from fastapi.testclient import TestClient
+        tmp = Path(tempfile.mkdtemp(prefix="pact_gs_"))
+        repo = make_repo(tmp, "PlansPalns", [
+            "plan/A-1.1: выбор комнат — done",
+            "plan/A-1.2: конфиги — done",
+            "fix: правка",
+            "без префикса"])
+
+        class FakeCfg:
+            name = "proj"
+            root = tmp / "proj-root"
+            plan_repo = [repo]
+
+        with mock.patch.object(app_mod, "load_config", lambda n: FakeCfg()):
+            client = TestClient(app_mod.app)
+            r = client.get("/api/activity", params={
+                "project": "proj", "days": 30, "limit": 50, "group": "stages"})
+        self.assertEqual(r.status_code, 200)
+        data = r.json()
+        self.assertEqual(data["group"], "stages")
+        by = {g["stage"]: g for g in data["stages"]}
+        self.assertEqual(set(by.keys()), {"A-1", "—"})
+        self.assertEqual(by["A-1"]["commits"], 2)
+        self.assertEqual(by["—"]["commits"], 2)
+        self.assertEqual(by["—"]["fix_n"], 1)
+        self.assertEqual(by["A-1"]["fix_n"], 0)
+        for g in data["stages"]:
+            for k in ("stage", "commits", "last_subject", "last_date",
+                      "feat_n", "fix_n"):
+                self.assertIn(k, g)
+
+
 if __name__ == "__main__":
     unittest.main(verbosity=2)

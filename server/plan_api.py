@@ -673,6 +673,17 @@ async def api_pulse_all():
         else:
             it["stages"] = []
 
+        # git-активность по этапам (карточка 5.1): коммиты за 7 дней,
+        # сгруппированные по этапу (card->этап), для строки в карточке проекта.
+        try:
+            from pipeline.activity import collect, project_repos, group_stages
+            _cm = collect(project_repos(cfg), days=7, limit=200)
+            it["stage_activity"] = group_stages(_cm)
+            it["activity_total"] = len(_cm)
+        except Exception:
+            it["stage_activity"] = []
+            it["activity_total"] = 0
+
         sf = cfg.conveyor_dir() / "runner_state.json"
         rn = None
         if sf.exists():

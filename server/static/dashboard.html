@@ -417,6 +417,20 @@ pre.json { background:var(--code); border:1px solid var(--border); border-radius
   </div>
 </div>
 
+<div class="overlay" id="stageFeedOverlay">
+  <div class="modal" style="max-width:900px" id="stageFeedModal">
+    <header>
+      <h2 id="stageFeedTitle">Активность этапа</h2>
+      <button class="close" onclick="closeStageFeed()">✕ Закрыть</button>
+    </header>
+    <div class="chat-actions">
+      <button onclick="loadStageFeed()">🔄 Обновить</button>
+      <span style="margin-left:auto;font-size:11.5px;color:var(--muted)" id="stageFeedInfo"></span>
+    </div>
+    <div id="stageFeedBody"><div class="empty">Загрузка…</div></div>
+  </div>
+</div>
+
 <script src="/static/vendor/jquery.min.js"></script>
 <script src="/static/vendor/dataTables.min.js"></script>
 <script>
@@ -515,6 +529,52 @@ function startActivityTimer(){
   if (activityTimer) return;                 // уже крутится
   if (!$('actList')) return;                 // контейнера нет — интервал не запускаем (критерий 3.1)
   activityTimer = setInterval(refreshActivity, 60000);
+}
+
+/* --- Лента активности этапа (карточка 5.1): клик по строке в карточке проекта --- */
+let stageFeedProject = '';
+let stageFeedStage = '';
+function openStageFeed(proj__stage){
+  const i = proj__stage.indexOf('__');
+  stageFeedProject = proj__stage.slice(0, i);
+  stageFeedStage = proj__stage.slice(i+2);
+  $('stageFeedTitle').textContent = 'Активность этапа '+(stageFeedStage||'—')+' · '+stageFeedProject;
+  $('stageFeedOverlay').classList.add('show');
+  loadStageFeed();
+}
+function closeStageFeed(){ $('stageFeedOverlay').classList.remove('show'); }
+$('stageFeedOverlay').addEventListener('click', e=>{ if (e.target===$('stageFeedOverlay')) closeStageFeed(); });
+
+async function loadStageFeed(){
+  if (!stageFeedProject) return;
+  const body = $('stageFeedBody');
+  body.innerHTML = '<div class="muted">⏳ Загружаю коммиты…</div>';
+  try{
+    const d = await get('/api/activity?project='+encodeURIComponent(stageFeedProject)+'&days=30&limit=200');
+    const commits = (d.commits||[]);
+    const st = stageFeedStage;
+    // этап = префикс id до последней точки (см. pipeline.activity.stage_of);
+    // группа '—' = коммиты без card.
+    const stageOf = (card)=>{
+      if (!card) return '—';
+      const core = card.split('-',1)[0] && card.includes('-') ? card.split('-')[1] : card;
+      if (!core.includes('.')) return '—';
+      return card.slice(0, card.lastIndexOf('.'));
+    };
+    const matched = commits.filter(c => stageOf(c.card) === st);
+    $('stageFeedInfo').textContent = 'этап '+esc(st)+' · коммитов: '+matched.length+' (30 дней)';
+    body.innerHTML = matched.length
+      ? matched.map(c=>
+          '<div style="padding:2px 0;border-bottom:1px dashed var(--border)">'
+          + esc(c.date.slice(5,16).replace('T',' '))
+          + ' <span class="badge">'+esc(c.prefix||'—')+'</span>'
+          + ' <b>'+esc(c.repo)+'</b> '+esc(c.subject)
+          + (c.card? ' <span class="badge warn">'+esc(c.card)+'</span>' : '')
+          + '</div>').join('')
+      : '<div class="muted">коммитов этапа за 30 дней нет</div>';
+  }catch(e){
+    body.innerHTML = '<div class="empty">активность недоступна: '+esc(String(e))+'</div>';
+  }
 }
 
 /* --- Вопросы агентов (grill) и чекпоинты план-раннера --- */
@@ -1650,7 +1710,17 @@ function renderProjectCard(p){
           '<div class="progress-track" style="flex:1"><div class="progress-fill" style="width:'+pc+'%'+(done?';background:var(--green)':'')+'"></div></div>'+
           '<span class="muted" style="font-size:11.5px;width:64px;text-align:right">'+s.done+'/'+s.total+(done?' ✅':'')+'</span></div>';
       }).join('')+'</div>';
-  h += '<div class="muted" style="font-size:11.5px;margin-top:8px">'+
+  h += '<div class="muted" style="font-size:11.5px;margin-top:8px;border-top:1px solid var(--border);padding-top:6px">';
+  const sa = (p.stage_activity||[]);
+  if (sa.length){
+    h += '💾 коммиты за 7 дней: <b>'+esc(String(p.activity_total||0))+'</b>'
+      + sa.slice(0,3).map(g=>' · <a href="javascript:void(0)" style="color:var(--accent);text-decoration:none" title="'+esc(g.stage)+'" onclick="event.stopPropagation();openStageFeed(\''+esc(String(p.project))+'__'+esc(g.stage)+'\')">'+esc(g.stage)+': '+g.commits+(g.feat_n?' · +'+g.feat_n+'feat':'')+(g.fix_n?' · '+g.fix_n+'fix':'')+'</a>').join('')
+      + (sa.length>3 ? ' …' : '');
+  } else {
+    h += '💾 коммиты за 7 дней: <b>0</b>';
+  }
+  h += '</div>';
+  h += '<div class="muted" style="font-size:11.5px;margin-top:4px">'+
        '❓ '+(p.questions_open||0)+' · ⏸ '+(p.checkpoints_open||0)+
        ' · 🐌 '+((p.stalled||[]).length)+
        ((p.running_card)?(' · сейчас: '+esc(p.running_card)):'')+

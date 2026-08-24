@@ -1333,15 +1333,23 @@ class AgentIn(BaseModel):
 
 
 @app.get("/api/activity")
-async def activity(project: str = "", days: int = 7, limit: int = 50):
-    """Git-активность проекта (карточка 5.1): коммиты root + plan.repo."""
+async def activity(project: str = "", days: int = 7, limit: int = 50,
+                   group: str = ""):
+    """Git-активность проекта (карточка 5.1): коммиты root + plan.repo.
+
+    group=stages -> возвращает агрегат по этапам (card->этап, коммиты без card
+    в группе '—'): [{stage, commits, last_subject, last_date, feat_n, fix_n}].
+    """
     try:
         cfg = load_config(project)
     except ConfigError as e:
         raise HTTPException(404, f"проект не найден: {e}")
-    from pipeline.activity import collect, project_repos
+    from pipeline.activity import collect, project_repos, group_stages
     commits = collect(project_repos(cfg),
                       days=min(max(days, 1), 90), limit=min(max(limit, 1), 200))
+    if (group or "").strip().lower() == "stages":
+        return {"project": cfg.name, "group": "stages",
+                "stages": group_stages(commits)}
     return {"project": cfg.name, "commits": commits}
 
 

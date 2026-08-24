@@ -109,3 +109,45 @@ def _ts(iso_date: str) -> float:
         return datetime.fromisoformat(iso_date).timestamp()
     except ValueError:
         return 0.0
+
+
+def stage_of(card: str | None) -> str:
+    """Этап = префикс id листовой карточки до последней точки (как _stage_id).
+
+    'A-1.1' -> 'A-1', 'plan/U1.2' -> 'U1', без точки/без card -> '—'.
+    """
+    if not card:
+        return "—"
+    core = card.split("-", 1)[-1]
+    if "." not in core:
+        return "—"
+    return card.rsplit(".", 1)[0]
+
+
+def group_stages(commits: list[dict]) -> list[dict]:
+    """Группировка коммитов по этапу (card -> stage).
+
+    Возвращает [{stage, commits, last_subject, last_date, feat_n, fix_n}],
+    отсортировано по последней дате (свежие сверху). Коммиты без card ->
+    группа '—'. feat/fix считаются по префиксу (prefix == 'feat'/'fix').
+    """
+    groups: dict[str, list[dict]] = {}
+    for c in commits:
+        st = stage_of(c.get("card"))
+        groups.setdefault(st, []).append(c)
+    out = []
+    for st, lst in groups.items():
+        lst.sort(key=lambda c: _ts(c["date"]), reverse=True)
+        feat_n = sum(1 for c in lst if c.get("prefix") == "feat")
+        fix_n = sum(1 for c in lst if c.get("prefix") == "fix")
+        last = lst[0]
+        out.append({
+            "stage": st,
+            "commits": len(lst),
+            "last_subject": last.get("subject", ""),
+            "last_date": last.get("date", ""),
+            "feat_n": feat_n,
+            "fix_n": fix_n,
+        })
+    out.sort(key=lambda g: _ts(g["last_date"]), reverse=True)
+    return out
