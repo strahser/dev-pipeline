@@ -52,7 +52,7 @@ layer_rules:
     expect: 0
     dirs: [Core, HeatLossExport]
   - label: RevitServices не ссылается на MainAppHeatLoss
-    pattern: using\s+RevitServices
+    pattern: using\s+MainAppHeatLoss
     expect: 0
     dirs: [RevitServices]
 
