@@ -221,8 +221,16 @@ pre.json { background:var(--code); border:1px solid var(--border); border-radius
 </style>
 </head>
 <body>
-<header>
+ <header>
   <h1>dev-pipeline · Панель конвейера</h1>
+  <select id="projectSelect" onchange="setProject(this.value)" title="Активный проект (для Плана, Чата, Входящих)"
+    style="background:var(--panel);color:var(--text);border:1px solid var(--border);border-radius:8px;padding:6px 10px;font-size:13px;cursor:pointer;max-width:230px">
+    <option value="">— проект —</option>
+  </select>
+  <button onclick="goHome()" title="Обзор всех проектов (карточки пульса)" style="background:var(--panel);color:var(--text);border:1px solid var(--border);border-radius:8px;padding:6px 12px;font-size:13px;cursor:pointer;">🏠 Обзор</button>
+  <button onclick="openPlan()" title="Полный план с фильтрами и таблицей" style="background:var(--panel);color:var(--text);border:1px solid var(--border);border-radius:8px;padding:6px 12px;font-size:13px;cursor:pointer;">📋 План</button>
+  <button onclick="openChat()" title="Чат агентов (полноэкранная панель)" style="background:var(--panel);color:var(--text);border:1px solid var(--border);border-radius:8px;padding:6px 12px;font-size:13px;cursor:pointer;">💬 Чат</button>
+  <button onclick="openRequests()" title="Сырые задания пользователя (Входящие)" style="background:var(--panel);color:var(--text);border:1px solid var(--border);border-radius:8px;padding:6px 12px;font-size:13px;cursor:pointer;">📥 Входящие</button>
   <button onclick="openSessions()" title="Явные сессии субагентов" style="background:var(--panel);color:var(--text);border:1px solid var(--border);border-radius:8px;padding:6px 12px;font-size:13px;cursor:pointer;">🗂 Сессии</button>
   <button onclick="openTerminal('', 'manager')" title="ОБЩИЙ менеджер на все проекты: принимает работу (verify), восстанавливает упавшие сессии" style="background:var(--panel);color:var(--text);border:1px solid var(--border);border-radius:8px;padding:6px 12px;font-size:13px;cursor:pointer;">🛡 Менеджер</button>
   <button onclick="openQA()" title="Вопросы агентов (grill) и чекпоинты план-раннера" style="background:var(--panel);color:var(--text);border:1px solid var(--border);border-radius:8px;padding:6px 12px;font-size:13px;cursor:pointer;">❓ Вопросы · ⏸ Чекпоинты <span id="qaCount" style="color:var(--muted)">0/0</span></button>
@@ -476,7 +484,12 @@ async function refreshActivity(){
         + esc(String(e)) + ' (повтор через минуту)</div>';
   }
 }
-setInterval(refreshActivity, 60000);
+let activityTimer = null;
+function startActivityTimer(){
+  if (activityTimer) return;                 // уже крутится
+  if (!$('actList')) return;                 // контейнера нет — интервал не запускаем (критерий 3.1)
+  activityTimer = setInterval(refreshActivity, 60000);
+}
 
 /* --- Вопросы агентов (grill) и чекпоинты план-раннера --- */
 function qaQuery(){
@@ -1367,18 +1380,6 @@ async function refreshData(force){
   loadPulse();
 }
 
-async function refreshData(force){
-  if (!activeProject) return;
-  if (!await fetchRows()) return;
-  const key = JSON.stringify(allRows);
-  if (!force && key === lastRowsKey) return;   // данные не менялись — не трогаем DOM
-  lastRowsKey = key;
-  renderStats();
-  renderTable();
-  refreshPlanBanner();
-  loadPulse();
-}
-
 /* --- Пульс проекта: главный экран вместо таблицы --- */
 async function loadPulse(){
   if (!activeProject) return;
@@ -1502,17 +1503,46 @@ function buildShell(){
   $('content').innerHTML = html;
   refreshPlanBanner();
   refreshActivity();
+  startActivityTimer();
+}
+
+/* Режимы просмотра: 'home' (все проекты) или проект с планом/таблицей */
+let viewMode = 'home';
+function goHome(){
+  viewMode = 'home';
+  activeProject = '';
+  if ($('projectSelect')) $('projectSelect').value = '';
+  buildShellLite();
+  loadPulseAll();
+}
+function openPlan(){
+  if (!activeProject){ alert('Сначала выберите проект в шапке'); return; }
+  viewMode = 'plan';
+  buildShell();
+  loadFilters();
+  refreshData(true);
 }
 
 async function setProject(name){
+  name = name || '';
+  if (viewMode === 'home'){                   // с обзора — строим каркас плана сразу
+    activeProject = name;
+    if ($('projectSelect')) $('projectSelect').value = name;
+    viewMode = 'plan';
+    buildShell();
+    await loadFilters();
+    await refreshData(true);
+    return;
+  }
   activeProject = name || '';
-  $('projectSelect').value = name;
+  if ($('projectSelect')) $('projectSelect').value = name;
   collapsed.clear();
   await loadFilters();
   await refreshData(true);
 }
 
 function buildShellLite(){
+  viewMode = 'home';
   $('content').innerHTML =
     '<div id="pulseBody"><div class="empty">Загрузка пульса…</div></div>';
 }
@@ -1585,10 +1615,24 @@ async function loadPulseAll(){
 async function boot(){
   buildShellLite();
   checkServerFreshness();                 // баннер «перезапустите сервер»
+  await loadProjects();                   // список проектов в шапку
   await loadPulseAll();                   // карточки всех проектов
   setInterval(loadPulseAll, 20000);
   await qaCounts();                       // счётчики вопросов/чекпоинтов в шапке
   setInterval(qaCounts, 15000);
+}
+
+/* Заполнить селектор проектов в шапке (★ = есть план) */
+async function loadProjects(){
+  let list;
+  try { list = await get('/api/projects'); }
+  catch(e){ return; }
+  const sel = $('projectSelect');
+  if (!sel) return;
+  sel.innerHTML = '<option value="">— проект —</option>'+
+    (list||[]).map(p=>
+      '<option value="'+esc(p.name)+'">'+(p.has_plan?'★ ':'')+esc(p.name)+'</option>').join('');
+  if (activeProject) sel.value = activeProject;
 }
 
 /* Рассинхрон кода: панель отдаётся с диска свежей, а процесс сервера держит

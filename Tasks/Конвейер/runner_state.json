@@ -1,5 +1,8 @@
 {
-  "updated": "2026-08-24T11:26:17",
+  "updated": "2026-08-24T11:35:13",
   "plan": "D:\\Projects\\ProjectsPalns\\dev-pipeline\\_current\\2026-08-24_dev-pipeline-crew-manager-ui.md",
-  "phase": "locked"
+  "phase": "executing",
+  "card": "3.1",
+  "attempt": 1,
+  "title": "Точки входа UI: План / Чат / Входящие; чистка мёртвого кода"
 }
