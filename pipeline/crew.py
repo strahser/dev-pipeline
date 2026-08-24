@@ -7,8 +7,8 @@
       model: ""                # пусто = дефолт сервера
       permissions: write       # профиль opencode: read | write
     restart_policy:
-      max_restarts: 3          # перезапусков одной порции
-      cooldown_sec: 300        # пауза между перезапусками
+      max_restarts: 3          # рестартов НА ЦЕПОЧКУ порций одной работы
+      cooldown_sec: 300        # пауза между рестартами цепочки
 
 Команды:
     python -m pipeline.cli up <project>         # поднять crew один раз
@@ -28,6 +28,8 @@ from pathlib import Path
 sys.path.insert(0, str(Path(__file__).resolve().parent.parent))
 
 HANDOFF_MARK = "handoff:"
+RESTARTS_KEY = "_restarts"      # счётчик рестартов цепочки в instruction сессии
+RESTART_TS_KEY = "_restart_ts"  # время последнего рестарта цепочки
 
 
 def load_crew(cfg) -> dict:
@@ -77,13 +79,41 @@ def up_project(cfg, client) -> list[dict]:
     return out
 
 
+def _chain_state(s: dict, counters: dict) -> dict:
+    """Состояние ЦЕПОЧКИ рестартов для сессии s (карточка 1.2).
+
+    Счётчик и время последнего рестарта едут с сессией в instruction
+    (_restarts/_restart_ts): каждый рестарт создаёт НОВЫЙ sid, поэтому
+    учёт по sid давал свежий счётчик каждому поколению и лимит был
+    недостижим. Родословная сильнее локального кэша counters (тот мог
+    потеряться при перезапуске супервизора); counters[sid] синхронизируется
+    и служит кэшем + местом для флагов (handled)."""
+    instr = s.get("instruction") or {}
+    cnt = counters.setdefault(s.get("id", ""), {"count": 0, "last_ts": 0.0})
+    if RESTARTS_KEY in instr:
+        try:
+            cnt["count"] = int(instr[RESTARTS_KEY])
+        except (TypeError, ValueError):
+            pass
+    if RESTART_TS_KEY in instr:
+        try:
+            cnt["last_ts"] = float(instr[RESTART_TS_KEY])
+        except (TypeError, ValueError):
+            pass
+    return cnt
+
+
 def plan_restarts(sessions: list[dict], policy: dict, counters: dict,
                   now: float | None = None) -> list[dict]:
     """Решения о перезапуске. sessions: id/status/note/task/role/model/instruction.
 
     - done только с заметкой handoff:<путь> (порция просит продолжения);
-    - failed/stalled — свежая попытка всегда;
-    - cooldown между рестартами; исчерпан max_restarts -> action=exhausted."""
+    - failed/stalled — свежая попытка;
+    - бюджет max_restarts считается ПО ЦЕПОЧКЕ поколений одной работы
+      (счётчик наследуется через instruction._restarts), а не по отдельному sid;
+    - cooldown от последнего рестарта цепочки;
+    - исчерпан бюджет цепочки -> exhausted; сессия, уже породившая преемника
+      или объявленная exhausted (флаг handled), больше не рассматривается."""
     now = time.time() if now is None else now
     max_n = int(policy.get("max_restarts", 3))
     cooldown = int(policy.get("cooldown_sec", 300))
@@ -96,12 +126,14 @@ def plan_restarts(sessions: list[dict], policy: dict, counters: dict,
             continue
         if status not in ("done", "failed", "stalled"):
             continue
-        cnt = counters.setdefault(sid, {"count": 0, "last_ts": 0.0})
-        if cnt["count"] >= max_n:
+        cnt = _chain_state(s, counters)
+        if cnt.get("handled"):
+            continue
+        if int(cnt["count"]) >= max_n:
             out.append({"sid": sid, "action": "exhausted",
                         "task": s.get("task", ""), "reason": "max_restarts"})
             continue
-        if now - float(cnt["last_ts"]) < cooldown and cnt["count"] > 0:
+        if now - float(cnt["last_ts"]) < cooldown and int(cnt["count"]) > 0:
             out.append({"sid": sid, "action": "cooldown",
                         "task": s.get("task", ""), "reason": "cooldown_sec"})
             continue
@@ -144,32 +176,42 @@ def supervise_once(cfg, client, counters, *, now: float | None = None,
     for d in decisions:
         if d["action"] != "restart":
             if d["action"] == "exhausted" and client is not None:
-                try:
-                    client.notify("crew_exhausted", to="feed",
-                                  task=d.get("task", ""),
-                                  payload={"session_id": d["sid"],
-                                           "reason": d.get("reason", "")})
-                except Exception:
-                    pass
+                cnt = counters.setdefault(d["sid"], {"count": 0, "last_ts": 0.0})
+                if not cnt.get("handled"):        # один раз на цепочку
+                    cnt["handled"] = True
+                    try:
+                        client.notify("crew_exhausted", to="feed",
+                                      task=d.get("task", ""),
+                                      payload={"session_id": d["sid"],
+                                               "reason": d.get("reason", "")})
+                    except Exception:
+                        pass
             summary.append(d)
             continue
         s = client.get_session(d["sid"]) or {}
         instr = s.get("instruction") or {}
         prompt = _read_handoff_prompt(Path(cfg.root), d.get("handoff", ""), instr)
+        ts = time.time() if now is None else now
+        cnt = counters[d["sid"]]
+        new_count = int(cnt.get("count", 0)) + 1  # бюджет едет с сессией
+        new_instr = {**instr, "prompt": prompt, "continues": True,
+                     RESTARTS_KEY: new_count, RESTART_TS_KEY: ts}
         new_id = client.create_session(
             project=cfg.name, task=d["task"],
             agent=f"crew-{s.get('role') or 'worker'}-{d['sid'][-4:]}",
             role=s.get("role") or "worker", model=s.get("model", ""),
             skill=instr.get("skill", ""),
-            instruction={**instr, "prompt": prompt,
-                         "continues": True}) or {}
+            instruction=new_instr) or {}
         new_sid = new_id.get("id", "")
-        cnt = counters[d["sid"]]
-        cnt["count"] += 1
-        cnt["last_ts"] = time.time() if now is None else now
+        cnt["count"] = new_count
+        cnt["last_ts"] = ts
+        if new_sid:
+            # преемник создан: это поколение больше решений не порождает,
+            # иначе дубли порций на каждом проходе (шторм сессий)
+            cnt["handled"] = True
+            counters[new_sid] = {"count": new_count, "last_ts": ts}
         if spawn is not None:
-            spawn({"id": new_sid, "task": d["task"],
-                   "instruction": {**instr, "prompt": prompt}})
+            spawn({"id": new_sid, "task": d["task"], "instruction": new_instr})
         summary.append({**d, "new_sid": new_sid})
     return summary
 

@@ -113,6 +113,110 @@ class PlanRestartsTest(unittest.TestCase):
         self.assertEqual(out[0]["action"], "exhausted")
 
 
+class RestartChainTest(unittest.TestCase):
+    """Карточка 1.2: бюджет рестартов по РОДОСЛОВНОЙ цепочки, а не по sid.
+
+    Каждый рестарт создаёт новый sid со свежим счётчиком — лимит был
+    недостижим и супервизор штормил сессиями. Теперь счётчик и время
+    последнего рестарта едут с сессией (instruction._restarts/_restart_ts)."""
+
+    P = {"max_restarts": 2, "cooldown_sec": 300}
+
+    def test_counter_travels_with_instruction(self):
+        from pipeline import crew
+        from pipeline.crew import plan_restarts
+        # новое поколение S2 при ПУСТОМ локальном кэше counters
+        s = [{"id": "S2", "status": "failed", "note": "", "task": "A-1",
+              "instruction": {"_restarts": 1, "_restart_ts": 1000.0}}]
+        out = plan_restarts(s, self.P, {}, now=1100.0)
+        self.assertEqual(out[0]["action"], "cooldown",
+                         "cooldown от последнего рестарта ЦЕПОЧКИ")
+        out = plan_restarts(s, self.P, {}, now=1400.0)
+        self.assertEqual(out[0]["action"], "restart")
+        s[0]["instruction"][crew.RESTARTS_KEY] = 2
+        out = plan_restarts(s, self.P, {}, now=99999.0)
+        self.assertEqual(out[0]["action"], "exhausted",
+                         "exhausted по родословной без локального кэша")
+
+    def test_chain_S1_to_S2_to_exhausted(self):
+        """S1 failed -> restart S2 -> S2 failed -> exhausted; дальше тишина,
+        crew_exhausted уходит ровно один раз на цепочку."""
+        from pipeline.crew import supervise_once
+        tmp = Path(tempfile.mkdtemp(prefix="pcrew_chain_"))
+        cfg = make_cfg(tmp)                    # max_restarts=2, cooldown=300
+        client = FakeClient([
+            {"id": "S1", "project": "proj", "status": "failed", "note": "",
+             "task": "A-1", "role": "executor", "model": "m1",
+             "instruction": {"prompt": "P"}}])
+        counters: dict = {}
+        # тик 1: S1 -> S2, бюджет наследуется (_restarts=1)
+        out = supervise_once(cfg, client, counters, now=1000.0)
+        self.assertEqual([d["action"] for d in out], ["restart"])
+        s2 = client.created[0]
+        self.assertEqual(s2["instruction"]["_restarts"], 1)
+        self.assertEqual(s2["instruction"]["prompt"], "P")
+        # S1 больше не рассматривается (преемник уже есть)
+        self.assertTrue(counters["S1"].get("handled"))
+        # тик 2: S2 упало -> restart S3 c _restarts=2; S1 молчит
+        s2["status"] = "failed"
+        out = supervise_once(cfg, client, counters, now=5000.0)
+        self.assertEqual([(d["sid"], d["action"]) for d in out],
+                         [(s2["id"], "restart")])
+        s3 = client.created[1]
+        self.assertEqual(s3["instruction"]["_restarts"], 2)
+        # тик 3: S3 упало — бюджет цепочки (2) исчерпан -> exhausted + событие
+        s3["status"] = "failed"
+        out = supervise_once(cfg, client, counters, now=90000.0)
+        self.assertEqual([(d["sid"], d["action"]) for d in out],
+                         [(s3["id"], "exhausted")])
+        self.assertEqual(len(client.created), 2, "новых сессий больше нет")
+        self.assertEqual(len(client.notified), 1, "событие один раз на цепочку")
+        self.assertEqual(client.notified[0][0], "crew_exhausted")
+        # тик 4: полная тишина — ни решений, ни повторного события
+        out = supervise_once(cfg, client, counters, now=130000.0)
+        self.assertEqual(out, [])
+        self.assertEqual(len(client.notified), 1)
+
+    def test_handoff_continuation_inherits_budget(self):
+        """Продолжение по handoff — тот же бюджет цепочки (_restarts=1)."""
+        from pipeline.crew import HANDOFF_MARK, supervise_once
+        tmp = Path(tempfile.mkdtemp(prefix="pcrew_hchain_"))
+        cfg = make_cfg(tmp)
+        rel = "Tasks/Конвейер/handoff/S1.md"
+        hf = tmp / rel
+        hf.write_text("ХВОСТ-РАБОТЫ", encoding="utf-8")
+        client = FakeClient([
+            {"id": "S1", "project": "proj", "status": "done",
+             "note": HANDOFF_MARK + rel, "task": "A-1", "role": "executor",
+             "model": "", "instruction": {}}])
+        out = supervise_once(cfg, client, {}, now=1000.0)
+        self.assertEqual([d["action"] for d in out], ["restart"])
+        created = client.created[0]
+        self.assertEqual(created["instruction"]["_restarts"], 1)
+        self.assertIn("ХВОСТ-РАБОТЫ", created["instruction"]["prompt"])
+
+    def test_cooldown_from_last_chain_restart(self):
+        """Cooldown считается от момента рестарта цепочки (_restart_ts),
+        даже если локальный кэш counters потерян."""
+        from pipeline import crew
+        from pipeline.crew import supervise_once
+        tmp = Path(tempfile.mkdtemp(prefix="pcrew_cd_"))
+        cfg = make_cfg(tmp, restart_cooldown_sec=300)
+        client = FakeClient([
+            {"id": "S1", "project": "proj", "status": "failed", "note": "",
+             "task": "A-1", "role": "", "model": "", "instruction": {}}])
+        counters: dict = {}
+        supervise_once(cfg, client, counters, now=1000.0)
+        s2 = client.created[0]
+        self.assertEqual(s2["instruction"][crew.RESTART_TS_KEY], 1000.0)
+        s2["status"] = "failed"
+        # cooldown от последнего рестарта цепочки (1000 + 300)
+        out = supervise_once(cfg, client, counters, now=1200.0)
+        self.assertEqual(out[0]["action"], "cooldown")
+        out = supervise_once(cfg, client, counters, now=1300.0)
+        self.assertEqual(out[0]["action"], "restart")
+
+
 class SuperviseOnceTest(unittest.TestCase):
     def test_restart_spawns_and_counts(self):
         from pipeline.crew import supervise_once
