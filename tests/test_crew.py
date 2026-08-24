@@ -33,6 +33,7 @@ class FakeClient:
     def __init__(self, sessions):
         self.sessions = sessions
         self.created = []
+        self.created_agents = []
         self.notified = []
 
     def list_sessions(self, project=""):
@@ -41,6 +42,12 @@ class FakeClient:
 
     def get_session(self, sid):
         return next((s for s in self.sessions if s["id"] == sid), None)
+
+    def create_agent(self, role, project="", model=""):
+        sid = "A-" + str(100 + len(self.created_agents))
+        s = {"id": sid, "role": role, "project": project, "model": model}
+        self.created_agents.append(s)
+        return s
 
     def create_session(self, **kw):
         nid = "S-" + str(100 + len(self.created))
@@ -106,6 +113,61 @@ class SetPermissionsTest(unittest.TestCase):
         tmp = Path(tempfile.mkdtemp(prefix="pcrew_noperm_"))
         cfg = make_cfg(tmp)
         self.assertIsNone(crew.read_permissions(cfg))
+
+
+class UpProjectTest(unittest.TestCase):
+    """Карточка 6.1: up_project — поднятие crew по ролям через create_agent.
+
+    - обе роли подняты -> список из двух записей, обе ok=True;
+    - отказ одной роли (create_agent вернул пусто) -> ok=False у этой роли,
+      cmd_up возвращает rc≠0;
+    - client=None -> [] и сообщение «сервер недоступен»."""
+
+    def _cfg(self, roles=("executor",)):
+        tmp = Path(tempfile.mkdtemp(prefix="pcrew_up_"))
+        (tmp / ".opencode").mkdir(parents=True, exist_ok=True)
+        return make_cfg(tmp, crew_roles=list(roles))
+
+    def test_both_roles_raised(self):
+        from pipeline.crew import up_project
+        cfg = self._cfg(("executor", "browser"))
+        client = FakeClient([])
+        out = up_project(cfg, client)
+        self.assertEqual([r["role"] for r in out], ["executor", "browser"])
+        self.assertTrue(all(r["ok"] for r in out))
+        self.assertEqual([a["role"] for a in client.created_agents],
+                         ["executor", "browser"])
+        self.assertEqual(client.created_agents[0]["project"], "proj")
+
+    def test_one_role_refusal_marks_ok_false(self):
+        from pipeline.crew import up_project
+
+        class RefusingClient(FakeClient):
+            def create_agent(self, role, project="", model=""):
+                if role == "executor":
+                    return {"id": "A-1", "role": role}
+                return None  # отказ второй роли
+
+        cfg = self._cfg(("executor", "browser"))
+        client = RefusingClient([])
+        out = up_project(cfg, client)
+        self.assertEqual([r["ok"] for r in out], [True, False])
+        # cmd_up возвращает ненулевой rc, если хоть одна роль не поднялась
+        from pipeline import cli
+        with mock.patch.object(cli, "_crew_client", return_value=client):
+            rc = cli.cmd_up(cfg, mock.Mock())
+        self.assertNotEqual(rc, 0)
+
+    def test_client_none_returns_empty_and_prints(self):
+        from pipeline.crew import up_project
+        cfg = self._cfg()
+        import io
+        from contextlib import redirect_stdout
+        buf = io.StringIO()
+        with redirect_stdout(buf):
+            out = up_project(cfg, None)
+        self.assertEqual(out, [])
+        self.assertIn("сервер недоступен", buf.getvalue())
 
 
 class PlanRestartsTest(unittest.TestCase):

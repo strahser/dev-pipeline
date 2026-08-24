@@ -768,6 +768,95 @@ class SemanticReviewTest(unittest.TestCase):
         finally:
             shutil.rmtree(tmp2, ignore_errors=True)
 
+    def test_rc0_without_unambiguous_verdict_is_skipped(self):
+        """Карточка 6.1: rc=0, но ревьюер не дал однозначного **PASS**/**FAIL**
+        (например, написал «нормально» без маркера) — ПРОПУЩЕНО, карточка не
+        блокируется, событие semantic_review_unavailable."""
+        from agents import plan_runner as pr
+        self._fixture_verdict()
+        events = []
+
+        class FakeClient:
+            def notify(self, ev_type, to="", task="", payload=None):
+                events.append((ev_type, task, dict(payload or {})))
+
+        r = pr.PlanRunner(self.cfg, plan_path=self.plan_path, once=True, retries=0,
+                          client=FakeClient())
+        calls = []
+
+        def dispatcher(cfg, tid, report, log, **kw):
+            calls.append(tid)
+            if tid.endswith("-semrev"):
+                report.parent.mkdir(parents=True, exist_ok=True)
+                # rc=0, но в заключении НЕТ однозначной строки **PASS**/**FAIL**
+                report.write_text("# НЕЗАВИСИМОЕ РЕВЬЮ 1.1\n## Вердикт\nнормально, можно\n",
+                                  encoding="utf-8")
+                return 0
+            self._executor_report(report, tid)
+            return 0
+
+        with mock.patch.object(pr, "run_subagent", dispatcher), \
+             mock.patch.object(pr.PlanRunner, "_verify", return_value="PASS"):
+            rc = r.run()
+
+        self.assertEqual(rc, 0, "двусмысленный вердикт не блокирует карточку")
+        self.assertEqual(load_plan(self.plan_path).card("1.1").status, "done")
+        vtxt = (self.cfg.abs_tasks_dir("reports") /
+                "1.1_Вердикт_контролёра_fixture.md").read_text(encoding="utf-8")
+        tail = vtxt.split("Независимое ревью")[-1]
+        self.assertIn("ПРОПУЩЕНО", tail)
+        self.assertNotIn("Итог ревьюера", tail,
+                         "нет строки финального вердикта (не PASS и не FAIL)")
+        # событие недоступности ушло в ленту
+        unavail = [t for (ev, t, p) in events if ev == "semantic_review_unavailable"]
+        self.assertEqual(unavail, ["1.1"])
+        self.assertEqual(self._worktree_count(), 1, "worktree снят")
+
+    def test_semantic_review_events_passed_and_failed(self):
+        """Карточка 6.1: события semantic_review_started/passed/failed уходят
+        в ленту при соответствующем исходе ревьюера."""
+        from agents import plan_runner as pr
+        self._fixture_verdict()
+        events = []
+
+        class FakeClient:
+            def notify(self, ev_type, to="", task="", payload=None):
+                events.append((ev_type, task, dict(payload or {})))
+
+        client = FakeClient()
+        r = pr.PlanRunner(self.cfg, plan_path=self.plan_path, once=True, retries=1,
+                          client=client)
+        calls = []
+        state = {"rv": "FAIL"}
+
+        def dispatcher(cfg, tid, report, log, **kw):
+            calls.append(tid)
+            report.parent.mkdir(parents=True, exist_ok=True)
+            if tid.endswith("-semrev"):
+                rv = state["rv"]
+                state["rv"] = "PASS"
+                report.write_text(f"# НЕЗАВИСИМОЕ РЕВЬЮ 1.1\n## Вердикт\n**{rv}**\n"
+                                  "## Инструкции при retry\nисправить X\n",
+                                  encoding="utf-8")
+                return 0
+            self._executor_report(report, tid)
+            return 0
+
+        with mock.patch.object(pr, "run_subagent", dispatcher), \
+             mock.patch.object(pr.PlanRunner, "_verify",
+                               side_effect=["PASS", "PASS"]):
+            rc = r.run()
+
+        self.assertEqual(rc, 0)
+        ev = [e for (e, t, p) in events]
+        # первая попытка: started -> failed; вторая: started -> passed
+        self.assertEqual(ev.count("semantic_review_started"), 2)
+        self.assertEqual(ev.count("semantic_review_failed"), 1)
+        self.assertEqual(ev.count("semantic_review_passed"), 1)
+        failed_note = [p.get("note") for (ev, t, p) in events
+                       if ev == "semantic_review_failed"]
+        self.assertEqual(failed_note, ["исправить X"])
+
 
 class StageTagAndInputTest(unittest.TestCase):
     """Карточка 2.3: stage_approver=reviewer в конфиге, полный вход ревьюера
