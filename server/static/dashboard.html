@@ -218,6 +218,17 @@ pre.json { background:var(--code); border:1px solid var(--border); border-radius
   background:linear-gradient(135deg, transparent 50%, var(--muted) 50%, var(--muted) 60%, transparent 60%);
   opacity:.55; }
 .chat-resize:hover { opacity:1; }
+
+/* --- Тост-уведомления (карточка 3.2) --- */
+#toastBox { position:fixed; top:16px; left:50%; transform:translateX(-50%); z-index:300;
+  display:flex; flex-direction:column; gap:8px; align-items:center; pointer-events:none; }
+.toast { background:var(--panel); border:1px solid var(--border); border-left:3px solid var(--accent);
+  color:var(--text); border-radius:8px; padding:9px 14px; font-size:13px;
+  box-shadow:0 4px 18px rgba(0,0,0,.45); max-width:70vw; white-space:pre-wrap;
+  transition:opacity .3s, transform .3s; }
+.toast.err { border-left-color:var(--red); }
+.toast.ok { border-left-color:var(--green); }
+.toast.out { opacity:0; transform:translateY(-8px); }
 </style>
 </head>
 <body>
@@ -421,18 +432,19 @@ async function fetchAutoTask(proj){
 
 async function crewUp(proj){
   proj = proj || activeProject;
-  if(!proj){ alert('сначала выберите проект'); return; }
+  if(!proj){ toast('сначала выберите проект', 'err'); return; }
   try{
     const c = await get('/api/crew/'+encodeURIComponent(proj));
-    if(!c.roles || !c.roles.length){ alert('в pipeline.yaml нет секции crew'); return; }
+    if(!c.roles || !c.roles.length){ toast('в pipeline.yaml нет секции crew', 'err'); return; }
+    const ok = [], fail = [];
     for(const role of c.roles){
       const task = await fetchAutoTask(proj);
-      try{ await launchTerminal(proj, role, task); }
-      catch(e){ alert('роль '+role+' не поднята: '+(e.message||e)); }
+      try{ await launchTerminal(proj, role, task); ok.push(role); }
+      catch(e){ fail.push(role+' ('+(e.message||e)+')'); }
     }
-    alert('crew поднят ('+proj+'): по окну терминала на роль — '
-      + c.roles.join(', ') + '\nКаждый агент сам перезагружается (/new) после порции.');
-  }catch(e){ alert('crew: '+(e.message||e)); }
+    if(ok.length) toast('crew поднят ('+proj+'): '+ok.join(', '));
+    if(fail.length) toast('не подняты: '+fail.join('; '), 'err');
+  }catch(e){ toast('crew: '+(e.message||e), 'err'); }
 }
 
 async function spawnRoleAgent(role, proj){
@@ -505,7 +517,11 @@ async function qaCounts(){
     $('qaCount').textContent = q+'/'+cps.length;
     $('qaCount').style.color = (q+cps.length) ? 'var(--yellow)' : 'var(--muted)';
     return {qs, cps};
-  } catch(e){ return {qs:[], cps:[]}; }
+  } catch(e){
+    $('qaCount').textContent = '?/?';          // ошибка загрузки — не показываем ложное «0/0» (критерий 3.2)
+    $('qaCount').style.color = 'var(--red)';
+    return {qs:[], cps:[]};
+  }
 }
 async function openQA(){ $('qaOverlay').classList.add('show'); await loadQA(); }
 function closeQA(){ $('qaOverlay').classList.remove('show'); }
@@ -581,33 +597,68 @@ async function loadQA(){
 async function answerQ(project, id){
   const ta = document.getElementById('ans_'+id);
   const text = (ta && ta.value || '').trim();
-  if (!text){ alert('Введите ответ'); return; }
+  if (!text){ toast('Введите ответ', 'err'); return; }
   const sel = document.getElementById('ansa_'+id);
   const author = (sel && sel.value) || 'owner';
   try {
-    await fetch('/api/questions/'+encodeURIComponent(id)+'/answer', {
+    await apiFetch('/api/questions/'+encodeURIComponent(id)+'/answer', {
       method:'POST', headers:{'Content-Type':'application/json'},
       body: JSON.stringify({project: project, text: text, author: author})
     });
+    toast('Ответ отправлен');
     await loadQA();
-  } catch(e){ alert('Ошибка отправки: '+e); }
+  } catch(e){ /* тост уже показан apiFetch */ }
 }
 async function cpAction(project, id, action){
   const sel = document.getElementById('actor_'+id);
   const cin = document.getElementById('cpc_'+id);
+  const actor = (sel && sel.value) || 'owner';
+  let comment = (cin && cin.value) || '';
+  if (action === 'approve'){
+    if (!confirm('Одобрить чекпоинт карточки '+id+'?')) return;
+  } else if (action === 'retry'){
+    if (!comment.trim()){ toast('Укажите комментарий — что исправить перед перезапуском', 'err'); return; }
+    if (!confirm('Перезапустить карточку '+id+'?\nКомментарий: '+comment)) return;
+  }
   try {
-    await fetch('/api/checkpoints/'+encodeURIComponent(id)+'/'+action, {
+    await apiFetch('/api/checkpoints/'+encodeURIComponent(id)+'/'+action, {
       method:'POST', headers:{'Content-Type':'application/json'},
-      body: JSON.stringify({project: project,
-                            actor: (sel && sel.value) || 'owner',
-                            comment: (cin && cin.value) || ''})
+      body: JSON.stringify({project: project, actor: actor, comment: comment})
     });
+    toast('Чекпоинт '+action+' · карточка '+id);
     await loadQA();
-  } catch(e){ alert('Ошибка: '+e); }
+  } catch(e){ /* тост уже показан apiFetch */ }
 }
 
 function esc(s){ return String(s??'').replace(/[&<>"']/g, c=>({'&':'&amp;','<':'&lt;','>':'&gt;','"':'&quot;',"'":'&#39;'}[c])); }
 async function get(path){ const r = await fetch(path); if(!r.ok) throw new Error(r.status+' '+path); return r.json(); }
+
+/* Тост-уведомление (карточка 3.2): всплывающие сообщения не теряются молча */
+function toast(msg, type){
+  let box = document.getElementById('toastBox');
+  if (!box){ box = document.createElement('div'); box.id = 'toastBox'; document.body.appendChild(box); }
+  const t = document.createElement('div');
+  t.className = 'toast '+(type||'ok');
+  t.textContent = String(msg);
+  box.appendChild(t);
+  setTimeout(()=>{ t.classList.add('out'); setTimeout(()=>t.remove(), 300); }, 3500);
+}
+
+/* Единая обёртка fetch: проверка r.ok, разбор detail, тост об ошибке (карточка 3.2).
+   Возвращает Response (ошибки видны, а не теряются молча). */
+async function apiFetch(url, opts){
+  let r;
+  try { r = await fetch(url, opts); }
+  catch(e){ toast('Сервер недоступен: '+(e.message||e), 'err'); throw e; }
+  if (!r.ok){
+    let detail = '';
+    try { const j = await r.json(); detail = (j && (j.detail||j.error)) || ''; }
+    catch(_){ try { detail = await r.text(); } catch(__){} }
+    toast('Ошибка '+r.status+(detail ? ': '+detail : ''), 'err');
+    throw new Error('HTTP '+r.status+(detail ? ': '+detail : ''));
+  }
+  return r;
+}
 
 /* Markdown-рендер (взят из LocalAssitent webui: D:\Projects\LocalAssitent\webui\static\app.js) */
 function inlineMdInline(s) {
@@ -1636,16 +1687,18 @@ async function loadProjects(){
 }
 
 /* Рассинхрон кода: панель отдаётся с диска свежей, а процесс сервера держит
-   старый код (кнопки есть — API за ними 404/не спавнит агентов). */
+   старый код (кнопки есть — API за ними 404/не спавнит агентов).
+   Баннер вставляется ВНЕ pulseBody (sibling перед <main>), поэтому не затирается
+   при каждом 20-секундном рефреше пульса (карточка 3.2). */
 function warnBanner(html){
-  const host = $('pulseBody');
-  if (!host || document.getElementById('staleServerBanner')) return;
+  if (document.getElementById('staleServerBanner')) return;
   const b = document.createElement('div');
   b.id = 'staleServerBanner';
-  b.style.cssText = 'margin:0 0 10px;padding:10px 12px;border-radius:8px;font-size:13px;'+
+  b.style.cssText = 'margin:10px 20px 0;padding:10px 12px;border-radius:8px;font-size:13px;'+
                     'border:1px solid #eab308;background:rgba(234,179,8,.08)';
   b.innerHTML = html;
-  host.insertBefore(b, host.firstChild);
+  const main = document.querySelector('main#content');
+  document.body.insertBefore(b, main);
 }
 async function checkServerFreshness(){
   try{
@@ -1818,14 +1871,14 @@ function appendChatMsg(m){
 async function sendChatMessage(){
   const text = $('chatText').value.trim();
   if (!text || !chatAgent) return;
-  $('chatText').value = '';
   let msg;
   try {
-    msg = await (await fetch('/api/chat/command', {
+    msg = await (await apiFetch('/api/chat/command', {
       method:'POST', headers:{'Content-Type':'application/json'},
       body: JSON.stringify({from:'dashboard', to:chatAgent, text:text})
     })).json();
-  } catch(e){ return; }
+  } catch(e){ return; }            // текст НЕ очищаем при сбое (критерий 3.2)
+  $('chatText').value = '';         // очищаем только после успеха отправки
   appendChatMsg(msg);
 }
 function chatAgentInfo(){
@@ -1917,9 +1970,10 @@ function sessionAge(ts){
 async function sessionKill(sid){
   if (!confirm('Убить сессию '+sid+'?')) return;
   try {
-    await fetch('/api/sessions/'+encodeURIComponent(sid)+'/kill', {method:'POST'});
+    await apiFetch('/api/sessions/'+encodeURIComponent(sid)+'/kill', {method:'POST'});
+    toast('Сессия '+sid+' убита');
     loadSessions();
-  } catch(e){ alert('kill: '+e); }
+  } catch(e){ /* тост уже показан apiFetch */ }
 }
 function liveBadge(ageSec){
   if (ageSec === undefined || ageSec === null) return '<span class="badge warn">?</span>';
