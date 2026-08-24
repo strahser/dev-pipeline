@@ -816,6 +816,20 @@ class AgentSpawnTest(unittest.TestCase):
         self.assertEqual(r.status_code, 200)
         self.assertEqual(spawned, [], "без конфига проекта спавна нет")
 
+    def test_instruction_has_continues_flag(self):
+        """Карточка 1.3: POST /api/agents создаёт сессию с
+        instruction.continues == true — супервизор продолжит её по handoff
+        (как рестарт-инструкции supervise_once)."""
+        for role in ("executor", "controller"):
+            with mock.patch.object(app_mod, "_run_detached",
+                                   lambda cmd, cwd: None), \
+                 mock.patch.object(app_mod, "load_config",
+                                   lambda n: self._fake_cfg()):
+                r = self.client.post("/api/agents", json={"role": role,
+                                                          "project": "spawnproj"})
+            self.assertEqual(r.status_code, 200)
+            self.assertIs(r.json()["instruction"]["continues"], True)
+
 
 class TerminalEndpointTest(unittest.TestCase):
     """Карточка 2.1: POST /api/chat/agents/terminal открывает видимый

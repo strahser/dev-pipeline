@@ -217,6 +217,56 @@ class RestartChainTest(unittest.TestCase):
         self.assertEqual(out[0]["action"], "restart")
 
 
+class UpHandoffLoopTest(unittest.TestCase):
+    """Карточка 1.3: сессии, поднятые `up`/«▶ Поднять проект»
+    (POST /api/agents, instruction.continues=True), продолжаются супервизором
+    по handoff — критерий приёмки 6.2.3 для основного пути.
+
+    Сценарий: воркер-заглушка завершает ролевую сессию как session_worker
+    при флаге continues (done + заметка «handoff:<путь>», session_worker.py);
+    supervise_once планирует рестарт с промптом «исходная инструкция + хвост
+    handoff»."""
+
+    def test_up_session_done_with_handoff_restarts(self):
+        from pipeline.crew import HANDOFF_MARK, supervise_once
+        tmp = Path(tempfile.mkdtemp(prefix="pcrew_up_"))
+        cfg = make_cfg(tmp)
+        hf_abs = tmp / "Tasks" / "Конвейер" / "handoff" / "S1.md"
+        hf_abs.parent.mkdir(parents=True, exist_ok=True)
+        hf_abs.write_text("ХВОСТ-ПОРЦИИ", encoding="utf-8")
+        client = FakeClient([
+            {"id": "S1", "project": "proj",
+             # воркер-заглушка: done + маркер handoff — ровно то, что пишет
+             # session_worker при rc=0 и instruction.continues=True
+             "status": "done", "note": HANDOFF_MARK + str(hf_abs),
+             "task": "", "role": "executor", "model": "",
+             "instruction": {"prompt": "РОЛЬ+СКИЛЛ+АВТОЗАДАНИЕ",
+                             "skill": "pipeline-executor", "role": "executor",
+                             "task": "", "continues": True}}])
+        out = supervise_once(cfg, client, {}, now=1000.0)
+        self.assertEqual([d["action"] for d in out], ["restart"])
+        s2 = client.created[0]
+        self.assertIn("РОЛЬ+СКИЛЛ+АВТОЗАДАНИЕ", s2["instruction"]["prompt"],
+                      "промпт наследуется из исходной инструкции")
+        self.assertIn("ХВОСТ-ПОРЦИИ", s2["instruction"]["prompt"],
+                      "к промпту добавлено содержимое handoff")
+        self.assertTrue(s2["instruction"].get("continues"),
+                        "цепочка продолжается и дальше")
+
+    def test_up_session_done_without_handoff_not_restarted(self):
+        """Контроль: done БЕЗ марки handoff супервизор не трогает."""
+        from pipeline.crew import supervise_once
+        tmp = Path(tempfile.mkdtemp(prefix="pcrew_up2_"))
+        cfg = make_cfg(tmp)
+        client = FakeClient([
+            {"id": "S1", "project": "proj", "status": "done",
+             "note": "отчёт не требуется", "task": "", "role": "executor",
+             "model": "",
+             "instruction": {"prompt": "P", "continues": True}}])
+        out = supervise_once(cfg, client, {}, now=1000.0)
+        self.assertEqual(out, [], "done без handoff-марки — продолжения нет")
+
+
 class SuperviseOnceTest(unittest.TestCase):
     def test_restart_spawns_and_counts(self):
         from pipeline.crew import supervise_once

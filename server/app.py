@@ -1384,8 +1384,12 @@ async def agent_create(body: AgentIn):
     s = store.create_session(
         sid, project=body.project, task="", agent=f"agent-{role}-{sid[-4:]}",
         role=role, model=body.model or "", skill=skill,
+        # Карточка 1.3: флаг continues — как в рестарт-инструкции supervise_once
+        # (pipeline/crew.py): воркер при done пишет заметку «handoff:<путь>»,
+        # и супервизор продолжает сессии `up`/«▶ Поднять проект» по handoff.
         instruction={"prompt": prompt, "model": body.model or "", "skill": skill,
-                     "role": role, "task": body.task or ""})
+                     "role": role, "task": body.task or "",
+                     "continues": True})
 
     # Карточка 1.2: сессия роли = ЖИВОЙ агент. Разворачиваем права opencode
     # (crew-профиль проекта, write по умолчанию) и поднимаем session_worker
