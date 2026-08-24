@@ -1,8 +1,10 @@
 {
-  "updated": "2026-08-24T14:06:31",
+  "updated": "2026-08-24T14:15:16",
   "plan": "D:\\Projects\\ProjectsPalns\\dev-pipeline\\_current\\2026-08-24_dev-pipeline-crew-manager-ui.md",
-  "phase": "executing",
-  "card": "6.1",
-  "attempt": 1,
-  "title": "Тесты: up_project, тег этапа, двусмысленный вердикт ревьюера"
+  "phase": "done",
+  "progress": {
+    "total": 14,
+    "done": 14,
+    "left": 0
+  }
 }

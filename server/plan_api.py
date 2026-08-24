@@ -567,6 +567,7 @@ async def api_pulse(project: str = ""):
     plan = _plan_or_none(cfg)
     pf = cfg.find_plan_file()
     out["found"] = bool(pf)
+    open_by_stage: dict[str, list[str]] = {}
     if plan:
         out["plan_title"] = plan.title[:140]
         prog = plan.progress()
@@ -581,7 +582,19 @@ async def api_pulse(project: str = ""):
             stages[s]["total"] += 1
             if c.status == "done":
                 stages[s]["done"] += 1
+            else:
+                open_by_stage.setdefault(s, []).append(c.id)
         out["stages"] = [stages[k] for k in order]
+
+    # авто-прогресс этапов по коммитам + бары по активности (30 дней)
+    try:
+        from pipeline.activity import (collect, project_repos, group_stages,
+                                       merge_auto_progress)
+        _cm30 = collect(project_repos(cfg), days=30, limit=400)
+        out["commit_stages"] = group_stages(_cm30)[:8]
+        merge_auto_progress(out.get("stages", []), open_by_stage, _cm30)
+    except Exception:
+        out["commit_stages"] = []
 
     # конвейер
     sf = cfg.conveyor_dir() / "runner_state.json"
@@ -648,6 +661,8 @@ async def api_pulse_all():
         pf = cfg.find_plan_file()
         it["found"] = bool(pf)
         plan = _plan_or_none(cfg)
+        # карточки этапов без статуса done — для авто-прогресса по коммитам
+        open_by_stage: dict[str, list[str]] = {}
         if plan:
             it["plan_title"] = plan.title[:120]
             it["overall"] = plan.progress()
@@ -669,17 +684,24 @@ async def api_pulse_all():
                 stages[sid]["total"] += 1
                 if c.status == "done":
                     stages[sid]["done"] += 1
+                else:
+                    open_by_stage.setdefault(sid, []).append(c.id)
             it["stages"] = [stages[k] for k in order]
         else:
             it["stages"] = []
 
-        # git-активность по этапам (карточка 5.1): коммиты за 7 дней,
-        # сгруппированные по этапу (card->этап), для строки в карточке проекта.
+        # git-активность (карточка 5.1) + авто-прогресс этапов по коммитам:
+        # один проход git log за 30 дней -> строка «за 7 дней», бары по этапам,
+        # stage['auto'] = открытые карточки этапа, затронутые коммитами.
         try:
-            from pipeline.activity import collect, project_repos, group_stages
-            _cm = collect(project_repos(cfg), days=7, limit=200)
-            it["stage_activity"] = group_stages(_cm)
-            it["activity_total"] = len(_cm)
+            from pipeline.activity import (collect, project_repos, group_stages,
+                                           within_days, merge_auto_progress)
+            _cm30 = collect(project_repos(cfg), days=30, limit=400)
+            _cm7 = within_days(_cm30, days=7)
+            it["stage_activity"] = group_stages(_cm7)
+            it["activity_total"] = len(_cm7)
+            it["commit_stages"] = group_stages(_cm30)[:8]
+            merge_auto_progress(it["stages"], open_by_stage, _cm30)
         except Exception:
             it["stage_activity"] = []
             it["activity_total"] = 0

@@ -52,6 +52,8 @@ main { padding:0 28px 20px; overflow:auto; height:calc(100vh - 58px); }
 .progress-card { flex:1 1 320px; min-width:320px; }
 .progress-track { height:14px; background:var(--panel2); border:1px solid var(--border); border-radius:8px; overflow:hidden; margin-top:8px; }
 .progress-fill { height:100%; background:linear-gradient(90deg, var(--green), #22d3ee); border-radius:8px; transition:width .4s ease; }
+/* авто-прогресс этапа по git-коммитам: открытые карточки с коммитами */
+.progress-auto { height:100%; background:repeating-linear-gradient(45deg, rgba(34,211,238,.55) 0 6px, rgba(34,211,238,.25) 6px 12px); transition:width .4s ease; }
 .progress-lbl { display:flex; justify-content:space-between; font-size:12px; color:var(--muted); margin-top:6px; }
 .running-list { margin-top:10px; border-top:1px solid var(--border); padding-top:8px; }
 .running-list .rl-title { font-size:11px; color:var(--muted); text-transform:uppercase; letter-spacing:.4px; margin-bottom:6px; }
@@ -1525,20 +1527,30 @@ async function loadPulse(){
          '</div></div>';
     // этапы
     if ((p.stages||[]).length){
-      h += '<div class="table-card" style="padding:12px;margin-bottom:10px"><b>Этапы</b>';
+      h += '<div class="table-card" style="padding:12px;margin-bottom:10px"><b>Этапы</b>'+
+           '<span class="muted" style="font-size:11.5px"> · штриховка = карточки с коммитами без статуса done</span>';
       for (const s of p.stages){
+        const au = s.auto||0;
         const pct = s.total ? Math.round(100*s.done/s.total) : 0;
-        const done = pct===100;
+        const pw = s.total ? Math.min(100-pct, Math.round(100*au/s.total)) : 0;
+        const done = s.done === s.total && s.total > 0;
         h += '<div style="display:flex;align-items:center;gap:10px;margin-top:8px">'+
-             '<span style="width:110px;font-size:12.5px">'+esc2(s.stage==='—'?'без этапа':'Этап '+s.stage)+'</span>'+
-             '<div class="progress-track" style="flex:1"><div class="progress-fill" style="width:'+pct+'%"></div></div>'+
-             '<span class="muted" style="font-size:11.5px;width:70px;text-align:right">'+s.done+'/'+s.total+(done?' ✅':'')+'</span></div>';
+             '<span style="width:110px;font-size:12.5px">'+esc2(s.stage==='—'?'без этапа':'Этап '+s.stage)+
+             (au?' <span class="badge">+'+au+'</span>':'')+'</span>'+
+             '<div class="progress-track" style="flex:1;display:flex">'+
+               '<div class="progress-fill" style="width:'+pct+'%"></div>'+
+               (pw?'<div class="progress-auto" style="width:'+pw+'%"></div>':'')+
+             '</div>'+
+             '<span class="muted" style="font-size:11.5px;width:70px;text-align:right" title="по плану: '+s.done+' · авто (коммиты): '+au+'">'+
+               (s.done+au)+'/'+s.total+(done?' ✅':'')+'</span></div>';
       }
       h += '</div>';
     }
   } else {
     h += '<div class="table-card" style="padding:12px;margin-bottom:10px;border-color:#eab308">'+
-         '⚠ У проекта нет файла плана — раннеру нечего исполнять. Выберите ★-проект.</div>';
+         '⚠ У проекта нет файла плана — раннеру нечего исполнять. Прогресс по git-коммитам (30 дней):'+
+         commitStageBars(p.commit_stages)+
+         '<div class="muted" style="font-size:11.5px;margin-top:8px">Запуск агентов доступен кнопками в карточке на главном экране.</div></div>';
   }
   // сейчас
   const rn = p.runner || {};
@@ -1688,12 +1700,47 @@ function phaseInfo(p){
   return ['💤 простаивает', 'muted'];
 }
 
+/* Кнопки запуска агентов — работают и без плана (devpipeline и др.) */
+function launchButtons(project){
+  return '<div style="display:flex;gap:6px;margin-top:8px;flex-wrap:wrap">'+
+       '<button style="padding:4px 10px;font-size:12px" title="Сессия на каждую роль из pipeline.yaml (crew) — каждое в СВОЁМ видимом окне терминала, с автопромптом" onclick="crewUp(\''+esc(project)+'\')">▶ Поднять проект</button>'+
+       '<button style="padding:4px 10px;font-size:12px" title="Контролёр (Агент-1): полноценное окно opencode с автопромптом по контексту проекта" onclick="openTerminal(\''+esc(project)+'\',\'controller\')">🧭 Контролёр</button>'+
+       '<button style="padding:4px 10px;font-size:12px" title="Исполнитель: полноценное окно opencode (/new-цикл порций, автопромпт)" onclick="openTerminal(\''+esc(project)+'\',\'executor\')">🤖 Исполнитель</button>'+
+       '</div>';
+}
+
+/* Бар этапа из git-коммитов (проекты без плана): ширина = доля коммитов этапа */
+function commitStageBars(cs){
+  const groups = (cs||[]).filter(g=>g.stage!=='—');
+  if(!groups.length) return '';
+  const maxC = Math.max.apply(null, groups.map(g=>g.commits)) || 1;
+  const lastD = g => esc(String(g.last_date||'').slice(5,16).replace('T',' '));
+  return '<div style="margin-top:8px">'+groups.slice(0,6).map(g=>{
+    const w = Math.round(100*g.commits/maxC);
+    return '<div style="display:flex;align-items:center;gap:10px;margin-top:6px">'+
+      '<span style="width:46%;font-size:12.5px" title="'+esc(g.last_subject||'')+'">этап '+esc(g.stage)+
+      (g.feat_n?' <span class="badge">+'+g.feat_n+'feat</span>':'')+(g.fix_n?' <span class="badge warn">'+g.fix_n+'fix</span>':'')+'</span>'+
+      '<div class="progress-track" style="flex:1;height:10px"><div class="progress-fill" style="width:'+w+'%"></div></div>'+
+      '<span class="muted" style="font-size:11.5px;width:96px;text-align:right">'+g.commits+' комм. · '+lastD(g)+'</span></div>';
+  }).join('')+'</div>';
+}
+
 function renderProjectCard(p){
-  if (!p.found)
-    return '<div class="table-card" style="padding:12px;margin-bottom:10px;opacity:.55">'+
-      '<b>'+esc(p.project)+'</b> <span class="muted">— файла плана нет '+
-      '(ProjectsPalns\\<проект>\\_current пуст)</span></div>';
   const o = p.overall || {done:0,total:0};
+  if (!p.found){
+    /* Плана нет — прогресс и кнопки строим из git-коммитов (авто-режим) */
+    let h0 = '<div class="table-card" style="padding:12px;margin-bottom:10px">';
+    h0 += '<div style="display:flex;align-items:center;gap:10px">'+
+          '<b>★ '+esc(p.project)+'</b>'+
+          '<span class="badge muted">плана нет — прогресс по коммитам (30 дней)</span></div>';
+    h0 += commitStageBars(p.commit_stages);
+    h0 += '<div class="muted" style="font-size:11.5px;margin-top:8px;border-top:1px solid var(--border);padding-top:6px">'+
+          '💾 за 7 дней: <b>'+esc(String(p.activity_total||0))+'</b> комм. · план не создан '+
+          '(ProjectsPalns\\'+esc(p.project)+'\\_current пуст)</div>';
+    h0 += launchButtons(p.project);
+    h0 += '</div>';
+    return h0;
+  }
   const info = phaseInfo(p);
   let h = '<div class="table-card" style="padding:12px;margin-bottom:10px">';
   h += '<div style="display:flex;align-items:center;gap:10px">'+
@@ -1703,12 +1750,19 @@ function renderProjectCard(p){
        '<span class="muted" style="font-size:11.5px">⏱ всего '+fmtDuration(p.work_sec||0)+'</span></div>';
   h += '<div class="muted" style="font-size:12.5px;margin-top:4px">'+esc(p.plan_title||'')+'</div>';
   h += '<div style="margin-top:8px">'+(p.stages||[]).map(s=>{
+        const au = s.auto||0;
         const pc = s.total ? Math.round(100*s.done/s.total) : 0;
-        const done = pc === 100;
+        const pw = s.total ? Math.min(100-pc, Math.round(100*au/s.total)) : 0;
+        const done = s.done === s.total && s.total > 0;
         return '<div style="display:flex;align-items:center;gap:10px;margin-top:6px">'+
-          '<span style="width:46%;font-size:12.5px;overflow:hidden;text-overflow:ellipsis;white-space:nowrap" title="'+esc(s.title)+'">'+esc(s.title)+'</span>'+
-          '<div class="progress-track" style="flex:1"><div class="progress-fill" style="width:'+pc+'%'+(done?';background:var(--green)':'')+'"></div></div>'+
-          '<span class="muted" style="font-size:11.5px;width:64px;text-align:right">'+s.done+'/'+s.total+(done?' ✅':'')+'</span></div>';
+          '<span style="width:46%;font-size:12.5px;overflow:hidden;text-overflow:ellipsis;white-space:nowrap" title="'+esc(s.title)+
+            (au ? ' · с коммитами, без статуса: '+au : '')+'">'+esc(s.title)+
+            (au ? ' <span class="badge">+'+au+'</span>' : '')+'</span>'+
+          '<div class="progress-track" style="flex:1;display:flex">'+
+            '<div class="progress-fill" style="width:'+pc+'%'+(done?';background:var(--green)':'')+'"></div>'+
+            (pw ? '<div class="progress-auto" style="width:'+pw+'%" title="коммиты есть — статус не обновлён: '+au+'"></div>' : '')+
+          '</div>'+
+          '<span class="muted" style="font-size:11.5px;width:64px;text-align:right" title="по плану: '+s.done+' · авто (коммиты): '+au+'">'+(s.done+au)+'/'+s.total+(done?' ✅':'')+'</span></div>';
       }).join('')+'</div>';
   h += '<div class="muted" style="font-size:11.5px;margin-top:8px;border-top:1px solid var(--border);padding-top:6px">';
   const sa = (p.stage_activity||[]);
@@ -1725,12 +1779,8 @@ function renderProjectCard(p){
        ' · 🐌 '+((p.stalled||[]).length)+
        ((p.running_card)?(' · сейчас: '+esc(p.running_card)):'')+
        ((p.runner&&p.runner.note)?(' · '+esc(String(p.runner.note).slice(0,60))):'')+'</div>';
-  h += '<div style="display:flex;gap:6px;margin-top:8px;flex-wrap:wrap">'+
-       '<button style="padding:4px 10px;font-size:12px" title="Сессия на каждую роль из pipeline.yaml (crew) — каждое в СВОЁМ видимом окне терминала, с автопромптом" onclick="crewUp(\''+esc(p.project)+'\')">▶ Поднять проект</button>'+
-       '<button style="padding:4px 10px;font-size:12px" title="Контролёр (Агент-1): полноценное окно opencode с автопромптом по контексту проекта" onclick="openTerminal(\''+esc(p.project)+'\',\'controller\')">🧭 Контролёр</button>'+
-       '<button style="padding:4px 10px;font-size:12px" title="Исполнитель: полноценное окно opencode (/new-цикл порций, автопромпт)" onclick="openTerminal(\''+esc(p.project)+'\',\'executor\')">🤖 Исполнитель</button>'+
-       '</div>';
-  h += '</div>';
+   h += launchButtons(p.project);
+   h += '</div>';
   return h;
 }
 

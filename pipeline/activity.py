@@ -110,17 +110,68 @@ def _ts(iso_date: str) -> float:
         return 0.0
 
 
+def base_card(card: str) -> str:
+    """Базовый id карточки без служебного суффикса постановки.
+
+    '6.1-review' -> '6.1', 'A-1.1' -> 'A-1.1' (суффикс срезается только если
+    база содержит точку, а суффикс — нет)."""
+    parts = card.rsplit("-", 1)
+    if len(parts) == 2 and "." in parts[0] and "." not in parts[1]:
+        return parts[0]
+    return card
+
+
+def touched_cards(commits: list[dict]) -> set[str]:
+    """Множество карточек, затронутых коммитами (card + базовый id).
+
+    Коммиты с review-постановками ('<id>-review') засчитываются базовой
+    карточке — авто-прогресс этапа не должен требовать статуса done."""
+    out: set[str] = set()
+    for c in commits:
+        card = c.get("card")
+        if card:
+            out.add(card)
+            out.add(base_card(card))
+    return out
+
+
+def within_days(commits: list[dict], days: int,
+                now: float | None = None) -> list[dict]:
+    """Фильтр коммитов: только последние `days` дней (для одного прохода
+    git log за широкий окно с последующей нарезкой)."""
+    now = now if now is not None else datetime.now().timestamp()
+    cutoff = now - days * 86400
+    return [c for c in commits if _ts(c.get("date", "")) >= cutoff]
+
+
+def merge_auto_progress(stages: list[dict], open_by_stage: dict[str, list[str]],
+                        commits: list[dict]) -> None:
+    """Авто-прогресс этапов по git-коммитам (in place).
+
+    stage['auto'] — открытые карточки этапа, затронутые коммитами
+    (работа идёт, статус в плане ещё не обновлён); stage['commits'] —
+    число коммитов этапа за окно. Прогресс-бар панели растёт автоматически:
+    solid = статусы плана, штриховка = авто по коммитам."""
+    touched = touched_cards(commits)
+    for st in stages:
+        open_ids = open_by_stage.get(st["stage"], [])
+        st["auto"] = sum(1 for cid in open_ids if cid in touched)
+        st["commits"] = sum(1 for c in commits
+                            if c.get("card") and stage_of(c["card"]) == st["stage"])
+
+
 def stage_of(card: str | None) -> str:
     """Этап = префикс id листовой карточки до последней точки (как _stage_id).
 
     'A-1.1' -> 'A-1', 'plan/U1.2' -> 'U1', без точки/без card -> '—'.
-    """
+    Служебные суффиксы постановок срезаются: '6.1-review' -> этап '6'."""
     if not card:
         return "—"
-    core = card.split("-", 1)[-1]
+    base = base_card(card)
+    core = base.split("-", 1)[-1]
     if "." not in core:
         return "—"
-    return card.rsplit(".", 1)[0]
+    return base.rsplit(".", 1)[0]
 
 
 def group_stages(commits: list[dict]) -> list[dict]:

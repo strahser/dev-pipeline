@@ -232,5 +232,54 @@ class GroupStagesTest(unittest.TestCase):
                 self.assertIn(k, g)
 
 
+class AutoProgressTest(unittest.TestCase):
+    """Авто-прогресс этапов по коммитам (base_card/touched_cards/within_days)."""
+
+    def test_base_card(self):
+        from pipeline.activity import base_card
+        self.assertEqual(base_card("6.1-review"), "6.1")
+        self.assertEqual(base_card("U1.2-review"), "U1.2")
+        self.assertEqual(base_card("A-1.1"), "A-1.1")     # id с дефисом цел
+        self.assertEqual(base_card("6.1"), "6.1")
+
+    def test_touched_cards(self):
+        from pipeline.activity import touched_cards
+        commits = [{"card": "6.1"}, {"card": "6.2-review"}, {"card": None}]
+        self.assertEqual(touched_cards(commits), {"6.1", "6.2", "6.2-review"})
+
+    def test_within_days(self):
+        from datetime import datetime
+        from pipeline.activity import within_days
+        commits = [
+            {"date": "2026-08-24T10:00:00+00:00"},
+            {"date": "2026-07-01T10:00:00+00:00"},
+            {"date": "мусор"},
+        ]
+        now = datetime(2026, 8, 24, 12, 0, 0).timestamp()
+        out = within_days(commits, days=7, now=now)
+        self.assertEqual(len(out), 1)
+
+    def test_merge_auto_progress(self):
+        from pipeline.activity import merge_auto_progress
+        stages = [{"stage": "1", "done": 1, "total": 3},
+                  {"stage": "2", "done": 0, "total": 2}]
+        open_by_stage = {"1": ["1.2", "1.3"], "2": ["2.1", "2.2"]}
+        commits = [
+            {"card": "1.1", "prefix": "plan", "date": "2026-08-24T10:00:00+00:00",
+             "subject": "plan/1.1: done"},
+            {"card": "1.2", "prefix": "plan", "date": "2026-08-24T11:00:00+00:00",
+             "subject": "plan/1.2: работа идёт"},
+            {"card": "2.1-review", "prefix": "review", "date": "2026-08-24T12:00:00+00:00",
+             "subject": "review/2.1-review: постановка"},
+        ]
+        merge_auto_progress(stages, open_by_stage, commits)
+        s1, s2 = stages
+        self.assertEqual(s1["auto"], 1)          # 1.2 с коммитами, 1.3 — нет
+        self.assertEqual(s1["commits"], 2)       # plan/1.1 + plan/1.2
+        self.assertEqual(s2["auto"], 1)          # review-постановка = база 2.1
+        self.assertEqual(s2["commits"], 1)
+        self.assertNotIn("auto", {})             # in place только у этапов
+
+
 if __name__ == "__main__":
     unittest.main(verbosity=2)
