@@ -64,7 +64,8 @@ REVIEWER_PROMPT = """Ты НЕЗАВИСИМЫЙ РЕВЬЮЕР этапа {stag
    «Доказательства», «Инструкции при retry».
 2. РЕШЕНИЕ — создай ровно файл
    {decision_path}
-   с JSON: {{"decision": "approve"}} или {{"decision": "retry", "comment": "что исправить"}}
+   с JSON: {{"decision": "approve", "actor": "reviewer"}} или
+   {{"decision": "retry", "actor": "reviewer", "comment": "что исправить"}}
 Без файла решения этап останется ждать владельца.
 """
 

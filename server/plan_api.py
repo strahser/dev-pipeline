@@ -14,6 +14,7 @@
     GET  /api/questions                 открытые вопросы агентов (Tasks\Вопросы)
     POST /api/questions/{qid}/answer    ответ пользователя -> файл + git + SSE в канал сессии
     GET  /api/checkpoints               ожидающие одобрения чекпоинты раннера
+    GET  /api/checkpoints/history       история решений по чекпоинтам (кто решил)
     POST /api/checkpoints/{cid}/approve одрбрить (продолжить)
     POST /api/checkpoints/{cid}/retry   перезапустить карточку
     GET  /api/runner                    состояние план-раннера (runner_state.json)
@@ -51,6 +52,7 @@ def init(store, hub):
 class AnswerIn(BaseModel):
     project: str = ""
     text: str
+    author: str = "owner"
 
 
 # ---------------------------------------------------------------------------
@@ -757,12 +759,14 @@ async def questions_list(project: str = ""):
             answered = ANSWERS_MARK in txt and txt.split(ANSWERS_MARK, 1)[1].strip()
             ms = re.search(r"^(?:сессия|session)\s*:\s*(\S+)", txt, re.M)
             mc = re.search(r"^(?:карточка|card|задача)\s*:\s*(\S+)", txt, re.M)
+            ma = re.search(r"^автор\s*:\s*(.+)$", txt, re.M)
             mt = re.search(r"^#\s+(.+)$", txt, re.M)
             out.append({
                 "id": f.stem, "project": pname, "file": str(f),
                 "question": (mt.group(1).strip() if mt else f.stem)[:160],
                 "card": mc.group(1) if mc else "",
                 "session": ms.group(1) if ms else "",
+                "author": (ma.group(1).strip() if ma else ""),
                 "answered": bool(answered),
                 "age_min": int((datetime.now().timestamp() - f.stat().st_mtime) / 60),
                 "content": txt[:4000],
@@ -779,6 +783,7 @@ async def question_answer(qid: str, body: AnswerIn):
     text = (body.text or "").strip()
     if not text:
         raise HTTPException(400, "пустой ответ")
+    author = (body.author or "").strip() or "owner"
     txt = qp.read_text(encoding="utf-8")
     tail = txt.split(ANSWERS_MARK, 1)[1].strip() if ANSWERS_MARK in txt else ""
     if tail:
@@ -788,22 +793,25 @@ async def question_answer(qid: str, body: AnswerIn):
         head = txt.split(ANSWERS_MARK, 1)[0]
     else:
         head = txt.rstrip()
-    qp.write_text(head.rstrip() + f"\n\n{ANSWERS_MARK}\n\n{text}\n", encoding="utf-8")
+    qp.write_text(head.rstrip() + f"\n\n{ANSWERS_MARK}\n\n{text}\n\nавтор: {author}\n",
+                  encoding="utf-8")
     commit = _git_commit(cfg.root, f"questions: ответ на вопрос {qid}")
     # уведомить сессию субагента (если указана) и ленту
     ms = re.search(r"^(?:сессия|session)\s*:\s*(\S+)", txt, re.M)
     sid = (ms.group(1) if ms else "").strip()
     if sid:
         msg = _store.add_message("dashboard", f"session-{sid}",
-                                 f"ОТВЕТ на {qid}: {text}") if _store else None
+                                 f"ОТВЕТ на {qid} ({author}): {text}") if _store else None
         if _hub is not None and msg is not None:
             _hub.publish({"id": msg["id"], "type": "question_answered",
                           "from": "dashboard", "to": f"session-{sid}",
                           "text": msg["text"], "created_at": msg["created_at"],
                           "delivery": msg["delivery"],
-                          "payload": {"question": qid, "chat": True}})
-    _publish("question_answered", "feed", cfg.name, payload={"question": qid})
-    return {"ok": True, "question": qid, "answer": text, "commit": commit}
+                          "payload": {"question": qid, "author": author, "chat": True}})
+    _publish("question_answered", "feed", cfg.name,
+             payload={"question": qid, "author": author})
+    return {"ok": True, "question": qid, "answer": text, "author": author,
+            "commit": commit}
 
 
 # ---------------------------------------------------------------------------
@@ -838,6 +846,7 @@ async def checkpoints_list(project: str = ""):
 class CpAction(BaseModel):
     project: str = ""
     comment: str = ""
+    actor: str = "owner"
 
 
 def _checkpoint_action(cid: str, body: CpAction, action: str):
@@ -850,15 +859,31 @@ def _checkpoint_action(cid: str, body: CpAction, action: str):
         data = json.loads(pend.read_text(encoding="utf-8"))
     except Exception:
         data = {}
-    data.update({"action": action, "comment": body.comment,
-                 "decided_at": datetime.now().isoformat(timespec="seconds"),
+    actor = (body.actor or "").strip() or "owner"
+    decided_at = datetime.now().isoformat(timespec="seconds")
+    data.update({"action": action, "comment": body.comment, "actor": actor,
+                 "decided_at": decided_at,
                  "decision": "approved" if action == "approve" else "retry"})
     (d / f"{cid}.decision.json").write_text(json.dumps(data, ensure_ascii=False, indent=2),
                                             encoding="utf-8")
     pend.unlink(missing_ok=True)
+    # история решений (аудит): decision.json потребляется раннером однократно,
+    # поэтому «кто решил» дублируем в _history.jsonl (файлы = источник правды)
+    try:
+        with open(d / "_history.jsonl", "a", encoding="utf-8") as fh:
+            fh.write(json.dumps({"checkpoint": cid, "card": data.get("card", ""),
+                                 "action": action,
+                                 "decision": data["decision"],
+                                 "comment": body.comment[:300], "actor": actor,
+                                 "decided_at": decided_at},
+                                ensure_ascii=False) + "\n")
+    except Exception:
+        pass
     _publish(f"checkpoint_{action}", "feed", cfg.name,
-             task=data.get("card", ""), payload={"checkpoint": cid})
-    return {"ok": True, "checkpoint": cid, "action": action}
+             task=data.get("card", ""),
+             payload={"checkpoint": cid, "actor": actor,
+                      "comment": (body.comment or "")[:200]})
+    return {"ok": True, "checkpoint": cid, "action": action, "actor": actor}
 
 
 @router.post("/api/checkpoints/{cid}/approve")
@@ -869,6 +894,30 @@ async def checkpoint_approve(cid: str, body: CpAction):
 @router.post("/api/checkpoints/{cid}/retry")
 async def checkpoint_retry(cid: str, body: CpAction):
     return _checkpoint_action(cid, body, "retry")
+
+
+@router.get("/api/checkpoints/history")
+async def checkpoints_history(project: str = ""):
+    """История решений по чекпоинтам (_history.jsonl): кто решил, когда, что."""
+    out = []
+    for pname in _projects_for(project):
+        try:
+            cfg = _load_cfg_lazy(pname)
+        except ConfigError:
+            continue
+        hf = _cp_dir(cfg) / "_history.jsonl"
+        if not hf.exists():
+            continue
+        for line in hf.read_text(encoding="utf-8", errors="replace").splitlines():
+            line = line.strip()
+            if not line:
+                continue
+            try:
+                out.append({"project": pname, **json.loads(line)})
+            except Exception:
+                continue
+    out.sort(key=lambda x: str(x.get("decided_at", "")), reverse=True)
+    return out
 
 
 # ---------------------------------------------------------------------------

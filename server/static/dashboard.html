@@ -516,24 +516,52 @@ async function loadQA(){
       '<pre class="json" style="max-height:180px;overflow:auto;margin-top:8px">'+esc(q.content)+'</pre>'+
       '<div style="display:flex;gap:8px;margin-top:8px;align-items:flex-end">'+
         '<textarea id="'+tid+'" placeholder="Ответ владельца: вариант и уточнения…" style="flex:1;min-height:44px;background:var(--panel2);color:var(--text);border:1px solid var(--border);border-radius:6px;padding:6px 8px;font-size:13px;resize:vertical"></textarea>'+
+        '<select id="ansa_'+esc(q.id)+'" title="Кто отвечает (попадёт в файл вопроса и аудит)" style="background:var(--panel2);color:var(--text);border:1px solid var(--border);border-radius:6px;padding:6px;font-size:12.5px">'+
+          '<option value="owner">владелец</option>'+
+          '<option value="reviewer">ревьюер</option>'+
+          '<option value="manager">менеджер</option>'+
+        '</select>'+
         '<button class="primary" onclick="answerQ(\''+esc(q.project)+'\',\''+esc(q.id)+'\')">✉ Ответить</button>'+
       '</div></div>';
   }).join('') : '<div class="empty" style="padding:4px">открытых вопросов нет</div>';
   if (qsDone.length){
     html += '<details style="margin:0 4px 12px"><summary class="muted" style="cursor:pointer;font-size:12.5px">Отвеченные ('+qsDone.length+')</summary>'+
-      qsDone.map(q=>'<div class="muted" style="font-size:12px;padding:3px 0;border-bottom:1px dashed var(--border)">✅ ['+esc(q.project)+'] '+esc(q.question)+' — '+esc(q.id)+'</div>').join('')+'</details>';
+      qsDone.map(q=>'<div class="muted" style="font-size:12px;padding:3px 0;border-bottom:1px dashed var(--border)">✅ ['+esc(q.project)+'] '+esc(q.question)+' — ответил: <b>'+esc(q.author||'owner')+'</b> · '+esc(q.id)+'</div>').join('')+'</details>';
   }
   html += '<h4 style="margin:14px 4px 6px">⏸ Ожидают одобрения ('+cps.length+')</h4>';
   html += cps.length ? cps.map(c=>
-    '<div class="table-card" style="padding:10px;margin-bottom:8px;display:flex;gap:10px;align-items:center;flex-wrap:wrap">'+
-      '<span class="badge orange">'+esc(c.project||activeProject)+'</span>'+
-      '<b>Карточка '+esc(c.card)+'</b><span>'+esc(c.title||'')+'</span>'+
-      '<span class="muted" style="font-size:11.5px">'+esc(c.reason||'')+' · '+esc(c.created||'')+'</span>'+
-      '<span style="margin-left:auto"></span>'+
-      '<button class="primary" onclick="cpAction(\''+esc(c.project||activeProject)+'\',\''+esc(c.id)+'\',\'approve\')">✅ Одобрить</button>'+
-      '<button onclick="cpAction(\''+esc(c.project||activeProject)+'\',\''+esc(c.id)+'\',\'retry\')">🔄 Перезапустить карточку</button>'+
+    '<div class="table-card" style="padding:10px;margin-bottom:8px;flex-wrap:wrap">'+
+      '<div style="display:flex;gap:10px;align-items:center;width:100%;flex-wrap:wrap">'+
+        '<span class="badge orange">'+esc(c.project||activeProject)+'</span>'+
+        '<b>Карточка '+esc(c.card)+'</b><span>'+esc(c.title||'')+'</span>'+
+        '<span class="muted" style="font-size:11.5px">'+esc(c.reason||'')+' · '+esc(c.created||'')+'</span>'+
+        '<span style="margin-left:auto"></span>'+
+        '<button class="primary" onclick="cpAction(\''+esc(c.project||activeProject)+'\',\''+esc(c.id)+'\',\'approve\')">✅ Одобрить</button>'+
+        '<button onclick="cpAction(\''+esc(c.project||activeProject)+'\',\''+esc(c.id)+'\',\'retry\')">🔄 Перезапустить карточку</button>'+
+      '</div>'+
+      '<div style="display:flex;gap:8px;align-items:center;margin-top:8px;font-size:12px">'+
+        'решил: '+
+        '<select id="actor_'+esc(c.id)+'" title="Кто принимает решение (попадёт в decision.json и аудит)">'+
+          '<option value="owner">владелец</option>'+
+          '<option value="reviewer">ревьюер</option>'+
+          '<option value="manager">менеджер</option>'+
+        '</select>'+
+        '<input id="cpc_'+esc(c.id)+'" placeholder="комментарий (для retry — что исправить)" '+
+          'style="flex:1;min-width:200px;background:var(--panel2);color:var(--text);border:1px solid var(--border);border-radius:6px;padding:5px 8px;font-size:12.5px">'+
+      '</div>'+
     '</div>').join('')
     : '<div class="empty" style="padding:4px">раннер не ждёт одобрений</div>';
+  let hist = [];
+  try { hist = await get('/api/checkpoints/history'+qaQuery()); } catch(e){}
+  html += '<h4 style="margin:14px 4px 6px">📜 История решений ('+hist.length+')</h4>';
+  html += hist.length ? hist.slice(0,20).map(h=>
+    '<div class="muted" style="font-size:12px;padding:3px 0;border-bottom:1px dashed var(--border)">'+
+      (h.action==='approve'?'✅':'🔄')+' <b>Карточка '+esc(h.card||h.checkpoint)+'</b>'
+      +' ['+esc(h.project)+'] — решил: <b>'+esc(h.actor||'owner')+'</b>'
+      +' · '+esc(h.decided_at||'')
+      +(h.comment? ' — «'+esc(h.comment)+'»':'')+
+    '</div>').join('')
+    : '<div class="empty" style="padding:4px">решений пока не было</div>';
   $('qaBody').innerHTML = html;
   $('qaInfo').textContent = 'проект: '+(activeProject||'все');
 }
@@ -541,19 +569,25 @@ async function answerQ(project, id){
   const ta = document.getElementById('ans_'+id);
   const text = (ta && ta.value || '').trim();
   if (!text){ alert('Введите ответ'); return; }
+  const sel = document.getElementById('ansa_'+id);
+  const author = (sel && sel.value) || 'owner';
   try {
     await fetch('/api/questions/'+encodeURIComponent(id)+'/answer', {
       method:'POST', headers:{'Content-Type':'application/json'},
-      body: JSON.stringify({project: project, text: text})
+      body: JSON.stringify({project: project, text: text, author: author})
     });
     await loadQA();
   } catch(e){ alert('Ошибка отправки: '+e); }
 }
 async function cpAction(project, id, action){
+  const sel = document.getElementById('actor_'+id);
+  const cin = document.getElementById('cpc_'+id);
   try {
     await fetch('/api/checkpoints/'+encodeURIComponent(id)+'/'+action, {
       method:'POST', headers:{'Content-Type':'application/json'},
-      body: JSON.stringify({project: project})
+      body: JSON.stringify({project: project,
+                            actor: (sel && sel.value) || 'owner',
+                            comment: (cin && cin.value) || ''})
     });
     await loadQA();
   } catch(e){ alert('Ошибка: '+e); }

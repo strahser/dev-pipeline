@@ -66,9 +66,27 @@ class CheckpointHelperTest(unittest.TestCase):
             json.dumps({"decision": "retry", "comment": "переделай"}),
             encoding="utf-8")
         got = cp.take_decision(self.cfg, "U1.2")
-        self.assertEqual(got, ("retry", "переделай"))
+        self.assertEqual(got, ("retry", "переделай", "owner"),
+                         "без actor в файле решение считается решением владельца")
         self.assertFalse((d / "U1.2.decision.json").exists(),
                          "решение потребляется однократно")
+
+    def test_take_decision_reads_actor(self):
+        """Карточка 2.1: actor из decision.json доходит до события checkpoint_decided."""
+        from agents import checkpoint as cp
+        d = cp.cp_dir(self.cfg)
+        d.mkdir(parents=True, exist_ok=True)
+        (d / "S2.decision.json").write_text(
+            json.dumps({"decision": "approve", "actor": "reviewer",
+                        "comment": ""}),
+            encoding="utf-8")
+        action = cp.wait_decision(self.cfg, "S2", poll_sec=15,
+                                  clock=FakeClock(), notify=self._notify)
+        self.assertEqual(action, "approve")
+        ev = [e for e in self.events if e[0] == "checkpoint_decided"]
+        self.assertEqual(len(ev), 1)
+        self.assertEqual(ev[0][2].get("actor"), "reviewer",
+                         "актор решения виден в событии checkpoint_decided")
 
     def test_wait_returns_none_on_timeout(self):
         from agents import checkpoint as cp

@@ -614,16 +614,77 @@ class TestAppAPI(unittest.TestCase):
             self.assertEqual(len(lst), 1)
             self.assertFalse(lst[0]["answered"])
             r = self.client.post("/api/questions/1.1_Q1/answer",
-                                 json={"project": "_load", "text": "Выбирай A"})
+                                 json={"project": "_load", "text": "Выбирай A",
+                                       "author": "reviewer"})
             self.assertEqual(r.status_code, 200)
+            self.assertEqual(r.json()["author"], "reviewer")
             content = (qdir / "1.1_Q1.md").read_text(encoding="utf-8")
             self.assertIn("## Ответы\n\nВыбирай A", content)
+            self.assertIn("автор: reviewer", content,
+                          "автор ответа фиксируется в файле вопроса")
             lst2 = self.client.get("/api/questions", params={"project": "_load"}).json()
             self.assertTrue(lst2[0]["answered"])
+            self.assertEqual(lst2[0]["author"], "reviewer",
+                             "автор виден в списке вопросов для панели")
             # повторный ответ — конфликт
             r2 = self.client.post("/api/questions/1.1_Q1/answer",
                                   json={"project": "_load", "text": "ещё"})
             self.assertEqual(r2.status_code, 409)
+        finally:
+            app_mod.load_config = old
+            shutil.rmtree(tmp, ignore_errors=True)
+
+    def test_checkpoint_decision_records_actor(self):
+        """Карточка 2.1: approve с actor=reviewer-manager -> actor в decision.json,
+        в payload события и в истории решений."""
+        import tempfile, shutil
+        from pipeline.config import ProjectConfig
+        tmp = Path(tempfile.mkdtemp(prefix="cpact_"))
+        cpdir = tmp / "Tasks" / "Конвейер" / "checkpoints"
+        cpdir.mkdir(parents=True)
+        cfg = ProjectConfig(name="_load", root=tmp)
+        (cpdir / "3.1.pending.json").write_text(json.dumps(
+            {"card": "3.1", "title": "Этап 3", "reason": "этап завершён"}),
+            encoding="utf-8")
+        old = app_mod.load_config
+        app_mod.load_config = lambda name: cfg
+        try:
+            lst = self.client.get("/api/checkpoints", params={"project": "_load"}).json()
+            self.assertEqual(len(lst), 1)
+            r = self.client.post("/api/checkpoints/3.1/approve", json={
+                "project": "_load", "actor": "reviewer-manager",
+                "comment": "этап соответствует цели"})
+            self.assertEqual(r.status_code, 200, r.text)
+            self.assertEqual(r.json()["actor"], "reviewer-manager")
+            # decision.json содержит actor и комментарий
+            dec = json.loads((cpdir / "3.1.decision.json").read_text(encoding="utf-8"))
+            self.assertEqual(dec["decision"], "approved")
+            self.assertEqual(dec["actor"], "reviewer-manager")
+            self.assertEqual(dec["comment"], "этап соответствует цели")
+            self.assertIn("decided_at", dec)
+            self.assertFalse((cpdir / "3.1.pending.json").exists())
+            # событие несёт актора
+            evs = [e for e in self.store.recent_events(limit=50, project="_load")
+                   if e["type"] == "checkpoint_approve"]
+            self.assertEqual(len(evs), 1)
+            self.assertEqual(evs[0]["payload"].get("actor"), "reviewer-manager")
+            # история решений (аудит после потребления decision.json)
+            hist = self.client.get("/api/checkpoints/history",
+                                   params={"project": "_load"}).json()
+            self.assertEqual(len(hist), 1)
+            self.assertEqual(hist[0]["checkpoint"], "3.1")
+            self.assertEqual(hist[0]["actor"], "reviewer-manager")
+            self.assertEqual(hist[0]["action"], "approve")
+            self.assertTrue(hist[0]["decided_at"])
+            # actor по умолчанию — owner
+            (cpdir / "3.2.pending.json").write_text(
+                '{"card": "3.2"}', encoding="utf-8")
+            r2 = self.client.post("/api/checkpoints/3.2/retry", json={
+                "project": "_load"})
+            self.assertEqual(r2.status_code, 200)
+            dec2 = json.loads((cpdir / "3.2.decision.json").read_text(encoding="utf-8"))
+            self.assertEqual(dec2["actor"], "owner",
+                             "пустой/неназначенный актор = владелец")
         finally:
             app_mod.load_config = old
             shutil.rmtree(tmp, ignore_errors=True)

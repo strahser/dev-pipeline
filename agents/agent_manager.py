@@ -44,17 +44,23 @@ import argparse as _ap                           # noqa: E402
 
 
 def _opencode_cmd() -> str:
-    """Путь к opencode: env OPENCODE_CMD, затем поиск в PATH/стандартных местах."""
+    """Путь к opencode: env OPENCODE_CMD, затем прямой exe из npm global
+    (запуск через opencode.cmd упирается в лимит cmd 8191 символов —
+    «Слишком длинная командная строка» на длинных промптах; инцидент 2.1
+    2026-08-24), затем PATH."""
     env = os.environ.get("OPENCODE_CMD")
     if env and os.path.exists(env):
         return env
+    npm_root = Path(os.environ.get("APPDATA", "")) / "npm"
+    exe = npm_root / "node_modules" / "opencode-ai" / "bin" / "opencode.exe"
+    if exe.exists():
+        return str(exe)
     found = shutil.which("opencode")
-    if found:
+    if found and found.lower().endswith(".exe"):
         return found
-    # npm global on Windows
-    npm = Path(os.environ.get("APPDATA", "")) / "npm" / "opencode.cmd"
-    if npm.exists():
-        return str(npm)
+    npm_cmd = npm_root / "opencode.cmd"
+    if npm_cmd.exists():
+        return str(npm_cmd)
     return "opencode"
 
 

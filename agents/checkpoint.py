@@ -68,7 +68,7 @@ def create_pending(cfg, card_id: str, reason: str = "", title: str = "",
 
 
 def take_decision(cfg, card_id: str):
-    """(action, comment) из decision.json с удалением файла; None — решения нет."""
+    """(action, comment, actor) из decision.json с удалением файла; None — решения нет."""
     p = cp_dir(cfg) / f"{card_id}.decision.json"
     if not p.exists():
         return None
@@ -78,8 +78,9 @@ def take_decision(cfg, card_id: str):
         data = {}
     action = "retry" if data.get("decision") == "retry" else "approve"
     comment = str(data.get("comment", ""))
+    actor = str(data.get("actor", "")).strip() or "owner"
     p.unlink(missing_ok=True)
-    return action, comment
+    return action, comment, actor
 
 
 class _RealClock:
@@ -104,9 +105,10 @@ def wait_decision(cfg, card_id: str, *, poll_sec: int = DEFAULT_POLL_SEC,
     while True:
         got = take_decision(cfg, card_id)
         if got is not None:
-            action, comment = got
+            action, comment, actor = got
             _emit(notify, "checkpoint_decided", card_id,
-                  {"action": action, "comment": comment[:200]}, client)
+                  {"action": action, "comment": comment[:200], "actor": actor},
+                  client)
             return action
         now = clock.time()
         if deadline is not None and now >= deadline:
