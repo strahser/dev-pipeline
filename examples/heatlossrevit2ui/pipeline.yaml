@@ -9,7 +9,7 @@ project:
 
 plan:
   repo: [D:\Projects\ProjectsPalns]
-  subdir: HeatLossRevit2
+  subdir: HeatLossRevit2UI
   file: 2026-08-24_ui-threejs-migration-prep.md
 
 runner:
