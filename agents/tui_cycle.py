@@ -171,7 +171,9 @@ def build_base_prompt(cfg, role: str = "executor", user_prompt: str = "") -> str
     """Базовый промпт каждой порции: роль + цель проекта + задание владельца.
     Без явного задания — автозадание по контексту существующего проекта."""
     starter = _starter(role)
-    parts = [starter.format(project=cfg.name)]
+    # replace, а не format: в промптах ролей есть JSON-скобки {decision: ...},
+    # format принимает их за плейсхолдеры и падает KeyError (инцидент manager 2026-08-24)
+    parts = [starter.replace("{project}", cfg.name)]
     try:
         from pipeline.brief import goal_section
         goal = goal_section(cfg)
