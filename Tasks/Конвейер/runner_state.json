@@ -1,8 +1,8 @@
 {
-  "updated": "2026-08-24T12:58:35",
+  "updated": "2026-08-24T13:13:56",
   "plan": "D:\\Projects\\ProjectsPalns\\dev-pipeline\\_current\\2026-08-24_dev-pipeline-crew-manager-ui.md",
   "phase": "executing",
-  "card": "5.1",
+  "card": "6.2",
   "attempt": 1,
-  "title": "Агрегат /api/activity по этапам + строка в карточке проекта"
+  "title": "Парсер префиксов = protocol.md §7"
 }
