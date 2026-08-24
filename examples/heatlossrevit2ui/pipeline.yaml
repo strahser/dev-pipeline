@@ -10,7 +10,7 @@ project:
 plan:
   repo: [D:\Projects\ProjectsPalns]
   subdir: HeatLossRevit2UI
-  file: 2026-08-24_ui-threejs-migration-prep.md
+  file: 2026-08-24_standalone-viewer-local-pipeline.md
 
 runner:
   model: opencode-go/deepseek-v4-flash
