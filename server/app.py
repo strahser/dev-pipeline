@@ -31,6 +31,7 @@ from __future__ import annotations
 
 import asyncio
 import datetime
+import json
 import os
 import sys
 from contextlib import asynccontextmanager
@@ -1351,6 +1352,36 @@ async def crew_get(project: str):
         raise HTTPException(404, f"проект не найден: {e}")
     from pipeline.crew import load_crew
     return {"project": cfg.name, **load_crew(cfg)}
+
+
+class PermissionsIn(BaseModel):
+    mode: str
+
+
+@app.put("/api/projects/{project}/permissions")
+@app.post("/api/projects/{project}/permissions")
+async def project_permissions(project: str, body: PermissionsIn):
+    """Динамическая выдача прав записи (карточка 4.2): PUT/POST
+    {"mode": "read"|"write"} перезаписывает .opencode/permissions.json
+    (crew.permissions_template) и публикует событие permissions_changed.
+    Невалидный mode -> 400; ответ включает итоговый профиль."""
+    mode = (body.mode or "").strip().lower()
+    if mode not in ("read", "write"):
+        raise HTTPException(400, f"невалидный mode: {body.mode!r} (ожидается read|write)")
+    try:
+        cfg = load_config(project)
+    except ConfigError as e:
+        raise HTTPException(404, f"проект не найден: {e}")
+    from pipeline.crew import set_permissions, read_permissions
+    path = set_permissions(cfg, mode)
+    profile = json.loads(path.read_text(encoding="utf-8"))
+    ev = store.add_event("permissions_changed", "dashboard", "feed",
+                         project=cfg.name, task="",
+                         payload={"mode": mode,
+                                  "file": str(path.relative_to(cfg.root)).replace("\\", "/")})
+    hub.publish(ev)
+    return {"project": cfg.name, "mode": mode, "path": str(path),
+            "profile": profile, "event": ev["type"]}
 
 
 @app.post("/api/agents")

@@ -64,6 +64,34 @@ def ensure_permissions(cfg) -> Path | None:
     return target
 
 
+def set_permissions(cfg, mode: str) -> Path:
+    """Перезаписать профиль прав .opencode/permissions.json (карточка 4.2).
+
+    Динамическая выдача прав по требованию: владелец/менеджер выставляет
+    read|write из API/CLI, файл перезаписывается шаблоном permissions_template.
+    Возвращает путь к файлу."""
+    if mode not in ("read", "write"):
+        raise ValueError(f"невалидный режим прав: {mode!r} (ожидается read|write)")
+    target = cfg.root / ".opencode" / "permissions.json"
+    target.parent.mkdir(parents=True, exist_ok=True)
+    target.write_text(json.dumps(permissions_template(mode),
+                                 ensure_ascii=False, indent=2),
+                      encoding="utf-8")
+    return target
+
+
+def read_permissions(cfg) -> str | None:
+    """Текущий режим прав из .opencode/permissions.json (edit: allow -> write)."""
+    target = cfg.root / ".opencode" / "permissions.json"
+    if not target.exists():
+        return None
+    try:
+        data = json.loads(target.read_text(encoding="utf-8"))
+        return "write" if data.get("permissions", {}).get("edit") == "allow" else "read"
+    except Exception:
+        return None
+
+
 def up_project(cfg, client) -> list[dict]:
     """Поднять crew: по сессии на роль через POST /api/agents."""
     if client is None:

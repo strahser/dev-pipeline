@@ -349,6 +349,19 @@ def cmd_up(cfg, args):
     return 0 if all(r["ok"] for r in results) else 1
 
 
+def cmd_perms(cfg, args):
+    """Динамическая выдача прав записи (карточка 4.2):
+    python -m pipeline.cli perms <project> read|write."""
+    from . import crew
+    try:
+        path = crew.set_permissions(cfg, args.mode)
+    except ValueError as e:
+        print(f"ОШИБКА: {e}")
+        return 1
+    print(f"права проекта {cfg.name} установлены: {args.mode} -> {path}")
+    return 0
+
+
 def cmd_supervise(cfg, args):
     """Цикл супервизора: порция -> handoff -> перезапуск (<= restart_policy)."""
     import time as _time
@@ -420,6 +433,9 @@ def main(argv=None):
 
     p = sub.add_parser("up"); add_project(p)
     p.set_defaults(handler=lambda a: cmd_up(load_config(a.project), a))
+
+    p = sub.add_parser("perms"); add_project(p); p.add_argument("mode")
+    p.set_defaults(handler=lambda a: cmd_perms(load_config(a.project), a))
 
     p = sub.add_parser("supervise"); add_project(p)
     p.add_argument("--interval", type=int, default=30,

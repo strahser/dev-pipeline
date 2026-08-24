@@ -75,6 +75,39 @@ class CrewConfigTest(unittest.TestCase):
                           "существующий профиль не перезаписывается")
 
 
+class SetPermissionsTest(unittest.TestCase):
+    """Карточка 4.2: динамическая выдача прав записи (API + CLI)."""
+
+    def _cfg(self):
+        tmp = Path(tempfile.mkdtemp(prefix="pcrew_perms_"))
+        (tmp / ".opencode").mkdir(parents=True, exist_ok=True)
+        return make_cfg(tmp)
+
+    def test_set_write_then_read_rewrites_file(self):
+        from pipeline import crew
+        cfg = self._cfg()
+        w = crew.set_permissions(cfg, "write")
+        data = json.loads(Path(w).read_text(encoding="utf-8"))
+        self.assertEqual(data["permissions"]["edit"], "allow")
+        self.assertEqual(crew.read_permissions(cfg), "write")
+        r = crew.set_permissions(cfg, "read")
+        data = json.loads(Path(r).read_text(encoding="utf-8"))
+        self.assertEqual(data["permissions"]["edit"], "deny")
+        self.assertEqual(crew.read_permissions(cfg), "read")
+
+    def test_invalid_mode_raises_valueerror(self):
+        from pipeline import crew
+        cfg = self._cfg()
+        with self.assertRaises(ValueError):
+            crew.set_permissions(cfg, "admin")
+
+    def test_read_permissions_none_when_missing(self):
+        from pipeline import crew
+        tmp = Path(tempfile.mkdtemp(prefix="pcrew_noperm_"))
+        cfg = make_cfg(tmp)
+        self.assertIsNone(crew.read_permissions(cfg))
+
+
 class PlanRestartsTest(unittest.TestCase):
     P = {"max_restarts": 2, "cooldown_sec": 300}
 

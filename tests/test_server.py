@@ -1031,6 +1031,73 @@ class TerminalEndpointTest(unittest.TestCase):
         self.assertEqual(r.status_code, 400)
 
 
+class PermissionsEndpointTest(unittest.TestCase):
+    """Карточка 4.2: PUT/POST /api/projects/{name}/permissions
+    {\"mode\": \"read\"|\"write\"} перезаписывает .opencode/permissions.json
+    и публикует событие permissions_changed."""
+
+    @classmethod
+    def setUpClass(cls):
+        from fastapi.testclient import TestClient
+        cls.client = TestClient(app_mod.app)
+
+    def setUp(self):
+        for t in ("events",):
+            app_mod.store._conn.execute(f"DELETE FROM {t}")
+        app_mod.store._conn.commit()
+        self.tmp = Path(tempfile.mkdtemp(prefix="perms_"))
+        (self.tmp / "Tasks").mkdir(parents=True, exist_ok=True)
+        self.perm_file = self.tmp / ".opencode" / "permissions.json"
+
+        class FakeCfg:
+            name = "permsproj"
+            root = self.tmp
+            crew_permissions = "read"
+        self.cfg = FakeCfg()
+
+    def test_put_write_rewrites_file_and_events(self):
+        with mock.patch.object(app_mod, "load_config",
+                               lambda n: self.cfg):
+            r = self.client.put("/api/projects/permsproj/permissions",
+                                json={"mode": "write"})
+        self.assertEqual(r.status_code, 200)
+        data = r.json()
+        self.assertEqual(data["mode"], "write")
+        self.assertTrue(self.perm_file.exists())
+        self.assertEqual(data["profile"]["permissions"]["edit"], "allow")
+        self.assertIn("permissions_changed", data["event"])
+        evs = [e for e in app_mod.store.recent_events(limit=10)
+               if e["type"] == "permissions_changed"]
+        self.assertEqual(len(evs), 1)
+        self.assertEqual(evs[0]["payload"]["mode"], "write")
+
+    def test_post_read_rewrites_file(self):
+        with mock.patch.object(app_mod, "load_config",
+                               lambda n: self.cfg):
+            r = self.client.post("/api/projects/permsproj/permissions",
+                                 json={"mode": "read"})
+        self.assertEqual(r.status_code, 200)
+        data = r.json()
+        self.assertEqual(data["mode"], "read")
+        self.assertEqual(data["profile"]["permissions"]["edit"], "deny")
+
+    def test_invalid_mode_400(self):
+        with mock.patch.object(app_mod, "load_config",
+                               lambda n: self.cfg):
+            r = self.client.put("/api/projects/permsproj/permissions",
+                                json={"mode": "admin"})
+        self.assertEqual(r.status_code, 400)
+
+    def test_unknown_project_404(self):
+        def cfg_err(name):
+            raise app_mod.ConfigError("не найден")
+
+        with mock.patch.object(app_mod, "load_config", cfg_err):
+            r = self.client.put("/api/projects/nope/permissions",
+                                json={"mode": "write"})
+        self.assertEqual(r.status_code, 404)
+
+
 class MetaVersionTest(unittest.TestCase):
     """Баннер «перезапустите сервер»: версия кода в healthz и /api/meta."""
 

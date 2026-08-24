@@ -44,6 +44,17 @@ def main() -> int:
     assert (tmp / "Tasks" / "Статус_конвейера.md").exists()
     print("status ок")
 
+    # Карточка 4.2: CLI perms write -> файл прав перезаписан на write
+    rc3 = cli.cmd_perms(cfg, argparse.Namespace(mode="write"))
+    assert rc3 == 0, f"perms write failed rc={rc3}"
+    perm = tmp / ".opencode" / "permissions.json"
+    assert perm.exists(), "permissions.json не создан"
+    assert '"allow"' in perm.read_text(encoding="utf-8"), "режим write не применён"
+    # невалидный mode -> rc != 0
+    rc4 = cli.cmd_perms(cfg, argparse.Namespace(mode="admin"))
+    assert rc4 != 0, f"невалидный mode должен завершиться ошибкой, rc={rc4}"
+    print("perms ок")
+
     shutil.rmtree(tmp, ignore_errors=True)
     shutil.rmtree(cfg_dir, ignore_errors=True)
     print("SMOKE OK")
