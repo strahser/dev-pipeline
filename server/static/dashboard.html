@@ -326,11 +326,25 @@ pre.json { background:var(--code); border:1px solid var(--border); border-radius
       <h2>🗂 Сессии субагентов</h2>
       <button class="close" onclick="closeSessions()">✕ Закрыть</button>
     </header>
-    <div class="chat-actions">
+    <div class="chat-actions" style="gap:8px;flex-wrap:wrap">
       <button onclick="loadSessions()">🔄 Обновить</button>
+      <select id="sessionsFilter" onchange="loadSessions()" title="Фильтр по статусу субагентов"
+        style="background:var(--panel2);color:var(--text);border:1px solid var(--border);border-radius:6px;padding:5px 8px;font-size:12.5px">
+        <option value="">все статусы</option>
+        <option value="stalled">stalled</option>
+        <option value="failed">failed</option>
+        <option value="killed">killed</option>
+        <option value="done">done</option>
+      </select>
+      <button onclick="toggleAgentCreate()" title="Показать/скрыть форму создания агента">➕ Новый агент</button>
+      <button onclick="sessionsCleanup()" title="Удалить терминальные (done/failed/killed/stalled) сессии с мёртвыми процессами">🧹 Очистить завершённые</button>
+      <button class="danger" onclick="killAllStalled()" title="Последовательно убить все stalled-сессии проекта">⛔ Kill stalled</button>
+      <label style="display:flex;align-items:center;gap:4px;font-size:12px;color:var(--muted);cursor:pointer" title="Оставить done-сессии с заметкой handoff: (кандидаты рестарта)">
+        <input type="checkbox" id="cleanupKeepHandoff" checked style="accent-color:var(--accent)"> сохранить handoff
+      </label>
       <span style="margin-left:auto;font-size:11.5px;color:var(--muted)" id="sessionsInfo"></span>
     </div>
-    <div class="agent-create" style="display:none">
+    <div class="agent-create" style="display:none;align-items:center;gap:8px;padding:10px 4px;border-bottom:1px solid var(--border)">
       <span style="font-size:12px;color:var(--muted);align-self:center">➕ Новый агент:</span>
       <select id="newAgentRole" style="background:var(--panel2);color:var(--text);border:1px solid var(--border);border-radius:6px;padding:5px 8px;font-size:12.5px">
         <option value="controller">Агент-1 контролёр/планировщик</option>
@@ -2001,6 +2015,42 @@ async function createAgent(){
     loadSessions();
   } catch(e){ alert('Ошибка: '+e); }
 }
+/* Форма «➕ Новый агент»: показать/скрыть (карточка 3.3) */
+function toggleAgentCreate(){
+  const el = document.querySelector('#sessionsModal .agent-create');
+  if (!el) return;
+  el.style.display = (el.style.display && el.style.display !== 'none') ? 'none' : 'flex';
+}
+/* «🧹 Очистить завершённые»: POST /api/sessions/cleanup с keep_handoff (карточка 3.3) */
+async function sessionsCleanup(){
+  const keep = $('cleanupKeepHandoff') ? $('cleanupKeepHandoff').checked : false;
+  if (!confirm('Очистить завершённые (done/failed/killed/stalled) сессии с мёртвыми процессами?'
+      + (keep ? '\nDone-сессии с заметкой handoff: будут сохранены.' : '\nВнимание: handoff-кандидаты НЕ сохраняются.'))) return;
+  try {
+    const url = '/api/sessions/cleanup?project='+encodeURIComponent(activeProject||'')+'&keep_handoff='+(keep?'1':'0');
+    const r = await (await apiFetch(url, {method:'POST'})).json();
+    toast('Удалено: '+(r.count||0)+(keep&&(r.kept_handoff||[]).length?', handoff сохранено: '+r.kept_handoff.length:''), 'ok');
+    loadSessions();
+  } catch(e){ /* тост уже показан apiFetch */ }
+}
+/* «⛔ Kill stalled»: последовательный kill всех stalled-сессий проекта (карточка 3.3) */
+async function killAllStalled(){
+  if (!confirm('Убить ВСЕ зависшие (stalled) сессии проекта? Процессы будут завершены (taskkill /F /T).')) return;
+  let list;
+  try {
+    list = await (await fetch('/api/sessions?project='+encodeURIComponent(activeProject||'')+'&status=stalled')).json();
+  } catch(e){ toast('Не удалось получить список stalled: '+e, 'err'); return; }
+  if (!(list||[]).length){ toast('Stalled-сессий нет', 'ok'); loadSessions(); return; }
+  let ok = 0, fail = 0;
+  for (const s of list){
+    try {
+      await apiFetch('/api/sessions/'+encodeURIComponent(s.id)+'/kill', {method:'POST'});
+      ok++;
+    } catch(e){ fail++; }
+  }
+  toast('Stalled убито: '+ok+(fail?' , ошибок: '+fail:''), fail?'err':'ok');
+  loadSessions();
+}
 const AGENT_ROLE_LABEL = {controller:'контролёр', executor:'исполнитель', browser:'облачный мост',
   reviewer:'тестировщик', qwen:'qwen-рабочий', planner:'планировщик', worker:'рабочий'};
 function loadLiveSessions(){
@@ -2010,6 +2060,12 @@ function loadLiveSessions(){
 }
 function renderSessionTable(list, withKill){
   if (!(list||[]).length) return '<div class="empty">Нет сессий</div>';
+  // сессии с заметкой handoff: — наверх (кандидаты рестарта), см. карточку 3.3
+  const rows = (list||[]).slice().sort((a,b)=>{
+    const ha = String(a.note||'').startsWith('handoff:')?0:1;
+    const hb = String(b.note||'').startsWith('handoff:')?0:1;
+    return ha-hb;
+  });
   let html = '<table style="width:100%;border-collapse:collapse;font-size:13px"><thead><tr>'+
     '<th style="text-align:left;padding:6px 8px;color:var(--muted)">Сессия</th>'+
     '<th style="text-align:left;padding:6px 8px;color:var(--muted)">Задача</th>'+
@@ -2019,7 +2075,10 @@ function renderSessionTable(list, withKill){
     '<th style="text-align:left;padding:6px 8px;color:var(--muted)">Возраст</th>'+
     '<th style="text-align:left;padding:6px 8px;color:var(--muted)">Заметка</th>'+
     '<th style="padding:6px 8px"></th></tr></thead><tbody>';
-  for (const s of list){
+  for (const s of rows){
+    const note = String(s.note||s.error||'');
+    const isHandoff = note.startsWith('handoff:');
+    const noteShown = (isHandoff ? '<span class="badge" title="handoff-кандидат рестарта">🤝</span> ' : '')+esc(note.slice(0,60));
     html += '<tr>'+
       '<td style="padding:6px 8px;border-top:1px solid var(--border);font-family:Consolas,monospace;font-size:12px">'+esc(s.id)+'</td>'+
       '<td style="padding:6px 8px;border-top:1px solid var(--border)">'+(s.task?esc(s.task):'<span class="muted">—</span>')+'</td>'+
@@ -2027,7 +2086,7 @@ function renderSessionTable(list, withKill){
       '<td style="padding:6px 8px;border-top:1px solid var(--border)">'+sessionBadge(s.status)+'</td>'+
       '<td style="padding:6px 8px;border-top:1px solid var(--border);font-family:Consolas,monospace;font-size:12px">'+(s.pid||'')+'</td>'+
       '<td style="padding:6px 8px;border-top:1px solid var(--border)">'+sessionAge(s.created_at)+'</td>'+
-      '<td style="padding:6px 8px;border-top:1px solid var(--border);color:var(--muted);max-width:280px;overflow:hidden;text-overflow:ellipsis;white-space:nowrap" title="'+esc(s.note||s.error||'')+'">'+esc((s.note||s.error||'').slice(0,60))+'</td>'+
+      '<td style="padding:6px 8px;border-top:1px solid var(--border);color:var(--muted);max-width:280px;overflow:hidden;text-overflow:ellipsis;white-space:nowrap" title="'+esc(note)+'">'+noteShown+'</td>'+
       '<td style="padding:6px 8px;border-top:1px solid var(--border);text-align:right">'+
         (withKill && (s.status==='running'||s.status==='created') ? '<button class="danger" style="padding:3px 8px;font-size:12px" onclick="sessionKill(\''+s.id+'\')">⛔ Убить</button>' : '')+
       '</td></tr>';
@@ -2036,13 +2095,14 @@ function renderSessionTable(list, withKill){
   return html;
 }
 function loadSessions(){
+  const st = $('sessionsFilter') ? $('sessionsFilter').value : '';
   Promise.all([
     loadLiveSessions(),
-    fetch('/api/sessions?project='+encodeURIComponent(activeProject||'')).then(r=>r.json()).catch(()=>[])
+    fetch('/api/sessions?project='+encodeURIComponent(activeProject||'')+(st?'&status='+encodeURIComponent(st):'')).then(r=>r.json()).catch(()=>[])
   ]).then(([live, subs])=>{
     const liveCount = (live||[]).length;
     const subCount = (subs||[]).length;
-    $('sessionsInfo').textContent = 'opencode: '+liveCount+', субагентов: '+subCount;
+    $('sessionsInfo').textContent = 'opencode: '+liveCount+', субагентов: '+subCount+(st?' (фильтр: '+st+')':'');
     let html = '';
     if (liveCount){
       html += '<div class="rl-title" style="margin:10px 0 6px">🟢 Открытые сессии opencode (активные за 60 мин)</div>'+
