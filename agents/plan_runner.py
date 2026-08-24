@@ -46,11 +46,15 @@ CHECKPOINTS_POLL_SEC = 15
 REVIEWER_PROMPT = """Ты НЕЗАВИСИМЫЙ РЕВЬЮЕР этапа {stage} проекта {project} —
 принимаешь этап вместо владельца (флаг runner.stage_approver=reviewer).
 
+Твоя рабочая копия — временный git worktree: {wt_root}
+Читай код ТОЛЬКО в ней; ничего не редактируй и не коммить. Ты физически
+изолирован от живого корня проекта — правки вне worktree невозможны.
+
 ВХОДНЫЕ:
 - План проекта: {plan_path}
 - Цель проекта: {goal_path} (если файла нет — раздел «Миссия» в плане)
 - Карточка этапа: {card}; последний коммит:
-  git -C "{root}" log -1 --stat   и   git -C "{root}" show --stat HEAD
+  git -C "{wt_root}" log -1 --stat   и   git -C "{wt_root}" show --stat HEAD
 - Отчёты/вердикты карточек этапа: Tasks\\Отчёты\\{card}_*.md (рядом)
 
 ПРОВЕРЬ:
@@ -330,21 +334,37 @@ id: {card.id}
         from agents.checkpoint import cp_dir
         decision_path = cp_dir(self.cfg) / f"{card.id}.decision.json"
         goal = Path(self.cfg.root) / "GOAL.md"
-        prompt = (REVIEWER_PROMPT
-                  .replace("{stage}", self._stage_id(card) or card.id)
-                  .replace("{project}", self.cfg.name)
-                  .replace("{plan_path}", str(pp or ""))
-                  .replace("{goal_path}", str(goal))
-                  .replace("{card}", card.id)
-                  .replace("{root}", str(self.cfg.root))
-                  .replace("{report}", str(review_report))
-                  .replace("{decision_path}", str(decision_path)))
-        rc = run_subagent(self.cfg, f"{card.id}-review", review_report, log,
-                          model=self.model,
-                          client=self.client, prompt_override=prompt)
-        if rc != 0:
-            print(f"[runner] {card.id}: ревьюер завершился с rc={rc} — "
-                  f"этап будет ждать владельца")
+
+        wt, wt_parent = self._worktree_add(card)
+        try:
+            if wt is None:
+                # Мягкий режим: временный git worktree не создан (нет git/коммитов
+                # в проекте). Предупреждение — этап ждёт владельца, карточка
+                # не блокируется (паритет с механизмом 4.2/_semantic_review).
+                self._notify("stage_review_unavailable", task=card.id,
+                             payload={"note": "временный git worktree не создан"})
+                print(f"[runner] {card.id}: ревьюер этапа не запущен — "
+                      f"временный git worktree не создан; этап ждёт владельца")
+                return
+            prompt = (REVIEWER_PROMPT
+                      .replace("{stage}", self._stage_id(card) or card.id)
+                      .replace("{project}", self.cfg.name)
+                      .replace("{plan_path}", str(pp or ""))
+                      .replace("{goal_path}", str(goal))
+                      .replace("{card}", card.id)
+                      .replace("{wt_root}", str(wt))
+                      .replace("{report}", str(review_report))
+                      .replace("{decision_path}", str(decision_path)))
+            self._notify("stage_review_started", task=card.id,
+                         payload={"worktree": str(wt)})
+            rc = run_subagent(self.cfg, f"{card.id}-review", review_report, log,
+                              model=self.model,
+                              client=self.client, prompt_override=prompt)
+            if rc != 0:
+                print(f"[runner] {card.id}: ревьюер завершился с rc={rc} — "
+                      f"этап будет ждать владельца")
+        finally:
+            self._worktree_remove(card, wt, wt_parent)
 
     def _tag_stage_done(self, stage: str) -> str:
         import subprocess

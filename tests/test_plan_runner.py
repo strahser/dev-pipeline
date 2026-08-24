@@ -471,9 +471,21 @@ class CheckpointApproverTest(unittest.TestCase):
 
     def setUp(self):
         self.tmp = Path(tempfile.mkdtemp(prefix="prunner_appr_"))
+        _git(self.tmp, "init", "-q")
+        (self.tmp / "README.md").write_text("проект", encoding="utf-8")
+        _git(self.tmp, "add", "-A")
+        _git(self.tmp, "commit", "-q", "-m", "init")
+        for p in Path(tempfile.gettempdir()).glob("semrev_1.1_*"):
+            shutil.rmtree(p, ignore_errors=True)
         self.cfg = make_cfg(self.tmp, stage_approver="reviewer")
         self.plan_path = self.tmp / "plan_cp.md"
         self.plan_path.write_text(PLAN_CP, encoding="utf-8")
+
+    def _worktree_count(self) -> int:
+        out = subprocess.run(
+            ["git", "-C", str(self.tmp), "worktree", "list", "--porcelain"],
+            capture_output=True, text=True).stdout or ""
+        return out.count("worktree ")
 
     def _decision_path(self) -> Path:
         from agents.checkpoint import cp_dir
@@ -485,9 +497,11 @@ class CheckpointApproverTest(unittest.TestCase):
         r = pr.PlanRunner(self.cfg, plan_path=self.plan_path, once=True,
                           retries=0)
         calls = []
+        prompts = []
 
         def dispatcher(cfg, tid, report, log, **kw):
             calls.append(tid)
+            prompts.append(kw.get("prompt_override", ""))
             if tid.endswith("-review"):
                 d = cp_dir(cfg)
                 d.mkdir(parents=True, exist_ok=True)
@@ -507,6 +521,55 @@ class CheckpointApproverTest(unittest.TestCase):
         self.assertTrue(any(t.endswith("-review") for t in calls),
                         "ревьюер запускается отдельной сессией")
         self.assertEqual(load_plan(self.plan_path).card("1.1").status, "done")
+        # ревьюер работает во временном worktree: промпт указывает на wt_root,
+        # а не на живой корень проекта
+        rv_prompt = [p for t, p in zip(calls, prompts) if t.endswith("-review")]
+        self.assertEqual(len(rv_prompt), 1, "ровно одна ревью-сессия")
+        self.assertIn("git worktree", rv_prompt[0],
+                      "промпт говорит о временном worktree")
+        self.assertNotIn(f'"{self.tmp}"', rv_prompt[0].replace("git worktree", ""),
+                         "ревьюер не работает на живом корне")
+        self.assertIn("ТОЛЬКО в ней", rv_prompt[0],
+                      "правки вне worktree запрещены промптом")
+        self.assertEqual(self._worktree_count(), 1,
+                         "временный worktree снят после решения")
+
+    def test_git_worktree_refusal_is_soft_mode(self):
+        """Мягкий режим: git worktree отказал (нет коммитов/не репозиторий) —
+        предупреждение, этап ждёт владельца, карточка не блокируется."""
+        from agents import plan_runner as pr
+        tmp2 = Path(tempfile.mkdtemp(prefix="prunner_nowt_"))
+        try:
+            _git(tmp2, "init", "-q")  # репозиторий есть, но нет ни одного коммита
+            cfg2 = make_cfg(tmp2, stage_approver="reviewer")
+            plan_path = tmp2 / "plan_cp.md"
+            plan_path.write_text(PLAN_CP, encoding="utf-8")
+            r = pr.PlanRunner(cfg2, plan_path=plan_path, once=True, retries=0)
+            calls = []
+
+            def dispatcher(cfg, tid, report, log, **kw):
+                calls.append(tid)
+                report.parent.mkdir(parents=True, exist_ok=True)
+                report.write_text("# ОТЧЁТ\n## Что сделано\nработа есть\n"
+                                  "## Доказательства\nтесты зелёные\n" + "pad" * 60,
+                                  encoding="utf-8")
+                return 0
+
+            with mock.patch.object(pr, "run_subagent", dispatcher), \
+                 mock.patch.object(pr.PlanRunner, "_verify",
+                                   return_value="PASS"), \
+                 mock.patch.object(pr.PlanRunner, "_wait_decision",
+                                   return_value="approve") as wd:
+                rc = r.run()
+            self.assertEqual(rc, 0, "отказ git worktree не блокирует карточку")
+            self.assertFalse(any(t.endswith("-review") for t in calls),
+                             "ревьюер не запускается без worktree")
+            wd.assert_called_once()
+            self.assertEqual(load_plan(plan_path).card("1.1").status, "done")
+            self.assertFalse(list(Path(tempfile.gettempdir()).glob("semrev_1.1_*")),
+                             "нет временных каталогов после мягкого пропуска")
+        finally:
+            shutil.rmtree(tmp2, ignore_errors=True)
 
     def test_reviewer_failure_falls_back_to_owner_wait(self):
         """Мягкий режим: ревьюер не смог — этап ждёт владельца, не блокируется."""
