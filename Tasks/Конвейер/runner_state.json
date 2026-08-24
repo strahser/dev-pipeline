@@ -1,8 +1,5 @@
 {
-  "updated": "2026-08-24T11:20:54",
+  "updated": "2026-08-24T11:26:17",
   "plan": "D:\\Projects\\ProjectsPalns\\dev-pipeline\\_current\\2026-08-24_dev-pipeline-crew-manager-ui.md",
-  "phase": "executing",
-  "card": "2.2",
-  "attempt": 1,
-  "title": "Изоляция stage-ревьюера во временном worktree"
+  "phase": "locked"
 }

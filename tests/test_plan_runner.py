@@ -769,5 +769,133 @@ class SemanticReviewTest(unittest.TestCase):
             shutil.rmtree(tmp2, ignore_errors=True)
 
 
+class StageTagAndInputTest(unittest.TestCase):
+    """Карточка 2.3: stage_approver=reviewer в конфиге, полный вход ревьюера
+    (список отчётов/вердиктов ВСЕХ листовых карточек этапа) и тегирование
+    stage/N-done (создание, идемпотентность, порядок «коммит → тег»)."""
+
+    def setUp(self):
+        self.tmp = Path(tempfile.mkdtemp(prefix="prunner_tag_"))
+        _git(self.tmp, "init", "-q")
+        (self.tmp / "README.md").write_text("проект", encoding="utf-8")
+        _git(self.tmp, "add", "-A")
+        _git(self.tmp, "commit", "-q", "-m", "init")
+        self.cfg = make_cfg(self.tmp, stage_approver="reviewer")
+        self.plan_path = self.tmp / "plan.md"
+        self.plan_path.write_text(PLAN, encoding="utf-8")
+
+    def test_tag_stage_done_creates_and_is_idempotent(self):
+        """Тег создаётся; повторный вызов не падает и возвращает имя."""
+        from agents import plan_runner as pr
+        r = pr.PlanRunner(self.cfg, plan_path=self.plan_path)
+        name1 = r._tag_stage_done("1")
+        self.assertEqual(name1, "stage/1-done")
+        tags = subprocess.run(["git", "-C", str(self.tmp), "tag", "-l", "stage/1-done"],
+                              capture_output=True, text=True).stdout.strip()
+        self.assertEqual(tags, "stage/1-done")
+        # повторный вызов на существующем теге — безопасен, возвращает имя
+        name2 = r._tag_stage_done("1")
+        self.assertEqual(name2, "stage/1-done")
+
+    def test_tag_after_plan_commit_anchors_final_state(self):
+        """Порядок «коммит плана → тег»: якорь указывает на коммит, содержащий
+        статус done (финальное состояние плана)."""
+        from agents import plan_runner as pr
+        from pipeline.plans import set_card_status
+        # симулируем финал карточки: статус done в плане + коммит + тег
+        set_card_status(self.plan_path, "1.1", "done")
+        r = pr.PlanRunner(self.cfg, plan_path=self.plan_path)
+        commit = r._git_commit(self.plan_path.parent, "plan/1.1: тест")
+        r._tag_stage_done("1")
+        tag_commit = subprocess.run(
+            ["git", "-C", str(self.tmp), "rev-parse", "stage/1-done"],
+            capture_output=True, text=True).stdout.strip()
+        head = subprocess.run(
+            ["git", "-C", str(self.tmp), "rev-parse", "HEAD"],
+            capture_output=True, text=True).stdout.strip()
+        self.assertTrue(commit)
+        self.assertEqual(tag_commit, head,
+                         "тег ставится после коммита — якорь включает финальное состояние")
+        # финальное состояние (статус done) реально в этом коммите
+        blob = subprocess.run(
+            ["git", "-C", str(self.tmp), "show", f"{head}:plan.md"],
+            capture_output=True, text=True).stdout
+        self.assertIn("`1.1` |", blob)  # таблица СДР
+        self.assertIn("done", blob)
+
+    def test_stage_review_files_lists_all_leaf_cards(self):
+        """Список входных файлов ревьюера содержит отчёты и вердикты ВСЕХ
+        листовых карточек этапа (glob <этап>.*_Отчёт_*.md / _Вердикт_*.md)."""
+        from agents import plan_runner as pr
+        reports = self.cfg.abs_tasks_dir("reports")
+        reports.mkdir(parents=True, exist_ok=True)
+        (reports / "1.1_Отчёт_2026-08-24_101010.md").write_text("r", encoding="utf-8")
+        (reports / "1.1_Вердикт_2026-08-24_101010.md").write_text("v", encoding="utf-8")
+        (reports / "1.2_Отчёт_2026-08-24_101010.md").write_text("r", encoding="utf-8")
+        (reports / "1.2_Вердикт_2026-08-24_101010.md").write_text("v", encoding="utf-8")
+        (reports / "9.9_Отчёт_чужая_карточка.md").write_text("x", encoding="utf-8")
+        r = pr.PlanRunner(self.cfg, plan_path=self.plan_path)
+        card = mock.Mock(id="1.1", title="x")
+        listing = r._stage_review_files(card)
+        self.assertIn("1.1_Отчёт_2026-08-24_101010.md", listing)
+        self.assertIn("1.1_Вердикт_2026-08-24_101010.md", listing)
+        self.assertIn("1.2_Отчёт_2026-08-24_101010.md", listing)
+        self.assertIn("1.2_Вердикт_2026-08-24_101010.md", listing)
+        self.assertNotIn("9.9_Отчёт_чужая_карточка.md", listing,
+                         "файлы вне этапа не попадают в вход ревьюера")
+
+    def test_dry_run_shows_approver(self):
+        """dry-run выводит строку про approver — критерий приёмки 2.3/1."""
+        import io
+        from contextlib import redirect_stdout
+        from agents import plan_runner as pr
+        r = pr.PlanRunner(self.cfg, plan_path=self.plan_path, once=True, dry_run=True)
+        buf = io.StringIO()
+        with redirect_stdout(buf):
+            rc = r.run()
+        self.assertEqual(rc, 0)
+        self.assertIn("approver этапа: reviewer", buf.getvalue())
+
+    def test_reviewer_prompt_contains_full_stage_file_list(self):
+        """Промпт ревьюера (временный worktree) содержит явный список файлов
+        отчётов/вердиктов всех листовых карточек этапа."""
+        from agents import plan_runner as pr
+        from agents.checkpoint import cp_dir
+        # карточка с «Чекпоинт: да» — иначе reviewer-фаза не запустится
+        self.plan_path.write_text(PLAN_CP, encoding="utf-8")
+        reports = self.cfg.abs_tasks_dir("reports")
+        reports.mkdir(parents=True, exist_ok=True)
+        (reports / "1.1_Отчёт_2026-08-24_101010.md").write_text("r", encoding="utf-8")
+        (reports / "1.2_Вердикт_2026-08-24_101010.md").write_text("v", encoding="utf-8")
+        prompts = []
+        calls = []
+
+        def dispatcher(cfg, tid, report, log, **kw):
+            calls.append(tid)
+            prompts.append(kw.get("prompt_override", ""))
+            if tid.endswith("-review"):
+                d = cp_dir(cfg)
+                d.mkdir(parents=True, exist_ok=True)
+                (d / "1.1.decision.json").write_text(
+                    json.dumps({"decision": "approve"}), encoding="utf-8")
+            else:
+                report.parent.mkdir(parents=True, exist_ok=True)
+                report.write_text("# ОТЧЁТ\n## Что сделано\nработа есть\n"
+                                  "## Доказательства\nтесты зелёные\n" + "pad" * 60,
+                                  encoding="utf-8")
+            return 0
+
+        r = pr.PlanRunner(self.cfg, plan_path=self.plan_path, once=True, retries=0)
+        with mock.patch.object(pr, "run_subagent", dispatcher), \
+             mock.patch.object(pr.PlanRunner, "_verify", return_value="PASS"):
+            rc = r.run()
+        self.assertEqual(rc, 0)
+        rv = [p for t, p in zip(calls, prompts) if t.endswith("-review")]
+        self.assertEqual(len(rv), 1)
+        self.assertIn("1.1_Отчёт_2026-08-24_101010.md", rv[0])
+        self.assertIn("1.2_Вердикт_2026-08-24_101010.md", rv[0])
+        self.assertIn("ВСЕХ листовых карточек этапа", rv[0])
+
+
 if __name__ == "__main__":
     unittest.main(verbosity=2)

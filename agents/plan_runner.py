@@ -55,7 +55,8 @@ REVIEWER_PROMPT = """Ты НЕЗАВИСИМЫЙ РЕВЬЮЕР этапа {stag
 - Цель проекта: {goal_path} (если файла нет — раздел «Миссия» в плане)
 - Карточка этапа: {card}; последний коммит:
   git -C "{wt_root}" log -1 --stat   и   git -C "{wt_root}" show --stat HEAD
-- Отчёты/вердикты карточек этапа: Tasks\\Отчёты\\{card}_*.md (рядом)
+- Отчёты/вердикты ВСЕХ листовых карточек этапа (явный список файлов):
+{stage_files}
 
 ПРОВЕРЬ:
 1. Факт соответствует цели проекта и карточке (без ухода в сторону).
@@ -323,6 +324,24 @@ id: {card.id}
         core = card.id.split("-", 1)[-1]
         return card.id.rsplit(".", 1)[0] if "." in core else ""
 
+    def _stage_review_files(self, card) -> str:
+        """Список файлов отчётов/вердиктов ВСЕХ листовых карточек этапа —
+        чтобы ревьюер видел полный вход, а не только последнюю карточку."""
+        stage = self._stage_id(card)
+        if not stage:
+            return f"- Отчёты/вердикты карточки: Tasks\\Отчёты\\{card.id}_*.md"
+        reports = self.cfg.abs_tasks_dir("reports")
+        # явный двойной glob: отчёты и вердикты всех листовых карточек этапа
+        names = []
+        for p in sorted(reports.glob(f"{stage}.*_Отчёт_*.md")):
+            names.append(p.name)
+        for p in sorted(reports.glob(f"{stage}.*_Вердикт_*.md")):
+            if p.name not in names:
+                names.append(p.name)
+        if not names:
+            return f"- Отчёты/вердикты карточек этапа {stage}: (не найдено; проверь Tasks\\Отчёты\\{stage}.*_Отчёт_*.md)"
+        return "- " + "\n- ".join(names)
+
     def _request_stage_review(self, card, reason: str) -> None:
         """Мягкий режим: ревьюер-сессия готовит decision.json. Не смогла —
         предупреждение, этап ждёт владельца (карточка не блокируется навсегда)."""
@@ -352,6 +371,7 @@ id: {card.id}
                       .replace("{plan_path}", str(pp or ""))
                       .replace("{goal_path}", str(goal))
                       .replace("{card}", card.id)
+                      .replace("{stage_files}", self._stage_review_files(card))
                       .replace("{wt_root}", str(wt))
                       .replace("{report}", str(review_report))
                       .replace("{decision_path}", str(decision_path)))
@@ -367,13 +387,20 @@ id: {card.id}
             self._worktree_remove(card, wt, wt_parent)
 
     def _tag_stage_done(self, stage: str) -> str:
+        """Ставит лёгкий тег stage/<stage>-done. Идемпотентно: если тег уже есть —
+        возвращает его имя, не падая (повторный вызов на закрытом этапе безопасен)."""
         import subprocess
         try:
             from pipeline.proc import no_window_flags
             name = f"stage/{stage}-done"
+            flags = no_window_flags()
+            out = subprocess.run(["git", "-C", str(self.cfg.root), "tag", "-l", name],
+                                 capture_output=True, text=True, timeout=15,
+                                 creationflags=flags)
+            if name in (out.stdout or "").splitlines():
+                return name
             subprocess.run(["git", "-C", str(self.cfg.root), "tag", name],
-                           capture_output=True, timeout=15,
-                           creationflags=no_window_flags())
+                           capture_output=True, timeout=15, creationflags=flags)
             return name
         except Exception:
             return ""
@@ -673,6 +700,8 @@ id: {task_id}
                     from pipeline.brief import goal_section
                     print(f"[dry-run] выполнил бы карточку {card.id} — {card.title} "
                           f"(таймаут вопроса {self.cfg.question_timeout_sec} c)")
+                    print(f"[dry-run] approver этапа: "
+                          f"{getattr(self.cfg, 'stage_approver', 'owner')}")
                     goal = goal_section(self.cfg)
                     if goal:
                         head = "\n".join(goal.splitlines()[:6])
@@ -786,10 +815,13 @@ id: {task_id}
                     continue
 
             set_card_status(pp, card.id, "done")
-            if need_cp and self._stage_id(card):
-                self._tag_stage_done(self._stage_id(card))
+            # Порядок «коммит плана → тег»: якорь stage/N-done ставится ПОСЛЕ
+            # коммита, фиксирующего финальное состояние (статус done) — иначе
+            # тег указывал бы на родительский коммит без финального состояния.
             commit = self._git_commit(
                 pp.parent, f"plan/{card.id}: выполнено — {card.title[:60]}")
+            if need_cp and self._stage_id(card):
+                self._tag_stage_done(self._stage_id(card))
             self._notify("card_done", task=card.id,
                          payload={"title": card.title[:120], "commit": commit})
             print(f"[runner] {card.id} ГОТОВО ({commit})")
