@@ -377,6 +377,10 @@ id: {card.id}
                       .replace("{decision_path}", str(decision_path)))
             self._notify("stage_review_started", task=card.id,
                          payload={"worktree": str(wt)})
+            # Постановка в Активные обязательна: run_subagent ищет файл задачи
+            # по <task_id>_*.md и без неё завершается rc=2 (инцидент 3.3 2026-08-24:
+            # ревьюер этапа ни разу не запустился — фолбэк к владельцу).
+            self._dispatch_review_md(card, f"{card.id}-review")
             rc = run_subagent(self.cfg, f"{card.id}-review", review_report, log,
                               model=self.model,
                               client=self.client, prompt_override=prompt)
