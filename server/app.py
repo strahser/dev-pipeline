@@ -1159,9 +1159,11 @@ async def chat_agent_terminal(body: TerminalIn):
     dp_root = Path(__file__).resolve().parent.parent
 
     if body.role == "manager":
-        # ОБЩИЙ менеджер на ВСЕ проекты: приёмка работы + восстановление сессий
-        script = agents_dir / "project_manager.py"
-        base = [py, "-X", "utf8", str(script)]
+        # ОБЩИЙ менеджер на ВСЕ проекты: ВИДИМАЯ opencode-сессия tui_cycle
+        # (приёмка этапов decision.json); страховочный python-цикл project_manager
+        # доступен флагом --headless (agents/tui_cycle.py --role manager --headless).
+        script = agents_dir / "tui_cycle.py"
+        base = [py, "-X", "utf8", str(script), "--role", "manager"]
         if body.project:
             base += ["--project", body.project]
         workdir = dp_root

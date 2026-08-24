@@ -58,8 +58,8 @@ tests:
   runner: pytest
   vstest: ""
   dll: tests
-  baseline_passed: 121
-  baseline_total: 121
+  baseline_passed: 228
+  baseline_total: 228
 
 checks: []
 

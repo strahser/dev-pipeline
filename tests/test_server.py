@@ -1004,7 +1004,7 @@ class TerminalEndpointTest(unittest.TestCase):
         self.assertEqual(r.status_code, 404)
 
     def test_manager_global_without_project(self):
-        """ОБЩИЙ менеджер на все проекты: project не нужен."""
+        """ОБЩИЙ менеджер на все проекты: project не нужен (карточка 4.1)."""
         captured = {}
 
         def fake_popen(cmd, cwd=None, env=None, creationflags=0):
@@ -1018,7 +1018,10 @@ class TerminalEndpointTest(unittest.TestCase):
                                  json={"role": "manager"})
         self.assertEqual(r.status_code, 200)
         joined = " ".join(captured["cmd"])
-        self.assertIn("project_manager.py", joined)
+        self.assertIn("tui_cycle.py", joined,
+                      "менеджер запускается видимой opencode-сессией tui_cycle")
+        self.assertIn("--role", joined)
+        self.assertIn("manager", joined)
         self.assertNotIn("--project", captured["cmd"],
                          "глобальный менеджер ведёт все проекты сразу")
         self.assertEqual(captured["cwd"],

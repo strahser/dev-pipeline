@@ -113,6 +113,33 @@ python -X utf8 agents/agent_manager.py mission --project <p> --mission <ТЗ>.md
 - verify сравнивает тесты с `baseline_passed/baseline_total` из pipeline.yaml:
   не хуже базы = PASS (задача не про тесты), а не «0 фейлов».
 
+## 4.3. Общий менеджер (кнопка «🛡 Менеджер»)
+
+«Общий менеджер» — НАСТОЯЩАЯ терминальная сессия opencode (роль `manager`) на ВСЕ проекты:
+следит за проектами (`/api/pulse_all`, `/api/checkpoints`, `/api/sessions`), принимает этапы
+(пишет `Tasks\Конвейер\checkpoints\<CARD>.decision.json`) и задаёт вопросы владельцу.
+Python-цикл `project_manager` остаётся страховкой (`--headless`).
+
+```bat
+:: Кнопка «🛡 Менеджер» в панели (role=manager, без проекта = все проекты) ->
+::    POST /api/chat/agents/terminal -> agents/tui_cycle.py --role manager
+:: Вручную:
+python -X utf8 agents/tui_cycle.py --role manager                 :: все проекты
+python -X utf8 agents/tui_cycle.py --role manager --project <p>   :: один проект
+python -X utf8 agents/tui_cycle.py --role manager --headless      :: страховочный python-цикл project_manager
+```
+
+- **Приёмка чекпоинта**: pending → прочитай GOAL.md + вердикты + diff/log → напиши
+  `<CARD>.decision.json` `{decision: approve|retry, comment, actor: manager}`;
+  панель («⏸ Чекпоинты») и `wait_decision` подхватят решение.
+- **Спорное** — вопрос владельцу через `Tasks\Вопросы\<CARD>_<время>.md` + `wait_answer.py`.
+- **Границы**: код НЕ правит; запись — только decision.json / вопросы / handoff.
+- **Handoff-цикл**: порция → handoff `Tasks\Конвейер\handoff\<метка>.md` → новая чистая сессия.
+- **Страховка**: если opencode-сессия недоступна — `--headless` запускает старый
+  python-цикл `project_manager.py` (приёмка done_report без вердикта + восстановление сессий).
+- Автозадание: `auto_task_manager` собирает сводку всех проектов из `/api/pulse_all`.
+
+
 ## 5. Типовые сценарии
 
 ### Контроль целей проекта (отчёт менеджера)

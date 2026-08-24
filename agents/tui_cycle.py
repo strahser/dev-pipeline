@@ -58,6 +58,17 @@ ROLE_STARTERS = {
         "Ты ОБЛАЧНЫЙ МОСТ проекта {project}: забираешь задания из "
         "Tasks\\Конвейер\\Браузер\\*.txt, передаёшь промпты облачному ИИ (LocalAssitent) "
         "и сохраняешь ответы. Каждую порцию завершай handoff-файлом."),
+    "manager": (
+        "Ты ОБЩИЙ МЕНЕДЖЕР конвейера (НА ВСЕ проекты): следишь за всеми проектами "
+        "(/api/pulse_all, /api/checkpoints, /api/sessions), принимаешь этапы. "
+        "ПРИЁМКА ЧЕКПОИНТА: pending-чекпоинт -> прочитай GOAL.md проекта + вердикты + "
+        "diff/log последнего коммита -> напиши файл Tasks\\Конвейер\\checkpoints\\"
+        "<CARD>.decision.json {decision: approve|retry, comment, actor: manager}. "
+        "СПОРНОЕ: если не хватает данных или решение неоднозначно — задай вопрос "
+        "владельцу через Tasks\\Вопросы\\<CARD>_<время>.md. "
+        "ГРАНИЦЫ: код НЕ правишь (только приёмка и вопросы), запись на диск — только "
+        "файлы decision.json/вопросов по правилам протокола. Каждую порцию завершай "
+        "handoff-файлом Tasks\\Конвейер\\handoff\\<метка>.md."),
 }
 
 
@@ -69,6 +80,45 @@ def _starter(role: str) -> str:
             "правилам AGENTS.md репозитория конвейера и цели проекта ниже. Каждую "
             "порцию завершай handoff-файлом "
             "Tasks\\Конвейер\\handoff\\<метка времени>.md.")
+
+
+def auto_task_manager() -> str:
+    """Автозадание для ОБЩЕГО менеджера: сводка по ВСЕМ проектам (пульс, чекпоинты,
+    вопросы, зависшие) — чтобы менеджер знал, где принимать этапы."""
+    lines: list[str] = []
+    client = None
+    try:
+        from pipeline.client import Client
+        c = Client("manager", project="")
+        if c.server_alive():
+            client = c
+    except Exception:
+        client = None
+
+    if client is not None:
+        try:
+            data = client._request("GET", "/api/pulse_all")
+            for it in data.get("projects", []):
+                prog = it.get("overall") or {}
+                head = f"- {it['project']}: {prog.get('done', 0)}/{prog.get('total', 0)}"
+                if it.get("plan_title"):
+                    head += f" — {it['plan_title']}"
+                lines.append(head)
+                if it.get("checkpoints_open"):
+                    lines.append(f"    ⏸ чекпоинтов к приёмке: {it['checkpoints_open']}")
+                if it.get("questions_open"):
+                    lines.append(f"    ❓ открытых вопросов: {it['questions_open']}")
+                if it.get("stalled"):
+                    lines.append(f"    ⚠ зависшие: {', '.join(it['stalled'])}")
+        except Exception as e:
+            lines.append(f"- pulse_all недоступен: {e}")
+    else:
+        lines.append("- сервер недоступен — сводка по файлам (см. Tasks\\Конвейер)")
+
+    tail = ("ЗАДАНИЕ: прими этапы по чекпоинтам (pending -> прочитай GOAL.md + вердикты + "
+            "diff/log -> decision.json approve/retry, actor: manager); спорное — вопрос "
+            "владельцу через Tasks\\Вопросы. Код НЕ правишь.")
+    return "\n".join(["ТЕКУЩЕЕ СОСТОЯНИЕ ПРОЕКТОВ:"] + (lines or ["- нет данных"]) + ["", tail])
 
 
 def auto_task(cfg) -> str:
@@ -129,7 +179,8 @@ def build_base_prompt(cfg, role: str = "executor", user_prompt: str = "") -> str
             parts.append("ЦЕЛЬ ПРОЕКТА:\n" + goal)
     except Exception:
         pass
-    parts.append(user_prompt if user_prompt else auto_task(cfg))
+    parts.append(user_prompt if user_prompt else
+                 (auto_task_manager() if role == "manager" else auto_task(cfg)))
     return "\n\n".join(parts)
 
 
@@ -316,13 +367,36 @@ def main(argv=None) -> int:
     ap = argparse.ArgumentParser(prog="agents.tui_cycle",
                                  description="Автономный терминал агента "
                                              "(цикл порций, /new-эквивалент)")
-    ap.add_argument("--project", required=True)
+    ap.add_argument("--project", default="",
+                    help="проект (пусто допустимо только для --role manager)")
     ap.add_argument("--role", default="executor")
+    ap.add_argument("--headless", action="store_true",
+                    help="role=manager: страховочный python-цикл project_manager "
+                         "вместо видимой opencode-сессии")
     ap.add_argument("--prompt", default="",
                     help="стартовое задание (иначе env PIPELINE_TUI_PROMPT)")
     a = ap.parse_args(argv)
 
     from pipeline.config import ConfigError, load_config
+    if a.role == "manager" and a.headless:
+        # Страховка: общий менеджер без opencode-сессии — python-цикл project_manager
+        from agents import project_manager
+        m_argv = ([f"--project={a.project}"] if a.project else [])
+        return project_manager.main(m_argv)
+
+    if a.role == "manager" and not a.project:
+        # ОБЩИЙ менеджер на все проекты: cfg берём у первого проекта как рабочий
+        # (для handoff/прав/конвейер-папки), сам промпт — сводка по всем проектам.
+        from pipeline.config import list_projects
+        names = list_projects()
+        if not names:
+            print("[tui] нет ни одного проекта — менеджеру нечего вести")
+            return 2
+        a.project = names[0]
+
+    if not a.project:
+        print(f"[tui] для роли {a.role} нужен --project (кроме manager)")
+        return 2
     try:
         cfg = load_config(a.project)
     except ConfigError as e:

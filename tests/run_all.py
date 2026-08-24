@@ -23,6 +23,7 @@ MODULES = [
     "test_plans",
     "test_plan_runner",
     "test_checkpoint",
+    "test_manager",
     "test_crew",
     "test_activity",
     "test_brief_goal",
