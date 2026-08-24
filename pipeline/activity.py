@@ -19,6 +19,7 @@ _MAIN_PREFIXES = {
     "pipeline", "docs", "inbox", "plans",
     "feat", "fix", "chore", "ui", "server", "agents", "tdl", "tools",
     "config", "security", "dashboard", "skills", "manager", "init",
+    "brief", "verify",
 }
 
 _PLAN_CARD_RE = re.compile(r"^plan/([A-Za-z0-9][\w.\-]*)\s*:")
@@ -40,8 +41,6 @@ def parse_subject(subject: str, body: str = "") -> dict:
         card = mc.group(1) if mc else scope
     elif prefix in ("project", "agent", "review") and scope:
         pass  # scope сохраняется (имя проекта/номер задачи)
-    elif prefix not in _MAIN_PREFIXES:
-        prefix = head.lower()
     if card is None:
         mb = _BODY_CARD_RE.search(body or "")
         if mb:

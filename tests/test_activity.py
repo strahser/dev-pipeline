@@ -55,6 +55,48 @@ class ParseSubjectTest(unittest.TestCase):
         self.assertEqual(pr["prefix"], "project")
         self.assertEqual(pr["scope"], "heatlossrevit2")
 
+    def test_plans_prefix(self):
+        from pipeline.activity import parse_subject
+        info = parse_subject("plans: HeatLossRevit2: обновлён план")
+        self.assertEqual(info["prefix"], "plans")
+        self.assertIsNone(info["scope"])
+
+    def test_agent_and_review_prefix(self):
+        from pipeline.activity import parse_subject
+        agent = parse_subject("agent/A-12: реализация")
+        self.assertEqual(agent["prefix"], "agent")
+        self.assertEqual(agent["scope"], "A-12")
+        review = parse_subject("review/A-12: вердикт PASS")
+        self.assertEqual(review["prefix"], "review")
+        self.assertEqual(review["scope"], "A-12")
+
+    def test_brief_and_verify_prefixes(self):
+        from pipeline.activity import parse_subject
+        self.assertEqual(parse_subject("brief: авто-дайджест")["prefix"], "brief")
+        self.assertEqual(parse_subject("verify: проверка отчёта")["prefix"], "verify")
+
+    def test_unknown_prefix_kept(self):
+        from pipeline.activity import parse_subject
+        info = parse_subject("something: посторонний префикс")
+        self.assertEqual(info["prefix"], "something")
+        self.assertIsNone(info["scope"])
+        self.assertIsNone(info["card"])
+
+    def test_case_insensitive(self):
+        from pipeline.activity import parse_subject
+        self.assertEqual(parse_subject("PIPELINE: фикс")["prefix"], "pipeline")
+        self.assertEqual(parse_subject("Plans: обновлён")["prefix"], "plans")
+        self.assertEqual(parse_subject("Brief: дайджест")["prefix"], "brief")
+        self.assertEqual(parse_subject("VERIFY: проверка")["prefix"], "verify")
+
+    def test_main_prefixes_match_protocol(self):
+        from pipeline.activity import _MAIN_PREFIXES
+        expected = {"pipeline", "docs", "inbox", "plans",
+                    "feat", "fix", "chore", "ui", "server", "agents",
+                    "tdl", "tools", "config", "security", "dashboard",
+                    "skills", "manager", "init", "brief", "verify"}
+        self.assertEqual(_MAIN_PREFIXES, expected)
+
     def test_no_prefix(self):
         from pipeline.activity import parse_subject
         info = parse_subject("совсем без префикса")
