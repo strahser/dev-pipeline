@@ -1,8 +1,9 @@
 # Конфигурация конвейера для проекта HVACLoadTerminals
 # (расстановка ВРУ/фанкойлов/отопительных приборов; C# net48: Core + Infrastructure + WPF App + Revit 2024).
 # Быстрые проверки — через Core.Tests (net48, xUnit, без Revit SDK и без WPF-стенда).
-# Базовое состояние на 2026-08-23: ветка refactoring/solid-clean-architecture,
-# Core.Tests 74/74, sln EXITCODE=0 (ba7a274).
+# Базовое состояние на 2026-08-25: ветка refactoring/solid-clean-architecture,
+# Core.Tests 153/153, sln EXITCODE=0 (закрывать App/Revit перед sln, иначе MSB3027).
+# Аудит 2026-08-25: предыдущая база 74/74 (ba7a274) устарела — см. PLAN.md раздел Аудит.
 
 project:
   name: HVACLoadTerminals
@@ -13,7 +14,8 @@ project:
 plan:
   repo: [D:\Projects\ProjectsPalns]
   subdir: HVACLoadTerminals
-  file: 2026-08-23_ui-usability-critique-fixes.md
+  # 2026-08-23 файл уже в _done; актуальный план серии — multimodal-ui-crm
+  file: 2026-08-24_multimodal-ui-crm.md
 
 # Параметры план-раннера (python -m agents.plan_runner --project hvacloadterminals)
 runner:
@@ -48,8 +50,8 @@ tests:
   vstest: ""
   dll: src\Core.Tests\HVACLoadTerminals.Core.Tests.csproj
   # Правило: passed >= базы И total >= базы (карточке разрешено добавлять тесты).
-  baseline_passed: 74
-  baseline_total: 74
+  baseline_passed: 153
+  baseline_total: 153
 
 # Декларативные проверки задач
 checks:
