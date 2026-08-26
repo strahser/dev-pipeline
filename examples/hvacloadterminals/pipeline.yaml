@@ -1,8 +1,8 @@
 # Конфигурация конвейера для проекта HVACLoadTerminals
 # (расстановка ВРУ/фанкойлов/отопительных приборов; C# net48: Core + Infrastructure + WPF App + Revit 2024).
 # Быстрые проверки — через Core.Tests (net48, xUnit, без Revit SDK и без WPF-стенда).
-# Базовое состояние на 2026-08-26 (wall-specific): ветка refactoring/solid-clean-architecture,
-# Core.Tests 188/188 (+7 UiSettingsStoreTests +5 WallSpecificPlacementTests), sln EXITCODE=0 (закрывать App/Revit перед sln, иначе MSB3027).
+# Базовое состояние на 2026-08-26 (wall-specific+undo): ветка refactoring/solid-clean-architecture,
+# Core.Tests 190/190 (+7 UiSettingsStoreTests +5 WallSpecificPlacementTests +2 PresenterCaptureRestore), sln EXITCODE=0 (закрывать App/Revit перед sln, иначе MSB3027).
 # Аудит 2026-08-25: предыдущая база 74/74 (ba7a274) устарела — см. PLAN.md раздел Аудит.
 
 project:
@@ -50,8 +50,8 @@ tests:
   vstest: ""
   dll: src\Core.Tests\HVACLoadTerminals.Core.Tests.csproj
   # Правило: passed >= базы И total >= базы (карточке разрешено добавлять тесты).
-  baseline_passed: 188
-  baseline_total: 188
+  baseline_passed: 190
+  baseline_total: 190
 
 # Декларативные проверки задач
 checks:
