@@ -27,13 +27,13 @@ from pathlib import Path
 
 CARD_RE = re.compile(
     r"^(#{1,3})\s+(?:Карточка(?:\s+задачи)?\s+)?"
-    r"([A-Za-zА-Яа-яЁё]{0,12}-?\d+(?:\.\d+)*)\.?"
+    r"([A-Za-zА-Яа-яЁё]+(?:-[A-Za-zА-Яа-яЁё]+)*-\d+(?:\.\d+)*|\d+(?:\.\d+)*|[A-Za-zА-Яа-яЁё]{0,12}-?\d+(?:\.\d+)*)\.?"
     r"(?:\s*[—–-]+\s*(.+?))??"
     r"\s*([⬜✅🔄❌])?\s*$",
     re.M,
 )
 STATUS_BULLET_RE = re.compile(r"-\s*\*\*Статус\*\*\s*:\s*`([^`]+)`")
-DEP_ID_RE = re.compile(r"\d+(?:\.\d+)*|[A-Za-zА-Яа-яЁё]+-\d+")
+DEP_ID_RE = re.compile(r"\d+(?:\.\d+)*|[A-Za-zА-Яа-яЁё]+(?:-[A-Za-zА-Яа-яЁё]+)*-\d+")
 CHECKBOX_RE = re.compile(r"^\s*-\s\[( |x|X)\]\s+(.+?)\s*$", re.M)
 SDR_ROW_RE = re.compile(r"^\|\s*`?([\w.\-]+)`?\s*\|(.*?)$")
 STATUS_LINE_RE = re.compile(r"Статус:\s*(Открыто|В работе|Выполнено|Отменено)")
@@ -147,13 +147,26 @@ def _extract_bullets(text: str) -> dict:
     2) комбостроки '- **Слой**: x · **Модуль**: y · **Статус**: z' — по сегментам '·'."""
     out: dict = {}
 
-    # 1) прозаичные (многострочные)
+    # 1) прозаичные (многострочные) — до следующего буллета любого типа
     pat_prose = re.compile(
         r"^-\s*\*\*(?P<k>" + "|".join(PROSE_KEYS) + r")\*\*\s*:\s*", re.M)
+    pat_all = re.compile(
+        r"^-\s*\*\*(?P<k>" + "|".join(BULLETS) + r")\*\*\s*:\s*", re.M)
+    all_ms = list(pat_all.finditer(text))
+    # карта позиции прозаичного буллета -> его индекс в общем списке
+    pos_to_idx = {m.start(): i for i, m in enumerate(all_ms)}
     ms = list(pat_prose.finditer(text))
-    for i, m in enumerate(ms):
+    for m in ms:
         vstart = m.end()
-        vend = ms[i + 1].start() if i + 1 < len(ms) else len(text)
+        idx = pos_to_idx.get(m.start(), -1)
+        if idx >= 0 and idx + 1 < len(all_ms):
+            vend = all_ms[idx + 1].start()
+        elif ms:
+            # fallback: следующий прозаичный
+            nxt = next((x for x in ms if x.start() > m.start()), None)
+            vend = nxt.start() if nxt else len(text)
+        else:
+            vend = len(text)
         val = text[vstart:vend].strip()
         if val:
             out.setdefault(m.group("k"), val)
@@ -205,7 +218,7 @@ def _deps_from(raw: str, own_id: str) -> list:
     for tok in DEP_ID_RE.findall(raw):
         if tok == own_id:
             continue
-        if re.fullmatch(r"[A-Za-zА-Яа-яЁё]+-\d+", tok) or re.fullmatch(r"\d+(\.\d+)*", tok):
+        if re.fullmatch(r"[A-Za-zА-Яа-яЁё]+(?:-[A-Za-zА-Яа-яЁё]+)*-\d+(?:\.\d+)*", tok) or re.fullmatch(r"\d+(\.\d+)*", tok):
             if tok not in deps:
                 deps.append(tok)
     return deps

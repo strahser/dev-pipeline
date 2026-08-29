@@ -1,0 +1,80 @@
+# Конфигурация конвейера для проекта HeatGainCalculator (тепловоздушный баланс, CoolingLoad, net8.0)
+# План ведётся в ProjectsPalns/HeatGainCalculator/_current/2026-08-29_heatgain-plan.md (12 дней, фазы HG-REF→HG-INF)
+# Связан с SunRadiation (радиация) и HVACLoadTerminals (потребитель heatgain.v1)
+
+project:
+  name: HeatGainCalculator
+  root: [D:\Projects\HeatGainCalculator]
+  branch: main
+
+# План проекта в ProjectsPalns
+plan:
+  repo: [D:\Projects\ProjectsPalns]
+  subdir: HeatGainCalculator
+  file: 2026-08-29_heatgain-plan.md
+
+# Параметры план-раннера
+runner:
+  model: opencode-go/deepseek-v4-flash
+  retries: 2
+  question_timeout_sec: 1200
+  checkpoint_stages: true
+  semantic_review: false
+
+tasks:
+  inbox: Tasks\Входящие
+  active: Tasks\Активные
+  reports: Tasks\Отчёты
+  archive: Tasks\Архив
+  protocol: Tasks\00_Протокол_агентов.md
+  status: Tasks\Статус_конвейера.md
+  conveyor: Tasks\Конвейер
+  notif: Tasks\Конвейер\Уведомления
+
+build:
+  msbuild: dotnet
+  sln: HeatGainCalculator.slnx
+  configuration: Debug
+  platform: Any CPU
+  extra_args:
+    - --nologo
+    - -v
+    - q
+
+tests:
+  runner: dotnet
+  vstest: ""
+  dll: Tests/HeatGainCalculator.Tests/HeatGainCalculator.Tests.csproj
+  baseline_passed: 0
+  baseline_total: 0
+
+# Декларативные проверки задач
+checks:
+  - id: HG-01
+    label: 'Core без Autodesk.Revit (чистая архитектура P3)'
+    kind: grep_dir
+    dir: src/Core
+    pattern: Autodesk
+    expect: 0
+  - id: HG-02
+    label: 'Core без WPF System.Windows'
+    kind: grep_dir
+    dir: src/Core
+    pattern: System\.Windows
+    expect: 0
+
+layer_rules:
+  - label: Core без Autodesk.Revit
+    pattern: using\s+Autodesk\.Revit
+    expect: 0
+    dirs: [src/Core, Core]
+  - label: Core без WPF
+    pattern: using\s+System\.Windows
+    expect: 0
+    dirs: [src/Core, Core]
+  - label: Infrastructure не ссылается на App
+    pattern: HeatGainCalculator\.App
+    expect: 0
+    dirs: [src/Infrastructure, Infrastructure]
+
+audit_dirs: [Tests, src/Core]
