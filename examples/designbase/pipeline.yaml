@@ -41,8 +41,8 @@ tests:
   runner: pytest
   vstest: ""
   dll: tests
-  baseline_passed: 236
-  baseline_total: 236
+  baseline_passed: 240
+  baseline_total: 240
 
 checks:
   - id: A-01
