@@ -44,7 +44,7 @@ build:
 tests:
   runner: dotnet
   vstest: ""
-  dll: Tests/HeatGainCalculator.Tests/HeatGainCalculator.Tests.csproj
+  dll: Tests/Tests.csproj
   baseline_passed: 0
   baseline_total: 0
 
