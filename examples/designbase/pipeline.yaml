@@ -10,7 +10,7 @@ project:
 plan:
   repo: [D:\Projects\ProjectsPalns, E:\ПлагиныРевит\ProjectsPalns]
   subdir: DesignBase
-  file: 2026-08-23_markdown-mirror-layer.md
+  file: 2026-08-29_stage-e2-chat-kb-ingest.md
 
 # Параметры план-раннера
 runner:
@@ -41,8 +41,8 @@ tests:
   runner: pytest
   vstest: ""
   dll: tests
-  baseline_passed: 45
-  baseline_total: 45
+  baseline_passed: 205
+  baseline_total: 205
 
 checks:
   - id: A-01
