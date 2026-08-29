@@ -1,0 +1,65 @@
+# Конфигурация конвейера для проекта SunRadiation (радиационный модуль, net8.0)
+# План эволюции в ProjectsPalns/SunRadiation/_current/2026-08-29_sunradiation-plan.md (7 дней, 15 карточек)
+# Связан с HeatGainCalculator (потребитель ISolarGainService)
+
+project:
+  name: SunRadiation
+  root: [D:\Projects\SunRadiation]
+  branch: master
+
+# План проекта в ProjectsPalns
+plan:
+  repo: [D:\Projects\ProjectsPalns]
+  subdir: SunRadiation
+  file: 2026-08-29_sunradiation-plan.md
+
+# Параметры план-раннера
+runner:
+  model: opencode-go/deepseek-v4-flash
+  retries: 2
+  question_timeout_sec: 1200
+  checkpoint_stages: true
+  semantic_review: false
+
+tasks:
+  inbox: Tasks\Входящие
+  active: Tasks\Активные
+  reports: Tasks\Отчёты
+  archive: Tasks\Архив
+  protocol: Tasks\00_Протокол_агентов.md
+  status: Tasks\Статус_конвейера.md
+  conveyor: Tasks\Конвейер
+  notif: Tasks\Конвейер\Уведомления
+
+build:
+  msbuild: dotnet
+  sln: SunRadiation.slnx
+  configuration: Debug
+  platform: Any CPU
+  extra_args:
+    - --nologo
+    - -v
+    - q
+
+tests:
+  runner: dotnet
+  vstest: ""
+  dll: Tests/Tests.csproj
+  baseline_passed: 4
+  baseline_total: 4
+
+checks:
+  - id: SR-01
+    label: 'Core без Autodesk'
+    kind: grep_dir
+    dir: Core
+    pattern: Autodesk
+    expect: 0
+
+layer_rules:
+  - label: Core без Autodesk
+    pattern: using\s+Autodesk
+    expect: 0
+    dirs: [Core]
+
+audit_dirs: [Tests, Core]
