@@ -46,10 +46,11 @@ from pydantic import BaseModel, Field
 
 from pipeline.config import ConfigError, load_config, list_projects
 from pipeline.models import Task
+from pipeline.plans import load as load_plan
 from server.db import Store, now_iso as _now_iso
 from server.heartbeat import start_watchdog
 from server.sse import SSEHub
-from server.plan_api import router as plan_router, init as plan_api_init
+from server.plan_api import router as plan_router, init as plan_api_init, _plan_rows
 
 DB_PATH = os.environ.get("PIPELINE_DB", "conveyor.db")
 DASHBOARD = Path(__file__).parent / "static" / "dashboard.html"
@@ -1222,12 +1223,6 @@ async def chat_command(body: MessageIn):
                  "created_at": msg["created_at"], "delivery": msg["delivery"],
                  "payload": {"chat": True}})
     return msg
-
-
-@app.get("/favicon.ico", include_in_schema=False)
-async def favicon():
-    from fastapi.responses import Response
-    return Response(status_code=204)
 
 
 @app.get("/favicon.ico", include_in_schema=False)
