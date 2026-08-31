@@ -1224,6 +1224,12 @@ async def chat_command(body: MessageIn):
     return msg
 
 
+@app.get("/favicon.ico", include_in_schema=False)
+async def favicon():
+    from fastapi.responses import Response
+    return Response(status_code=204)
+
+
 @app.get("/")
 async def index():
     from fastapi.responses import FileResponse

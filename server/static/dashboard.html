@@ -1646,26 +1646,32 @@ function buildShell(){
 /* Режимы просмотра: 'home' (все проекты) или проект с планом/таблицей */
 let viewMode = 'home';
 function goHome(){
+  console.log('[nav] goHome called', new Error().stack.slice(0,800));
   viewMode = 'home';
+  try{ localStorage.removeItem('dev-pipeline.viewMode'); localStorage.removeItem('dev-pipeline.project'); }catch(_){}
   activeProject = '';
   if ($('projectSelect')) $('projectSelect').value = '';
   buildShellLite();
   loadPulseAll();
 }
 function openPlan(){
+  console.log('[nav] openPlan', {activeProject, viewMode});
   if (!activeProject){ alert('Сначала выберите проект в шапке'); return; }
   viewMode = 'plan';
+  try{ localStorage.setItem('dev-pipeline.viewMode', viewMode); localStorage.setItem('dev-pipeline.project', activeProject); }catch(_){}
   buildShell();
   loadFilters();
   refreshData(true);
 }
 
 async function setProject(name){
+  console.log('[nav] setProject', {name, viewMode, activeProject});
   name = name || '';
   if (viewMode === 'home'){                   // с обзора — строим каркас плана сразу
     activeProject = name;
     if ($('projectSelect')) $('projectSelect').value = name;
     viewMode = 'plan';
+    try{ localStorage.setItem('dev-pipeline.viewMode', viewMode); localStorage.setItem('dev-pipeline.project', activeProject); }catch(_){}
     buildShell();
     await loadFilters();
     await refreshData(true);
@@ -1798,13 +1804,26 @@ async function loadPulseAll(){
 }
 
 async function boot(){
+  // восстановить план если был сохранён
+  try{
+    const savedMode = localStorage.getItem('dev-pipeline.viewMode');
+    const savedProj = localStorage.getItem('dev-pipeline.project');
+    if(savedMode === 'plan' && savedProj){ activeProject = savedProj; viewMode = 'plan'; }
+  }catch(_){}
   buildShellLite();
+  // если восстановили план — сразу перейти
+  if(viewMode === 'plan' && activeProject){
+    buildShell(); loadFilters(); refreshData(true);
+  }
   checkServerFreshness();                 // баннер «перезапустите сервер»
   await loadProjects();                   // список проектов в шапку
+  if(activeProject && $('projectSelect')) $('projectSelect').value = activeProject;
   await loadPulseAll();                   // карточки всех проектов
   setInterval(loadPulseAll, 20000);
   await qaCounts();                       // счётчики вопросов/чекпоинтов в шапке
   setInterval(qaCounts, 15000);
+  // лог навигации для диагностики редиректа
+  setInterval(()=>{ console.log('[nav] heartbeat', {viewMode, activeProject}); }, 10000);
 }
 
 /* Заполнить селектор проектов в шапке (★ = есть план) */
