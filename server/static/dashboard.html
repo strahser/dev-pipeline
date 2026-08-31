@@ -1663,12 +1663,8 @@ function goHome(){
 function openPlan(){
   console.log('[nav] openPlan', {activeProject, viewMode});
   if (!activeProject){ alert('Сначала выберите проект в шапке'); return; }
-  viewMode = 'plan';
-  updateClosePlanBtn();
-  try{ localStorage.setItem('dev-pipeline.viewMode', viewMode); localStorage.setItem('dev-pipeline.project', activeProject); }catch(_){}
-  buildShell();
-  loadFilters();
-  refreshData(true);
+  // explicit endpoint — обычный рендер с общим header
+  location.href = '/project/' + encodeURIComponent(activeProject) + '/plan';
 }
 
 async function setProject(name){

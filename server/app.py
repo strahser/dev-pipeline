@@ -1230,14 +1230,122 @@ async def favicon():
     return Response(status_code=204)
 
 
-@app.get("/")
+@app.get("/favicon.ico", include_in_schema=False)
+async def favicon():
+    from fastapi.responses import Response
+    return Response(status_code=204)
+
+
+def _common_header(active_project: str = "") -> str:
+    try:
+        projs = list_projects()
+    except Exception:
+        projs = []
+    opts = '<option value="">— проект —</option>'
+    for p in projs:
+        try:
+            has = load_config(p).find_plan_file() is not None
+        except Exception:
+            has = False
+        sel = ' selected' if p == active_project else ''
+        opts += f'<option value="{p}"{sel}>{"★ " if has else ""}{p}</option>'
+    return f'''<header style="display:flex;align-items:center;gap:16px;padding:10px 20px;background:#12141c;border-bottom:1px solid #2a2f42;flex-wrap:wrap">
+  <h1 style="font-size:16px;margin:0">dev-pipeline · Панель конвейера</h1>
+  <select id="projectSelect" onchange="location.href='/project/'+encodeURIComponent(this.value)+'/plan'" title="Активный проект" style="background:#171a23;color:#e6e8ef;border:1px solid #2a2f42;border-radius:8px;padding:6px 10px;font-size:13px;cursor:pointer;max-width:230px">{opts}</select>
+  <a href="/" style="background:#171a23;color:#e6e8ef;border:1px solid #2a2f42;border-radius:8px;padding:6px 12px;font-size:13px;text-decoration:none">🏠 Обзор</a>
+  <a href="/project/{active_project}/plan" style="background:#171a23;color:#e6e8ef;border:1px solid #2a2f42;border-radius:8px;padding:6px 12px;font-size:13px;text-decoration:none">📋 План</a>
+  <a href="/static/dashboard.html" style="background:#171a23;color:#e6e8ef;border:1px solid #2a2f42;border-radius:8px;padding:6px 12px;font-size:13px;text-decoration:none">🖥 SPA</a>
+  <span style="margin-left:auto;font-size:12px;color:#9aa2b5">explicit · no SPA</span>
+</header>'''
+
+
+def _page_shell(title: str, active_project: str, body: str) -> str:
+    # общий стиль — берём из dashboard.html (копируем :root и базу)
+    style = """
+<style>
+:root { --bg:#0f1117; --panel:#171a23; --panel2:#1d2130; --border:#2a2f42; --text:#e6e8ef; --muted:#9aa2b5; --accent:#6ea8ff; --green:#4ade80; --yellow:#facc15; --red:#f87171; --orange:#fb923c; --code:#0b0e14; }
+*{box-sizing:border-box} html,body{height:100%} body{margin:0;font:14px/1.55 system-ui,Segoe UI,sans-serif;background:var(--bg);color:var(--text)}
+a{color:#6ea8ff} table{border-collapse:collapse;width:100%} th,td{border:1px solid #2a2f42;padding:7px 9px;text-align:left} th{color:#9aa2b5;background:#1d2130} tr:hover{ background:#1d2130}
+.badge{display:inline-block;padding:1px 8px;border-radius:999px;font-size:11px;white-space:nowrap}.badge.ok{background:#123b26;color:#4ade80}.badge.warn{background:#3b3312;color:#facc15}.badge.err{background:#3b1212;color:#f87171}.badge.info{background:#12263b;color:#6ea8ff}
+.muted{color:#9aa2b5} .card{background:#171a23;border:1px solid #2a2f42;border-radius:10px;padding:14px 16px;margin:14px 0}
+</style>"""
+    return f'''<!doctype html><html lang="ru"><head><meta charset="utf-8"><meta name="viewport" content="width=device-width, initial-scale=1"><title>{title}</title><link rel="stylesheet" href="/static/vendor/dataTables.min.css">{style}</head><body>{_common_header(active_project)}<main style="padding:16px 20px;max-width:1400px;margin:0 auto">{body}</main></body></html>'''
+
+
+@app.get("/", response_class=None)
 async def index():
-    from fastapi.responses import FileResponse
-    if DASHBOARD.exists():
-        # без кэша: панель часто обновляется вместе с бэкендом
-        return FileResponse(DASHBOARD, media_type="text/html; charset=utf-8",
-                            headers={"Cache-Control": "no-store"})
-    return {"error": "dashboard.html не найден"}
+    from fastapi.responses import HTMLResponse, FileResponse
+    # explicit server-rendered home with project cards
+    try:
+        from pipeline.config import list_projects as _lp
+        from server.plan_api import _plan_rows as _pr
+        pros = _lp()
+        cards = ""
+        for name in pros:
+            try:
+                cfg = load_config(name)
+                has = cfg.find_plan_file() is not None
+                plan = load_plan(cfg.find_plan_file()) if has else None
+                prog = plan.progress() if plan else {"done":0,"total":0}
+                title = plan.title[:80] if plan else ""
+            except Exception:
+                has=False; prog={"done":0,"total":0}; title=""
+            badge = f'<span class="badge {"ok" if prog["done"]==prog["total"] and prog["total"]>0 else "warn"}">{prog["done"]}/{prog["total"]}</span>'
+            cards += f'<div class="card"><div style="display:flex;align-items:center;gap:10px"><b>{"★ " if has else ""}{name}</b> {badge} <span class="muted" style="font-size:12px">{title}</span><span style="margin-left:auto"></span><a href="/project/{name}/plan" style="background:#1d2130;color:#e6e8ef;border:1px solid #2a2f42;border-radius:8px;padding:6px 12px;text-decoration:none">📋 План</a> <a href="/project/{name}" style="background:#1d2130;color:#e6e8ef;border:1px solid #2a2f42;border-radius:8px;padding:6px 12px;text-decoration:none">👁 Обзор</a></div></div>'
+        body = f'<h2 style="margin:8px 0 4px">Проекты</h2><div class="muted" style="font-size:12px;margin-bottom:12px">explicit render · общий header · клик План → /project/&lt;name&gt;/plan</div>{cards or "<div class=card>нет проектов</div>"}<p class="muted" style="font-size:12px">SPA старая панель: <a href="/static/dashboard.html">/static/dashboard.html</a> · API: <a href="/api/projects">/api/projects</a></p>'
+        return HTMLResponse(_page_shell("dev-pipeline · Обзор", "", body))
+    except Exception:
+        if DASHBOARD.exists():
+            return FileResponse(DASHBOARD, media_type="text/html; charset=utf-8", headers={"Cache-Control": "no-store"})
+        return {"error": "dashboard.html не найден"}
+
+
+@app.get("/project/{project}/plan", response_class=None)
+async def project_plan(project: str):
+    from fastapi.responses import HTMLResponse
+    from fastapi import HTTPException as _HE
+    try:
+        cfg = load_config(project)
+    except ConfigError as e:
+        raise _HE(404, f"проект не найден: {e}")
+    pf = cfg.find_plan_file()
+    if not pf:
+        body = f'<div class="card" style="border-color:#eab308">⚠ У проекта <b>{project}</b> нет файла плана (_current пуст) <br><span class="muted">plan.repo/subdir в pipeline.yaml: {cfg.find_plan_file()}</span></div><p><a href="/">← Обзор</a></p>'
+        return HTMLResponse(_page_shell(f"{project} · нет плана", project, body), status_code=200)
+    plan = load_plan(pf)
+    rows = _plan_rows(cfg)
+    # таблица
+    trs = ""
+    for r in rows:
+        st = r["status"]; wf = r["workflow_state"]
+        badge = f'<span class="badge {"ok" if st=="done" else "warn"}">{st}</span>'
+        wf_b = f'<span class="badge info">{wf}</span>'
+        rep = "📄" if r["has_report"] else "—"
+        ver = r["verdict_result"] or ("🧾" if r["has_verdict"] else "—")
+        trs += f'<tr><td>{r["wbs_code"]}</td><td>{r["task_id"]}</td><td>{r["name"][:70]}</td><td>{badge}</td><td>{wf_b}</td><td>{rep}</td><td>{ver}</td><td>{r["evidence_count"]}</td></tr>'
+    body = f'<div style="display:flex;align-items:center;gap:10px;margin-bottom:8px"><h2 style="margin:0">{project} · План</h2><span class="muted" style="font-size:12px">{pf.name} · {len(rows)} строк · done {sum(1 for r in rows if r["status"]=="done")}/{len(rows)}</span><span style="margin-left:auto"></span><a href="/project/{project}" style="background:#1d2130;color:#e6e8ef;border:1px solid #2a2f42;border-radius:8px;padding:6px 12px;text-decoration:none">👁 Пульс</a> <a href="/" style="background:#1d2130;color:#e6e8ef;border:1px solid #2a2f42;border-radius:8px;padding:6px 12px;text-decoration:none">🏠 Обзор</a> <a href="/static/dashboard.html" style="background:#1d2130;color:#e6e8ef;border:1px solid #2a2f42;border-radius:8px;padding:6px 12px;text-decoration:none">🖥 SPA</a></div><div class="card" style="padding:0;overflow:auto"><table><thead><tr><th>WBS</th><th>ID</th><th>Задача</th><th>Статус</th><th>Workflow</th><th>Отчёт</th><th>Вердикт</th><th>Док-ва</th></tr></thead><tbody>{trs or "<tr><td colspan=8>нет строк</td></tr>"}</tbody></table></div><p class="muted" style="font-size:12px">explicit · общий header · <a href="/api/plan?project={project}">API JSON</a> · <a href="/api/plan/tasks?project={project}">tasks</a></p>'
+    return HTMLResponse(_page_shell(f"{project} · План", project, body))
+
+
+@app.get("/project/{project}", response_class=None)
+async def project_pulse(project: str):
+    from fastapi.responses import HTMLResponse
+    from fastapi import HTTPException as _HE
+    try:
+        cfg = load_config(project)
+    except ConfigError as e:
+        raise _HE(404, f"проект не найден: {e}")
+    # reuse pulse api logic inline (без SSE)
+    from server.plan_api import _plan_rows as _pr2
+    plan = None
+    try:
+        pf = cfg.find_plan_file()
+        plan = load_plan(pf) if pf else None
+    except Exception:
+        plan=None
+    prog = plan.progress() if plan else {"done":0,"total":0}
+    body = f'<h2 style="margin:0 0 8px">{project} · Пульс</h2><div class="card"><div class="muted" style="font-size:12px">план: {pf.name if pf else "—"} · {prog["done"]}/{prog["total"]} done</div><div style="margin-top:8px"><a href="/project/{project}/plan" style="background:#6ea8ff;color:#0b0f17;border-radius:8px;padding:8px 14px;text-decoration:none">📋 Открыть план</a> <a href="/" style="margin-left:8px">← Обзор</a></div></div>'
+    return HTMLResponse(_page_shell(f"{project} · Пульс", project, body))
 
 
 # --- Создание агента-помощника (роль + скиллы) ------------------------------
