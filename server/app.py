@@ -1297,19 +1297,73 @@ async def index():
 
 
 @app.get("/project/{project}/plan", response_class=None)
-async def project_plan(project: str):
+async def project_plan(project: str, file: str = ""):
     from fastapi.responses import HTMLResponse
     from fastapi import HTTPException as _HE
     try:
         cfg = load_config(project)
     except ConfigError as e:
         raise _HE(404, f"проект не найден: {e}")
-    pf = cfg.find_plan_file()
+    # верхний уровень: завершённые планы (_done) + текущий план
+    # если ?file=xxx.md указан, показываем конкретный завершённый план вместо текущего
+    pf = None
+    is_done_view = False
+    requested_file = file
+    if requested_file:
+        # file может быть из _done или _current, ищем в обоих + прямой путь
+        cand_done = (cfg.plan_dir().parent / "_done" / requested_file) if cfg.plan_dir() else None
+        cand_cur = (cfg.plan_dir() / requested_file) if cfg.plan_dir() else None
+        cand_abs = Path(requested_file) if Path(requested_file).exists() else None
+        for cand in [cand_done, cand_cur, cand_abs]:
+            if cand and cand.exists():
+                pf = cand
+                is_done_view = True
+                break
+        if not pf:
+            raise _HE(404, f"план {requested_file} не найден")
+    else:
+        pf = cfg.find_plan_file()
     if not pf:
         body = f'<div class="card" style="border-color:#eab308">⚠ У проекта <b>{project}</b> нет файла плана (_current пуст) <br><span class="muted">plan.repo/subdir в pipeline.yaml: {cfg.find_plan_file()}</span></div><p><a href="/">← Обзор</a></p>'
         return HTMLResponse(_page_shell(f"{project} · нет плана", project, body), status_code=200)
     plan = load_plan(pf)
-    rows = _api_plan_rows(cfg)
+    rows = _api_plan_rows(cfg) if not is_done_view else []
+    # для done-view грузим строки из конкретного файла, а не из current
+    if is_done_view:
+        # парсим строки напрямую из выбранного done-файла
+        try:
+            from pipeline.plans import load as _load2
+            _plan2 = _load2(pf)
+            # временно подменяем cfg.find_plan_file для _api_plan_rows
+            orig = cfg.find_plan_file
+            cfg.find_plan_file = lambda: pf
+            rows = _api_plan_rows(cfg)
+            cfg.find_plan_file = orig
+        except:
+            rows = []
+    # верхний уровень: завершённые планы (_done) - список с возможностью входа внутрь
+    done_html = ""
+    try:
+        done_dir = (cfg.plan_dir().parent / "_done") if cfg.plan_dir() else None
+        if done_dir and done_dir.is_dir():
+            done_files = sorted(done_dir.glob("*.md"), reverse=True)[:20]
+            if done_files:
+                import html as _hdone
+                items = ""
+                for df in done_files:
+                    try:
+                        dp = load_plan(df)
+                        prog = dp.progress()
+                        title = dp.title[:90]
+                        active = ' style="background:rgba(110,168,255,0.12);border-color:#6ea8ff"' if is_done_view and pf.name == df.name else ""
+                        items += f'<div class="card" style="padding:8px 12px;margin-bottom:6px;display:flex;align-items:center;gap:8px{active}"><span class="badge ok">✓</span><a href="/project/{project}/plan?file={df.name}" style="color:var(--accent);text-decoration:none"><b>{_hdone.escape(title)}</b></a><span class="muted" style="font-size:11px">{df.name} · {prog["done"]}/{prog["total"]} · {df.stat().st_mtime}</span><span style="margin-left:auto" class="muted" style="font-size:11px"><a href="/api/plan?project={project}" target="_blank">API</a></span></div>'
+                    except:
+                        items += f'<div class="muted">{df.name}</div>'
+                done_html = f'<div class="card" style="border-left:3px solid #4ade80"><b>📚 Завершённые планы ({len(done_files)})</b><div class="muted" style="font-size:11px;margin-top:4px">верхний уровень — клик для деталей</div><div style="margin-top:8px">{items}</div></div>'
+            else:
+                done_html = '<div class="card muted" style="border-left:3px solid #4ade80">Завершённых планов нет (_done пуст)</div>'
+    except:
+        done_html = ""
     # найти этап-родитель (EPIC) для показа с описанием — git-правила парсинга: id EPIC-* или первый с детьми
     epic = next((c for c in plan.cards if c.id.startswith("EPIC")), None)
     stage_html = ""
@@ -1394,7 +1448,7 @@ async def project_plan(project: str):
         except:
             dur = "—"
         trs += f'<tr><td>{r["wbs_code"]}</td><td>{r["task_id"]}</td><td>{r["name"][:70]}<br>{desc_html}</td><td>{badge}</td><td>{wf_b}</td><td>{dur}</td><td>{rep}</td><td>{ver}</td><td>{r["evidence_count"]}</td></tr>'
-    body = f'<div style="display:flex;align-items:center;gap:10px;margin-bottom:8px"><h2 style="margin:0">{project} · План</h2><span class="muted" style="font-size:12px">{pf.name} · {len(rows)} строк · done {sum(1 for r in rows if r["status"]=="done")}/{len(rows)}</span><span style="margin-left:auto"></span><a href="/project/{project}" style="background:#1d2130;color:#e6e8ef;border:1px solid #2a2f42;border-radius:8px;padding:6px 12px;text-decoration:none">👁 Пульс</a> <a href="/" style="background:#1d2130;color:#e6e8ef;border:1px solid #2a2f42;border-radius:8px;padding:6px 12px;text-decoration:none">🏠 Обзор</a> <a href="/static/dashboard.html" style="background:#1d2130;color:#e6e8ef;border:1px solid #2a2f42;border-radius:8px;padding:6px 12px;text-decoration:none">🖥 SPA</a></div>{stage_html}{running_html}<div class="card" style="padding:0;overflow:auto"><table><thead><tr><th>WBS</th><th>ID</th><th>Задача</th><th>Статус</th><th>Workflow</th><th>⏱</th><th>Отчёт</th><th>Вердикт</th><th>Док-ва</th></tr></thead><tbody>{trs or "<tr><td colspan=9>нет строк</td></tr>"}</tbody></table></div><p class="muted" style="font-size:12px">explicit · общий header · этап с описанием (EPIC) + карточки · колонка ⏱ — минуты с updated runner_state.json (если >30 мин — проверь лог) · <a href="/api/plan?project={project}">API JSON</a> · <a href="/api/plan/tasks?project={project}">tasks</a> · <a href="/api/plan/running?project={project}">running</a> · git-правила: id EPIC-* → этап, ARCH-* → карточки, статусы done/open в заголовках карточек + ⏱ длительность</p>'
+    body = f'<div style="display:flex;align-items:center;gap:10px;margin-bottom:8px"><h2 style="margin:0">{project} · План</h2><span class="muted" style="font-size:12px">{pf.name} · {len(rows)} строк · done {sum(1 for r in rows if r["status"]=="done")}/{len(rows)}</span><span style="margin-left:auto"></span><a href="/project/{project}" style="background:#1d2130;color:#e6e8ef;border:1px solid #2a2f42;border-radius:8px;padding:6px 12px;text-decoration:none">👁 Пульс</a> <a href="/" style="background:#1d2130;color:#e6e8ef;border:1px solid #2a2f42;border-radius:8px;padding:6px 12px;text-decoration:none">🏠 Обзор</a> <a href="/static/dashboard.html" style="background:#1d2130;color:#e6e8ef;border:1px solid #2a2f42;border-radius:8px;padding:6px 12px;text-decoration:none">🖥 SPA</a></div>{done_html}{stage_html}{running_html}<div class="card" style="padding:0;overflow:auto"><table><thead><tr><th>WBS</th><th>ID</th><th>Задача</th><th>Статус</th><th>Workflow</th><th>⏱</th><th>Отчёт</th><th>Вердикт</th><th>Док-ва</th></tr></thead><tbody>{trs or "<tr><td colspan=9>нет строк</td></tr>"}</tbody></table></div><p class="muted" style="font-size:12px">explicit · общий header · этап с описанием (EPIC) + карточки · колонка ⏱ — минуты с updated runner_state.json (если >30 мин — проверь лог) · <a href="/api/plan?project={project}">API JSON</a> · <a href="/api/plan/tasks?project={project}">tasks</a> · <a href="/api/plan/running?project={project}">running</a> · git-правила: id EPIC-* → этап, ARCH-* → карточки, статусы done/open в заголовках карточек + ⏱ длительность</p>'
     return HTMLResponse(_page_shell(f"{project} · План", project, body))
 
 
