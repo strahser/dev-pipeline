@@ -148,10 +148,11 @@ def _extract_bullets(text: str) -> dict:
     out: dict = {}
 
     # 1) прозаичные (многострочные) — до следующего буллета любого типа
+    # поддерживает оба варианта: "- **Цель**: ..." и "- **Цель:** ..." (двоеточие внутри/outside bold)
     pat_prose = re.compile(
-        r"^-\s*\*\*(?P<k>" + "|".join(PROSE_KEYS) + r")\*\*\s*:\s*", re.M)
+        r"^-\s*\*\*(?P<k>" + "|".join(PROSE_KEYS) + r"):?\*\*\s*:?\s*", re.M)
     pat_all = re.compile(
-        r"^-\s*\*\*(?P<k>" + "|".join(BULLETS) + r")\*\*\s*:\s*", re.M)
+        r"^-\s*\*\*(?P<k>" + "|".join(BULLETS) + r"):?\*\*\s*:?\s*", re.M)
     all_ms = list(pat_all.finditer(text))
     # карта позиции прозаичного буллета -> его индекс в общем списке
     pos_to_idx = {m.start(): i for i, m in enumerate(all_ms)}
@@ -172,7 +173,7 @@ def _extract_bullets(text: str) -> dict:
             out.setdefault(m.group("k"), val)
 
     # 2) комбостроки: сегменты '·' внутри строк, начинающихся с '- '
-    pat_seg = re.compile(r"\*\*(?P<k>" + "|".join(COMBO_KEYS) + r")\*\*\s*:\s*")
+    pat_seg = re.compile(r"\*\*(?P<k>" + "|".join(COMBO_KEYS) + r"):?\*\*\s*:?\s*")
     trim_edges = re.compile(r"^[`\s·]+|[`\s·]+$")
     for line in text.splitlines():
         if not line.lstrip().startswith("- "):

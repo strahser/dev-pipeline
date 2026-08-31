@@ -1310,7 +1310,27 @@ async def project_plan(project: str):
         return HTMLResponse(_page_shell(f"{project} · нет плана", project, body), status_code=200)
     plan = load_plan(pf)
     rows = _api_plan_rows(cfg)
-    # таблица
+    # найти этап-родитель (EPIC) для показа с описанием — git-правила парсинга: id EPIC-* или первый с детьми
+    epic = next((c for c in plan.cards if c.id.startswith("EPIC")), None)
+    stage_html = ""
+    if epic:
+        # описание этапа: цель + вход + связи + статус
+        epic_desc = (epic.goal or epic.description or "")[:800]
+        # если у карточек пусто (старый парсер), fallback на первые 800 знаков body без шапки
+        if not epic_desc:
+            body_txt = epic.body or ""
+            # вырезать заголовок и взять первые параграфы §1-§3
+            import re as _re
+            # взять текст между первым "## §1" и "## §4" как описание этапа
+            m = _re.search(r"##\s*§1.*?(?=##\s*§4)", body_txt, _re.S)
+            if m:
+                epic_desc = m.group(0)[:1000]
+            else:
+                epic_desc = body_txt[:800]
+        # экранировать
+        import html as _html
+        stage_html = f'<div class="card" style="border-left:3px solid #6ea8ff"><div style="display:flex;align-items:center;gap:8px"><b>📦 Этап {epic.id}</b> <span class="badge {"ok" if epic.status=="done" else "warn"}">{epic.status}</span> <span class="muted" style="font-size:12px">{_html.escape(epic.title[:80])}</span><span style="margin-left:auto" class="muted" style="font-size:11px">{pf.name}</span></div><div class="muted" style="font-size:12px;margin-top:6px;white-space:pre-wrap">{_html.escape(epic_desc[:1200])}</div><div class="muted" style="font-size:11px;margin-top:6px">ветка: { _html.escape((epic.body.split("Ветка:")[1].split(chr(10))[0][:80] if "Ветка:" in epic.body else "")) } · <a href="/api/plan?project={project}">API</a></div></div>'
+    # таблица: теперь с колонкой Описание (из goal/description, git-правила парсинга)
     trs = ""
     for r in rows:
         st = r["status"]; wf = r["workflow_state"]
@@ -1318,8 +1338,17 @@ async def project_plan(project: str):
         wf_b = f'<span class="badge info">{wf}</span>'
         rep = "📄" if r["has_report"] else "—"
         ver = r["verdict_result"] or ("🧾" if r["has_verdict"] else "—")
-        trs += f'<tr><td>{r["wbs_code"]}</td><td>{r["task_id"]}</td><td>{r["name"][:70]}</td><td>{badge}</td><td>{wf_b}</td><td>{rep}</td><td>{ver}</td><td>{r["evidence_count"]}</td></tr>'
-    body = f'<div style="display:flex;align-items:center;gap:10px;margin-bottom:8px"><h2 style="margin:0">{project} · План</h2><span class="muted" style="font-size:12px">{pf.name} · {len(rows)} строк · done {sum(1 for r in rows if r["status"]=="done")}/{len(rows)}</span><span style="margin-left:auto"></span><a href="/project/{project}" style="background:#1d2130;color:#e6e8ef;border:1px solid #2a2f42;border-radius:8px;padding:6px 12px;text-decoration:none">👁 Пульс</a> <a href="/" style="background:#1d2130;color:#e6e8ef;border:1px solid #2a2f42;border-radius:8px;padding:6px 12px;text-decoration:none">🏠 Обзор</a> <a href="/static/dashboard.html" style="background:#1d2130;color:#e6e8ef;border:1px solid #2a2f42;border-radius:8px;padding:6px 12px;text-decoration:none">🖥 SPA</a></div><div class="card" style="padding:0;overflow:auto"><table><thead><tr><th>WBS</th><th>ID</th><th>Задача</th><th>Статус</th><th>Workflow</th><th>Отчёт</th><th>Вердикт</th><th>Док-ва</th></tr></thead><tbody>{trs or "<tr><td colspan=8>нет строк</td></tr>"}</tbody></table></div><p class="muted" style="font-size:12px">explicit · общий header · <a href="/api/plan?project={project}">API JSON</a> · <a href="/api/plan/tasks?project={project}">tasks</a></p>'
+        # описание: берём из плана (goal/description) или из row description
+        desc = r.get("description") or ""
+        if not desc:
+            # fallback: найти карточку и взять goal
+            card = plan.card(r["task_id"])
+            if card and (card.goal or card.description):
+                desc = (card.goal or card.description)[:120]
+        import html as _html2
+        desc_html = f'<span class="muted" style="font-size:11px" title="{_html2.escape(desc[:200])}">{_html2.escape(desc[:90]) if desc else "—"}</span>' if desc else '<span class="muted">—</span>'
+        trs += f'<tr><td>{r["wbs_code"]}</td><td>{r["task_id"]}</td><td>{r["name"][:70]}<br>{desc_html}</td><td>{badge}</td><td>{wf_b}</td><td>{rep}</td><td>{ver}</td><td>{r["evidence_count"]}</td></tr>'
+    body = f'<div style="display:flex;align-items:center;gap:10px;margin-bottom:8px"><h2 style="margin:0">{project} · План</h2><span class="muted" style="font-size:12px">{pf.name} · {len(rows)} строк · done {sum(1 for r in rows if r["status"]=="done")}/{len(rows)}</span><span style="margin-left:auto"></span><a href="/project/{project}" style="background:#1d2130;color:#e6e8ef;border:1px solid #2a2f42;border-radius:8px;padding:6px 12px;text-decoration:none">👁 Пульс</a> <a href="/" style="background:#1d2130;color:#e6e8ef;border:1px solid #2a2f42;border-radius:8px;padding:6px 12px;text-decoration:none">🏠 Обзор</a> <a href="/static/dashboard.html" style="background:#1d2130;color:#e6e8ef;border:1px solid #2a2f42;border-radius:8px;padding:6px 12px;text-decoration:none">🖥 SPA</a></div>{stage_html}<div class="card" style="padding:0;overflow:auto"><table><thead><tr><th>WBS</th><th>ID</th><th>Задача</th><th>Статус</th><th>Workflow</th><th>Отчёт</th><th>Вердикт</th><th>Док-ва</th></tr></thead><tbody>{trs or "<tr><td colspan=8>нет строк</td></tr>"}</tbody></table></div><p class="muted" style="font-size:12px">explicit · общий header · этап с описанием (EPIC) + карточки · <a href="/api/plan?project={project}">API JSON</a> · <a href="/api/plan/tasks?project={project}">tasks</a> · git-правила: id EPIC-* → этап, ARCH-* → карточки, статусы done/open в заголовках карточек</p>'
     return HTMLResponse(_page_shell(f"{project} · План", project, body))
 
 
