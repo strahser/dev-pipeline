@@ -12,7 +12,7 @@ plan:
   file: ""
 
 runner:
-  model: opencode-go/deepseek-v4-flash
+  model: deepseek-v4-flash
   retries: 2
   question_timeout_sec: 1200
   checkpoint_stages: true
