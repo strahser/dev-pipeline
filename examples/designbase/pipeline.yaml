@@ -1,36 +1,36 @@
-# Конфигурация конвейера для проекта DesignBase (Python, SQLite+FTS5, RAG по ПД ВВ-17).
-# Задачи A-NN ведутся в Tasks\Активные\, отчёты в Tasks\Отчёты\.
+﻿# РљРѕРЅС„РёРіСѓСЂР°С†РёСЏ РєРѕРЅРІРµР№РµСЂР° РґР»СЏ РїСЂРѕРµРєС‚Р° DesignBase (Python, SQLite+FTS5, RAG РїРѕ РџР” Р’Р’-17).
+# Р—Р°РґР°С‡Рё A-NN РІРµРґСѓС‚СЃСЏ РІ Tasks\РђРєС‚РёРІРЅС‹Рµ\, РѕС‚С‡С‘С‚С‹ РІ Tasks\РћС‚С‡С‘С‚С‹\.
 
 project:
   name: designbase
-  root: [D:\Projects\DesignBase, E:\ПлагиныРевит\DesignBase]
+  root: [D:\Projects\DesignBase, E:\РџР»Р°РіРёРЅС‹Р РµРІРёС‚\DesignBase]
   branch: main
 
-# План проекта в ProjectsPalns
+# РџР»Р°РЅ РїСЂРѕРµРєС‚Р° РІ ProjectsPalns
 plan:
-  repo: [D:\Projects\ProjectsPalns, E:\ПлагиныРевит\ProjectsPalns]
+  repo: [D:\Projects\ProjectsPalns, E:\РџР»Р°РіРёРЅС‹Р РµРІРёС‚\ProjectsPalns]
   subdir: DesignBase
   file: 2026-08-29_stage-e2-chat-kb-ingest.md
 
-# Параметры план-раннера
+# РџР°СЂР°РјРµС‚СЂС‹ РїР»Р°РЅ-СЂР°РЅРЅРµСЂР°
 runner:
-  model: opencode-go/deepseek-v4-flash
+  model: opencode/big-pickle
   retries: 2
   question_timeout_sec: 1200
   checkpoint_stages: true
 
 tasks:
-  inbox: Tasks\Входящие
-  active: Tasks\Активные
-  reports: Tasks\Отчёты
-  archive: Tasks\Архив
-  protocol: Tasks\00_Протокол_агентов.md
-  status: Tasks\Статус_конвейера.md
-  conveyor: Tasks\Конвейер
-  notif: Tasks\Конвейер\Уведомления
+  inbox: Tasks\Р’С…РѕРґСЏС‰РёРµ
+  active: Tasks\РђРєС‚РёРІРЅС‹Рµ
+  reports: Tasks\РћС‚С‡С‘С‚С‹
+  archive: Tasks\РђСЂС…РёРІ
+  protocol: Tasks\00_РџСЂРѕС‚РѕРєРѕР»_Р°РіРµРЅС‚РѕРІ.md
+  status: Tasks\РЎС‚Р°С‚СѓСЃ_РєРѕРЅРІРµР№РµСЂР°.md
+  conveyor: Tasks\РљРѕРЅРІРµР№РµСЂ
+  notif: Tasks\РљРѕРЅРІРµР№РµСЂ\РЈРІРµРґРѕРјР»РµРЅРёСЏ
 
 build:
-  # Python-проект: отдельная сборка не нужна (msbuild: none)
+  # Python-РїСЂРѕРµРєС‚: РѕС‚РґРµР»СЊРЅР°СЏ СЃР±РѕСЂРєР° РЅРµ РЅСѓР¶РЅР° (msbuild: none)
   msbuild: none
   sln: ""
   configuration: ""
@@ -46,16 +46,17 @@ tests:
 
 checks:
   - id: A-01
-    label: 'Разделы ПП №87: NULL-документов ≤68'
+    label: 'Р Р°Р·РґРµР»С‹ РџРџ в„–87: NULL-РґРѕРєСѓРјРµРЅС‚РѕРІ в‰¤68'
     kind: grep_dir
     dir: scripts
     pattern: "^PLACEHOLDER_NEVER_MATCHES$"
     expect: 0
 
 layer_rules:
-  - label: 'Core не зависит от API/UI (src/designbase/ingest не импортирует api)'
+  - label: 'Core РЅРµ Р·Р°РІРёСЃРёС‚ РѕС‚ API/UI (src/designbase/ingest РЅРµ РёРјРїРѕСЂС‚РёСЂСѓРµС‚ api)'
     pattern: from\s+designbase\.api|import\s+designbase\.api
     expect: 0
     dirs: [src/designbase/ingest]
 
 audit_dirs: [tests]
+

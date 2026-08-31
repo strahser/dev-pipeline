@@ -1,13 +1,13 @@
-# -*- coding: utf-8 -*-
-"""Загрузка конфигурации проекта (pipeline.yaml) для dev-pipeline.
+﻿# -*- coding: utf-8 -*-
+"""Р—Р°РіСЂСѓР·РєР° РєРѕРЅС„РёРіСѓСЂР°С†РёРё РїСЂРѕРµРєС‚Р° (pipeline.yaml) РґР»СЏ dev-pipeline.
 
-Схема конфига (см. examples\\heatlossrevit2\\pipeline.yaml):
+РЎС…РµРјР° РєРѕРЅС„РёРіР° (СЃРј. examples\\heatlossrevit2\\pipeline.yaml):
     project: { name, root, branch }
     tasks:   { inbox, active, reports, archive, protocol, status, conveyor }
     build:   { msbuild, sln, configuration, platform, extra_args }
     tests:   { runner, vstest, dll, baseline_passed, baseline_total }
-    checks:  список проверок (см. pipeline.checks)
-    layer_rules: список grep-правил слоёв
+    checks:  СЃРїРёСЃРѕРє РїСЂРѕРІРµСЂРѕРє (СЃРј. pipeline.checks)
+    layer_rules: СЃРїРёСЃРѕРє grep-РїСЂР°РІРёР» СЃР»РѕС‘РІ
 """
 from __future__ import annotations
 
@@ -31,61 +31,61 @@ class ProjectConfig:
     root: Path
     branch: str = ""
 
-    # Папки Tasks (относительно root)
-    inbox: str = "Tasks\\Входящие"
-    active: str = "Tasks\\Активные"
-    reports: str = "Tasks\\Отчёты"
-    archive: str = "Tasks\\Архив"
-    protocol: str = "Tasks\\00_Протокол_агентов.md"
-    status: str = "Tasks\\Статус_конвейера.md"
-    conveyor: str = "Tasks\\Конвейер"
-    notif: str = "Tasks\\Конвейер\\Уведомления"
+    # РџР°РїРєРё Tasks (РѕС‚РЅРѕСЃРёС‚РµР»СЊРЅРѕ root)
+    inbox: str = "Tasks\\Р’С…РѕРґСЏС‰РёРµ"
+    active: str = "Tasks\\РђРєС‚РёРІРЅС‹Рµ"
+    reports: str = "Tasks\\РћС‚С‡С‘С‚С‹"
+    archive: str = "Tasks\\РђСЂС…РёРІ"
+    protocol: str = "Tasks\\00_РџСЂРѕС‚РѕРєРѕР»_Р°РіРµРЅС‚РѕРІ.md"
+    status: str = "Tasks\\РЎС‚Р°С‚СѓСЃ_РєРѕРЅРІРµР№РµСЂР°.md"
+    conveyor: str = "Tasks\\РљРѕРЅРІРµР№РµСЂ"
+    notif: str = "Tasks\\РљРѕРЅРІРµР№РµСЂ\\РЈРІРµРґРѕРјР»РµРЅРёСЏ"
 
-    # Сборка
+    # РЎР±РѕСЂРєР°
     msbuild: str = ""
     sln: str = ""
     configuration: str = "Debug"
     platform: str = "Any CPU"
     build_extra: list = field(default_factory=list)
 
-    # Тесты
+    # РўРµСЃС‚С‹
     test_runner: str = "vstest"
     vstest: str = ""
     test_dll: str = ""
-    test_filter: str = ""            # dotnet test --filter (точечный/быстрый набор)
+    test_filter: str = ""            # dotnet test --filter (С‚РѕС‡РµС‡РЅС‹Р№/Р±С‹СЃС‚СЂС‹Р№ РЅР°Р±РѕСЂ)
     baseline_passed: int | None = None
     baseline_total: int | None = None
 
-    # Проверки и правила слоёв (декларативно)
+    # РџСЂРѕРІРµСЂРєРё Рё РїСЂР°РІРёР»Р° СЃР»РѕС‘РІ (РґРµРєР»Р°СЂР°С‚РёРІРЅРѕ)
     checks: list = field(default_factory=list)
     layer_rules: list = field(default_factory=list)
     audit_dirs: list = field(default_factory=lambda: ["Test", "Core.Tests"])
 
-    # План (репозиторий ProjectsPalns): источник карточек для plan_runner
-    plan_repo: list = field(default_factory=list)   # кандидаты корня ProjectsPalns
-    plan_subdir: str = ""                            # <Проект> внутри ProjectsPalns
-    plan_file: str = ""                              # конкретный файл (иначе — новейший _current/*.md)
+    # РџР»Р°РЅ (СЂРµРїРѕР·РёС‚РѕСЂРёР№ ProjectsPalns): РёСЃС‚РѕС‡РЅРёРє РєР°СЂС‚РѕС‡РµРє РґР»СЏ plan_runner
+    plan_repo: list = field(default_factory=list)   # РєР°РЅРґРёРґР°С‚С‹ РєРѕСЂРЅСЏ ProjectsPalns
+    plan_subdir: str = ""                            # <РџСЂРѕРµРєС‚> РІРЅСѓС‚СЂРё ProjectsPalns
+    plan_file: str = ""                              # РєРѕРЅРєСЂРµС‚РЅС‹Р№ С„Р°Р№Р» (РёРЅР°С‡Рµ вЂ” РЅРѕРІРµР№С€РёР№ _current/*.md)
 
-    # План-раннер
-    runner_model: str = "opencode-go/deepseek-v4-flash"
-    runner_retries: int = 2                          # ретраев карточки с логом ошибки
-    question_timeout_sec: int = 1200                 # тишина по вопросу -> работа по допущениям
-    checkpoint_stages: bool = True                   # пауза после закрытия этапа (summary)
-    stage_approver: str = "owner"                    # owner | reviewer — кто одобряет этап
-    checkpoint_remind_sec: int = 600                 # напоминание checkpoint_waiting каждые N сек ожидания
-    semantic_review: bool = False                    # независимая reviewer-фаза после PASS (карточка 4.2)
+    # РџР»Р°РЅ-СЂР°РЅРЅРµСЂ
+    runner_model: str = "opencode/big-pickle"
+    runner_retries: int = 2                          # СЂРµС‚СЂР°РµРІ РєР°СЂС‚РѕС‡РєРё СЃ Р»РѕРіРѕРј РѕС€РёР±РєРё
+    question_timeout_sec: int = 1200                 # С‚РёС€РёРЅР° РїРѕ РІРѕРїСЂРѕСЃСѓ -> СЂР°Р±РѕС‚Р° РїРѕ РґРѕРїСѓС‰РµРЅРёСЏРј
+    checkpoint_stages: bool = True                   # РїР°СѓР·Р° РїРѕСЃР»Рµ Р·Р°РєСЂС‹С‚РёСЏ СЌС‚Р°РїР° (summary)
+    stage_approver: str = "owner"                    # owner | reviewer вЂ” РєС‚Рѕ РѕРґРѕР±СЂСЏРµС‚ СЌС‚Р°Рї
+    checkpoint_remind_sec: int = 600                 # РЅР°РїРѕРјРёРЅР°РЅРёРµ checkpoint_waiting РєР°Р¶РґС‹Рµ N СЃРµРє РѕР¶РёРґР°РЅРёСЏ
+    semantic_review: bool = False                    # РЅРµР·Р°РІРёСЃРёРјР°СЏ reviewer-С„Р°Р·Р° РїРѕСЃР»Рµ PASS (РєР°СЂС‚РѕС‡РєР° 4.2)
 
-    # Crew: автономные сессии проекта (карточка 6.2)
+    # Crew: Р°РІС‚РѕРЅРѕРјРЅС‹Рµ СЃРµСЃСЃРёРё РїСЂРѕРµРєС‚Р° (РєР°СЂС‚РѕС‡РєР° 6.2)
     crew_roles: list = field(default_factory=lambda: ["executor"])
-    crew_model: str = ""                             # пусто = дефолт сервера
-    crew_permissions: str = "write"                  # read | write — профиль opencode
-    restart_max: int = 3                             # перезапусков сессии на порцию
-    restart_cooldown_sec: int = 300                  # пауза между перезапусками
+    crew_model: str = ""                             # РїСѓСЃС‚Рѕ = РґРµС„РѕР»С‚ СЃРµСЂРІРµСЂР°
+    crew_permissions: str = "write"                  # read | write вЂ” РїСЂРѕС„РёР»СЊ opencode
+    restart_max: int = 3                             # РїРµСЂРµР·Р°РїСѓСЃРєРѕРІ СЃРµСЃСЃРёРё РЅР° РїРѕСЂС†РёСЋ
+    restart_cooldown_sec: int = 300                  # РїР°СѓР·Р° РјРµР¶РґСѓ РїРµСЂРµР·Р°РїСѓСЃРєР°РјРё
 
-    # Служебные настройки
+    # РЎР»СѓР¶РµР±РЅС‹Рµ РЅР°СЃС‚СЂРѕР№РєРё
     skip_dirs: list = field(default_factory=lambda: [
         "bin", "obj", ".git", ".idea", ".opencode", "packages",
-        "TestResults", "__pycache__", "Архив",
+        "TestResults", "__pycache__", "РђСЂС…РёРІ",
     ])
 
     def resolve(self, rel: str) -> Path:
@@ -95,15 +95,15 @@ class ProjectConfig:
         return self.resolve(getattr(self, folder_key))
 
     def questions_dir(self) -> Path:
-        """Папка вопросов агентов (grill-фаза): Tasks\\Вопросы."""
-        return self.root / "Tasks" / "Вопросы"
+        """РџР°РїРєР° РІРѕРїСЂРѕСЃРѕРІ Р°РіРµРЅС‚РѕРІ (grill-С„Р°Р·Р°): Tasks\\Р’РѕРїСЂРѕСЃС‹."""
+        return self.root / "Tasks" / "Р’РѕРїСЂРѕСЃС‹"
 
     def conveyor_dir(self) -> Path:
-        return self.root / "Tasks" / "Конвейер"
+        return self.root / "Tasks" / "РљРѕРЅРІРµР№РµСЂ"
 
     def plan_dir(self):
-        """Каталог планов проекта в ProjectsPalns: <repo>\\<subdir|name>\\_current.
-        Возвращает Path или None, если репозиторий планов не найден."""
+        """РљР°С‚Р°Р»РѕРі РїР»Р°РЅРѕРІ РїСЂРѕРµРєС‚Р° РІ ProjectsPalns: <repo>\\<subdir|name>\\_current.
+        Р’РѕР·РІСЂР°С‰Р°РµС‚ Path РёР»Рё None, РµСЃР»Рё СЂРµРїРѕР·РёС‚РѕСЂРёР№ РїР»Р°РЅРѕРІ РЅРµ РЅР°Р№РґРµРЅ."""
         import os
         name = self.plan_subdir or self.name
         candidates = []
@@ -120,7 +120,7 @@ class ProjectConfig:
         return None
 
     def find_plan_file(self):
-        """Актуальный файл плана: явный plan.file или новейший _current/*.md."""
+        """РђРєС‚СѓР°Р»СЊРЅС‹Р№ С„Р°Р№Р» РїР»Р°РЅР°: СЏРІРЅС‹Р№ plan.file РёР»Рё РЅРѕРІРµР№С€РёР№ _current/*.md."""
         d = self.plan_dir()
         if d is None:
             return None
@@ -130,7 +130,7 @@ class ProjectConfig:
         md = sorted(d.glob("*.md"), key=lambda p: -p.stat().st_mtime)
         return md[0] if md else None
 
-    # Короткие помощники для команд сборки/тестов
+    # РљРѕСЂРѕС‚РєРёРµ РїРѕРјРѕС‰РЅРёРєРё РґР»СЏ РєРѕРјР°РЅРґ СЃР±РѕСЂРєРё/С‚РµСЃС‚РѕРІ
     def msbuild_cmd(self) -> list[str]:
         if self.msbuild.lower() == "dotnet":
             args = ["dotnet", "build", str(self.root / self.sln)]
@@ -159,22 +159,22 @@ class ProjectConfig:
             if self.test_filter:
                 args += ["--filter", self.test_filter]
             return args
-        raise ConfigError(f"Неизвестный test_runner: {self.test_runner}")
+        raise ConfigError(f"РќРµРёР·РІРµСЃС‚РЅС‹Р№ test_runner: {self.test_runner}")
 
 
 def _require(d: dict, key: str, where: str):
     if key not in d:
-        raise ConfigError(f"В pipeline.yaml отсутствует секция/поле '{key}' ({where})")
+        raise ConfigError(f"Р’ pipeline.yaml РѕС‚СЃСѓС‚СЃС‚РІСѓРµС‚ СЃРµРєС†РёСЏ/РїРѕР»Рµ '{key}' ({where})")
     return d[key]
 
 
 def _root_candidates(project_name: str, raw_project: dict) -> list[Path]:
-    """Список кандидатов корня проекта (первый существующий будет выбран).
+    """РЎРїРёСЃРѕРє РєР°РЅРґРёРґР°С‚РѕРІ РєРѕСЂРЅСЏ РїСЂРѕРµРєС‚Р° (РїРµСЂРІС‹Р№ СЃСѓС‰РµСЃС‚РІСѓСЋС‰РёР№ Р±СѓРґРµС‚ РІС‹Р±СЂР°РЅ).
 
-    Порядок приоритета:
-      1. Переменная окружения DEV_PIPELINE_PROJECTS_DIR (базовая папка проектов на ПК);
-      2. project.root из YAML — строка ИЛИ список путей (несколько рабочих мест);
-      3. project.roots из YAML (синоним списка).
+    РџРѕСЂСЏРґРѕРє РїСЂРёРѕСЂРёС‚РµС‚Р°:
+      1. РџРµСЂРµРјРµРЅРЅР°СЏ РѕРєСЂСѓР¶РµРЅРёСЏ DEV_PIPELINE_PROJECTS_DIR (Р±Р°Р·РѕРІР°СЏ РїР°РїРєР° РїСЂРѕРµРєС‚РѕРІ РЅР° РџРљ);
+      2. project.root РёР· YAML вЂ” СЃС‚СЂРѕРєР° РР›Р СЃРїРёСЃРѕРє РїСѓС‚РµР№ (РЅРµСЃРєРѕР»СЊРєРѕ СЂР°Р±РѕС‡РёС… РјРµСЃС‚);
+      3. project.roots РёР· YAML (СЃРёРЅРѕРЅРёРј СЃРїРёСЃРєР°).
     """
     candidates: list[Path] = []
 
@@ -195,12 +195,12 @@ def _root_candidates(project_name: str, raw_project: dict) -> list[Path]:
 
 
 def load_config(project_name: str) -> ProjectConfig:
-    """Загрузить examples/<project>/pipeline.yaml."""
+    """Р—Р°РіСЂСѓР·РёС‚СЊ examples/<project>/pipeline.yaml."""
     cfg_path = EXAMPLES_DIR / project_name / "pipeline.yaml"
     if not cfg_path.exists():
         raise ConfigError(
-            f"Конфиг не найден: {cfg_path}. "
-            f"Доступные проекты: {[p.name for p in EXAMPLES_DIR.iterdir() if p.is_dir()]}")
+            f"РљРѕРЅС„РёРі РЅРµ РЅР°Р№РґРµРЅ: {cfg_path}. "
+            f"Р”РѕСЃС‚СѓРїРЅС‹Рµ РїСЂРѕРµРєС‚С‹: {[p.name for p in EXAMPLES_DIR.iterdir() if p.is_dir()]}")
     raw = yaml.safe_load(cfg_path.read_text(encoding="utf-8"))
 
     p = _require(raw, "project", "project")
@@ -222,23 +222,23 @@ def load_config(project_name: str) -> ProjectConfig:
             break
     if root is None:
         raise ConfigError(
-            f"project.root не существует ни в одном из путей ({len(tried)}):\n"
+            f"project.root РЅРµ СЃСѓС‰РµСЃС‚РІСѓРµС‚ РЅРё РІ РѕРґРЅРѕРј РёР· РїСѓС‚РµР№ ({len(tried)}):\n"
             + "\n".join(f"  - {pth}" for pth in tried)
-            + "\nЗадайте DEV_PIPELINE_PROJECTS_DIR (базовая папка проектов) или "
-              "укажите существующий путь в project.root/roots.")
+            + "\nР—Р°РґР°Р№С‚Рµ DEV_PIPELINE_PROJECTS_DIR (Р±Р°Р·РѕРІР°СЏ РїР°РїРєР° РїСЂРѕРµРєС‚РѕРІ) РёР»Рё "
+              "СѓРєР°Р¶РёС‚Рµ СЃСѓС‰РµСЃС‚РІСѓСЋС‰РёР№ РїСѓС‚СЊ РІ project.root/roots.")
 
     return ProjectConfig(
         name=project_name,
         root=root,
         branch=p.get("branch", ""),
-        inbox=t.get("inbox", "Tasks\\Входящие"),
-        active=t.get("active", "Tasks\\Активные"),
-        reports=t.get("reports", "Tasks\\Отчёты"),
-        archive=t.get("archive", "Tasks\\Архив"),
-        protocol=t.get("protocol", "Tasks\\00_Протокол_агентов.md"),
-        status=t.get("status", "Tasks\\Статус_конвейера.md"),
-        conveyor=t.get("conveyor", "Tasks\\Конвейер"),
-        notif=t.get("notif", "Tasks\\Конвейер\\Уведомления"),
+        inbox=t.get("inbox", "Tasks\\Р’С…РѕРґСЏС‰РёРµ"),
+        active=t.get("active", "Tasks\\РђРєС‚РёРІРЅС‹Рµ"),
+        reports=t.get("reports", "Tasks\\РћС‚С‡С‘С‚С‹"),
+        archive=t.get("archive", "Tasks\\РђСЂС…РёРІ"),
+        protocol=t.get("protocol", "Tasks\\00_РџСЂРѕС‚РѕРєРѕР»_Р°РіРµРЅС‚РѕРІ.md"),
+        status=t.get("status", "Tasks\\РЎС‚Р°С‚СѓСЃ_РєРѕРЅРІРµР№РµСЂР°.md"),
+        conveyor=t.get("conveyor", "Tasks\\РљРѕРЅРІРµР№РµСЂ"),
+        notif=t.get("notif", "Tasks\\РљРѕРЅРІРµР№РµСЂ\\РЈРІРµРґРѕРјР»РµРЅРёСЏ"),
         msbuild=_require(b, "msbuild", "build"),
         sln=_require(b, "sln", "build"),
         configuration=b.get("configuration", "Debug"),
@@ -257,7 +257,7 @@ def load_config(project_name: str) -> ProjectConfig:
                                      else (pl.get("repo") or [])) if r],
         plan_subdir=pl.get("subdir", ""),
         plan_file=pl.get("file", ""),
-        runner_model=rn.get("model", "opencode-go/deepseek-v4-flash"),
+        runner_model=rn.get("model", "opencode/big-pickle"),
         runner_retries=int(rn.get("retries", 2)),
         question_timeout_sec=int(rn.get("question_timeout_sec", 1200)),
         checkpoint_stages=bool(rn.get("checkpoint_stages", True)),
@@ -282,21 +282,22 @@ def list_projects() -> list[str]:
 
 
 def check_env() -> None:
-    """Проверить существование путей сборки/тестов из всех конфигов (для diagnostics)."""
+    """РџСЂРѕРІРµСЂРёС‚СЊ СЃСѓС‰РµСЃС‚РІРѕРІР°РЅРёРµ РїСѓС‚РµР№ СЃР±РѕСЂРєРё/С‚РµСЃС‚РѕРІ РёР· РІСЃРµС… РєРѕРЅС„РёРіРѕРІ (РґР»СЏ diagnostics)."""
     for name in list_projects():
         try:
             cfg = load_config(name)
         except ConfigError as e:
-            print(f"  {name}: ОШИБКА {e}")
+            print(f"  {name}: РћРЁРР‘РљРђ {e}")
             continue
         problems = []
         if cfg.msbuild.lower() != "dotnet" and cfg.msbuild and not os.path.exists(cfg.msbuild):
-            problems.append(f"msbuild не найден: {cfg.msbuild}")
+            problems.append(f"msbuild РЅРµ РЅР°Р№РґРµРЅ: {cfg.msbuild}")
         if cfg.vstest and not os.path.exists(cfg.vstest):
-            problems.append(f"vstest не найден: {cfg.vstest}")
+            problems.append(f"vstest РЅРµ РЅР°Р№РґРµРЅ: {cfg.vstest}")
         if cfg.sln and not (cfg.root / cfg.sln).exists():
-            problems.append(f"sln/проект не найден: {cfg.root / cfg.sln}")
+            problems.append(f"sln/РїСЂРѕРµРєС‚ РЅРµ РЅР°Р№РґРµРЅ: {cfg.root / cfg.sln}")
         if problems:
             print(f"  {name}: " + "; ".join(problems))
         else:
-            print(f"  {name}: ок")
+            print(f"  {name}: РѕРє")
+

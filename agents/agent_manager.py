@@ -1,25 +1,25 @@
-# -*- coding: utf-8 -*-
-"""Агент-менеджер (оркестратор): приём миссии/ТЗ -> декомпозиция на подзадачи ->
-запуск субагентов -> мониторинг -> сводка.
+﻿# -*- coding: utf-8 -*-
+"""РђРіРµРЅС‚-РјРµРЅРµРґР¶РµСЂ (РѕСЂРєРµСЃС‚СЂР°С‚РѕСЂ): РїСЂРёС‘Рј РјРёСЃСЃРёРё/РўР— -> РґРµРєРѕРјРїРѕР·РёС†РёСЏ РЅР° РїРѕРґР·Р°РґР°С‡Рё ->
+Р·Р°РїСѓСЃРє СЃСѓР±Р°РіРµРЅС‚РѕРІ -> РјРѕРЅРёС‚РѕСЂРёРЅРі -> СЃРІРѕРґРєР°.
 
-Это «толкающий» слой поверх сервера/файлов: менеджер НЕ исполняет задачи сам,
-а поднимает отдельных агентов-исполнителей в отдельных ЯВНЫХ СЕССИЯХ на сервере
-(каждая сессия = запись /api/sessions + тонкий session_worker.py, который читает
-инструкцию с сервера и отчитывается через сервер; скиллы проекта и протокол
-конвейера — как и раньше).
+Р­С‚Рѕ В«С‚РѕР»РєР°СЋС‰РёР№В» СЃР»РѕР№ РїРѕРІРµСЂС… СЃРµСЂРІРµСЂР°/С„Р°Р№Р»РѕРІ: РјРµРЅРµРґР¶РµСЂ РќР• РёСЃРїРѕР»РЅСЏРµС‚ Р·Р°РґР°С‡Рё СЃР°Рј,
+Р° РїРѕРґРЅРёРјР°РµС‚ РѕС‚РґРµР»СЊРЅС‹С… Р°РіРµРЅС‚РѕРІ-РёСЃРїРѕР»РЅРёС‚РµР»РµР№ РІ РѕС‚РґРµР»СЊРЅС‹С… РЇР’РќР«РҐ РЎР•РЎРЎРРЇРҐ РЅР° СЃРµСЂРІРµСЂРµ
+(РєР°Р¶РґР°СЏ СЃРµСЃСЃРёСЏ = Р·Р°РїРёСЃСЊ /api/sessions + С‚РѕРЅРєРёР№ session_worker.py, РєРѕС‚РѕСЂС‹Р№ С‡РёС‚Р°РµС‚
+РёРЅСЃС‚СЂСѓРєС†РёСЋ СЃ СЃРµСЂРІРµСЂР° Рё РѕС‚С‡РёС‚С‹РІР°РµС‚СЃСЏ С‡РµСЂРµР· СЃРµСЂРІРµСЂ; СЃРєРёР»Р»С‹ РїСЂРѕРµРєС‚Р° Рё РїСЂРѕС‚РѕРєРѕР»
+РєРѕРЅРІРµР№РµСЂР° вЂ” РєР°Рє Рё СЂР°РЅСЊС€Рµ).
 
-Режимы запуска субагента:
-  - явная сессия (по умолчанию): POST /api/sessions + session_worker.py
-    (инструкция/статусы/kill/abort — через сервер);
-  - legacy: сервер недоступен (или --legacy) -> bash-`opencode run` напрямую;
-  - parallel (по умолчанию): N субагентов одновременно;
-  - sequential: по одному (полезно при общих файлах/сборке);
-  - demo: без реального opencode (генерирует заглушечный отчёт для проверки цикла).
+Р РµР¶РёРјС‹ Р·Р°РїСѓСЃРєР° СЃСѓР±Р°РіРµРЅС‚Р°:
+  - СЏРІРЅР°СЏ СЃРµСЃСЃРёСЏ (РїРѕ СѓРјРѕР»С‡Р°РЅРёСЋ): POST /api/sessions + session_worker.py
+    (РёРЅСЃС‚СЂСѓРєС†РёСЏ/СЃС‚Р°С‚СѓСЃС‹/kill/abort вЂ” С‡РµСЂРµР· СЃРµСЂРІРµСЂ);
+  - legacy: СЃРµСЂРІРµСЂ РЅРµРґРѕСЃС‚СѓРїРµРЅ (РёР»Рё --legacy) -> bash-`opencode run` РЅР°РїСЂСЏРјСѓСЋ;
+  - parallel (РїРѕ СѓРјРѕР»С‡Р°РЅРёСЋ): N СЃСѓР±Р°РіРµРЅС‚РѕРІ РѕРґРЅРѕРІСЂРµРјРµРЅРЅРѕ;
+  - sequential: РїРѕ РѕРґРЅРѕРјСѓ (РїРѕР»РµР·РЅРѕ РїСЂРё РѕР±С‰РёС… С„Р°Р№Р»Р°С…/СЃР±РѕСЂРєРµ);
+  - demo: Р±РµР· СЂРµР°Р»СЊРЅРѕРіРѕ opencode (РіРµРЅРµСЂРёСЂСѓРµС‚ Р·Р°РіР»СѓС€РµС‡РЅС‹Р№ РѕС‚С‡С‘С‚ РґР»СЏ РїСЂРѕРІРµСЂРєРё С†РёРєР»Р°).
 
-Запуск:
-  python -m agents.agent_manager --project meptaggingsolution --mission <ТЗ.md> [--split 3]
+Р—Р°РїСѓСЃРє:
+  python -m agents.agent_manager --project meptaggingsolution --mission <РўР—.md> [--split 3]
   python -m agents.agent_manager --project meptaggingsolution --task A-01 --subagent
-  python -m agents.agent_manager --project meptaggingsolution --mission <ТЗ.md> --demo
+  python -m agents.agent_manager --project meptaggingsolution --mission <РўР—.md> --demo
 """
 from __future__ import annotations
 
@@ -44,10 +44,10 @@ import argparse as _ap                           # noqa: E402
 
 
 def _opencode_cmd() -> str:
-    """Путь к opencode: env OPENCODE_CMD, затем прямой exe из npm global
-    (запуск через opencode.cmd упирается в лимит cmd 8191 символов —
-    «Слишком длинная командная строка» на длинных промптах; инцидент 2.1
-    2026-08-24), затем PATH."""
+    """РџСѓС‚СЊ Рє opencode: env OPENCODE_CMD, Р·Р°С‚РµРј РїСЂСЏРјРѕР№ exe РёР· npm global
+    (Р·Р°РїСѓСЃРє С‡РµСЂРµР· opencode.cmd СѓРїРёСЂР°РµС‚СЃСЏ РІ Р»РёРјРёС‚ cmd 8191 СЃРёРјРІРѕР»РѕРІ вЂ”
+    В«РЎР»РёС€РєРѕРј РґР»РёРЅРЅР°СЏ РєРѕРјР°РЅРґРЅР°СЏ СЃС‚СЂРѕРєР°В» РЅР° РґР»РёРЅРЅС‹С… РїСЂРѕРјРїС‚Р°С…; РёРЅС†РёРґРµРЅС‚ 2.1
+    2026-08-24), Р·Р°С‚РµРј PATH."""
     env = os.environ.get("OPENCODE_CMD")
     if env and os.path.exists(env):
         return env
@@ -65,16 +65,16 @@ def _opencode_cmd() -> str:
 
 
 OPENCODE = _opencode_cmd()
-DEFAULT_MODEL = "opencode-go/deepseek-v4-flash"  # стабильная модель (2x usage); flash-free глючит на длинных промптах
-# Анти-зависание: субагент без результата > N с убивается. Настраивается env
-# SUBAGENT_TIMEOUT_SEC (раннер тяжёлых карточек поднимает до 3600 — U2.1 2026-08-23).
+DEFAULT_MODEL = "opencode/big-pickle"  # СЃС‚Р°Р±РёР»СЊРЅР°СЏ РјРѕРґРµР»СЊ (2x usage); flash-free РіР»СЋС‡РёС‚ РЅР° РґР»РёРЅРЅС‹С… РїСЂРѕРјРїС‚Р°С…
+# РђРЅС‚Рё-Р·Р°РІРёСЃР°РЅРёРµ: СЃСѓР±Р°РіРµРЅС‚ Р±РµР· СЂРµР·СѓР»СЊС‚Р°С‚Р° > N СЃ СѓР±РёРІР°РµС‚СЃСЏ. РќР°СЃС‚СЂР°РёРІР°РµС‚СЃСЏ env
+# SUBAGENT_TIMEOUT_SEC (СЂР°РЅРЅРµСЂ С‚СЏР¶С‘Р»С‹С… РєР°СЂС‚РѕС‡РµРє РїРѕРґРЅРёРјР°РµС‚ РґРѕ 3600 вЂ” U2.1 2026-08-23).
 SUBAGENT_TIMEOUT = int(os.environ.get("SUBAGENT_TIMEOUT_SEC", "1800"))
 SERVER_URL = "http://127.0.0.1:8787"
-DEV_PIPELINE_DIR = Path(__file__).resolve().parent.parent  # корень dev-pipeline (не хардкод E:\)
+DEV_PIPELINE_DIR = Path(__file__).resolve().parent.parent  # РєРѕСЂРµРЅСЊ dev-pipeline (РЅРµ С…Р°СЂРґРєРѕРґ E:\)
 
 
 def _pid_alive(pid: int) -> bool:
-    """Жив ли процесс (Windows: tasklist; иначе os.kill(pid, 0))."""
+    """Р–РёРІ Р»Рё РїСЂРѕС†РµСЃСЃ (Windows: tasklist; РёРЅР°С‡Рµ os.kill(pid, 0))."""
     if os.name == "nt":
         try:
             out = subprocess.run(["tasklist", "/FI", f"PID eq {pid}", "/NH"],
@@ -91,10 +91,10 @@ def _pid_alive(pid: int) -> bool:
 
 
 def _kill_tree(pid: int) -> None:
-    """Убить процесс и всё его дерево (Windows: taskkill /F /T; иначе SIGKILL).
+    """РЈР±РёС‚СЊ РїСЂРѕС†РµСЃСЃ Рё РІСЃС‘ РµРіРѕ РґРµСЂРµРІРѕ (Windows: taskkill /F /T; РёРЅР°С‡Рµ SIGKILL).
 
-    opencode.cmd порождает node.exe — без /T умирает только обёртка cmd,
-    а node-процесс остаётся сиротой и висит (случай A-12, ~1 ГБ памяти)."""
+    opencode.cmd РїРѕСЂРѕР¶РґР°РµС‚ node.exe вЂ” Р±РµР· /T СѓРјРёСЂР°РµС‚ С‚РѕР»СЊРєРѕ РѕР±С‘СЂС‚РєР° cmd,
+    Р° node-РїСЂРѕС†РµСЃСЃ РѕСЃС‚Р°С‘С‚СЃСЏ СЃРёСЂРѕС‚РѕР№ Рё РІРёСЃРёС‚ (СЃР»СѓС‡Р°Р№ A-12, ~1 Р“Р‘ РїР°РјСЏС‚Рё)."""
     if os.name == "nt":
         try:
             subprocess.run(["taskkill", "/F", "/T", "/PID", str(pid)],
@@ -109,7 +109,7 @@ def _kill_tree(pid: int) -> None:
         pass
 
 def _publish(cfg, client, type_: str, task_id: str, payload: dict | None = None):
-    """Опубликовать событие в сервер координации (опционально; молча при недоступности)."""
+    """РћРїСѓР±Р»РёРєРѕРІР°С‚СЊ СЃРѕР±С‹С‚РёРµ РІ СЃРµСЂРІРµСЂ РєРѕРѕСЂРґРёРЅР°С†РёРё (РѕРїС†РёРѕРЅР°Р»СЊРЅРѕ; РјРѕР»С‡Р° РїСЂРё РЅРµРґРѕСЃС‚СѓРїРЅРѕСЃС‚Рё)."""
     if client is None:
         return
     try:
@@ -119,44 +119,44 @@ def _publish(cfg, client, type_: str, task_id: str, payload: dict | None = None)
 
 
 def _hb(client, name: str):
-    """Отметить агента online на сервере (heartbeat) — чтобы панель показывала «работает»."""
+    """РћС‚РјРµС‚РёС‚СЊ Р°РіРµРЅС‚Р° online РЅР° СЃРµСЂРІРµСЂРµ (heartbeat) вЂ” С‡С‚РѕР±С‹ РїР°РЅРµР»СЊ РїРѕРєР°Р·С‹РІР°Р»Р° В«СЂР°Р±РѕС‚Р°РµС‚В»."""
     if client is None:
         return
     try:
         client._request("POST", "/heartbeat", body={"agent": name}, timeout=3.0)
     except Exception:
         pass
-SUBPROMPT = """ТЕБЕ ВЫДАНА КОНКРЕТНАЯ ЗАДАЧА: {task_file}
+SUBPROMPT = """РўР•Р‘Р• Р’Р«Р”РђРќРђ РљРћРќРљР Р•РўРќРђРЇ Р—РђР”РђР§Рђ: {task_file}
 
-НЕ задавай вопросов, НЕ спрашивай «какую задачу выполнять», НЕ ищи задачи в Tasks\\Активные —
-начинай работу немедленно с шага 0.
+РќР• Р·Р°РґР°РІР°Р№ РІРѕРїСЂРѕСЃРѕРІ, РќР• СЃРїСЂР°С€РёРІР°Р№ В«РєР°РєСѓСЋ Р·Р°РґР°С‡Сѓ РІС‹РїРѕР»РЅСЏС‚СЊВ», РќР• РёС‰Рё Р·Р°РґР°С‡Рё РІ Tasks\\РђРєС‚РёРІРЅС‹Рµ вЂ”
+РЅР°С‡РёРЅР°Р№ СЂР°Р±РѕС‚Сѓ РЅРµРјРµРґР»РµРЅРЅРѕ СЃ С€Р°РіР° 0.
 
-ПОРЯДОК РАБОТЫ (строго):
-1. Прочитай {task_file} (контекст, требования, границы).
-2. СРАЗУ применяй изменения в проекте: edit/write файлов. Не пиши план, не описывай намерения — редактируй.
-3. После правок запусти сборку: dotnet build Core.Tests/Core.Tests.csproj --nologo -v q  (cwd = корень проекта). Убедись EXIT 0.
-4. Запусти тесты: dotnet test Core.Tests/Core.Tests.csproj --nologo -v q. Убедись, что не хуже базового состояния
-   (baseline в pipeline.yaml проекта; до правок обычно 8/15 — укажи фактическое в отчёте).
-5. Создай отчёт ПО-РУССКИ в {report}: секции «Что было не так», «Что сделано» (пути файлов),
-   «Доказательства» (выводы сборки/тестов), «Числа до/после», «Открытые вопросы», «Как пересобрать/проверить».
-6. В шапке задачи {task_file} замени 'статус: in_progress' на 'статус: done_report'.
-7. Коммит: git add -A; git commit -m "agent/{task_id}: отчёт исполнителя".
+РџРћР РЇР”РћРљ Р РђР‘РћРўР« (СЃС‚СЂРѕРіРѕ):
+1. РџСЂРѕС‡РёС‚Р°Р№ {task_file} (РєРѕРЅС‚РµРєСЃС‚, С‚СЂРµР±РѕРІР°РЅРёСЏ, РіСЂР°РЅРёС†С‹).
+2. РЎР РђР—РЈ РїСЂРёРјРµРЅСЏР№ РёР·РјРµРЅРµРЅРёСЏ РІ РїСЂРѕРµРєС‚Рµ: edit/write С„Р°Р№Р»РѕРІ. РќРµ РїРёС€Рё РїР»Р°РЅ, РЅРµ РѕРїРёСЃС‹РІР°Р№ РЅР°РјРµСЂРµРЅРёСЏ вЂ” СЂРµРґР°РєС‚РёСЂСѓР№.
+3. РџРѕСЃР»Рµ РїСЂР°РІРѕРє Р·Р°РїСѓСЃС‚Рё СЃР±РѕСЂРєСѓ: dotnet build Core.Tests/Core.Tests.csproj --nologo -v q  (cwd = РєРѕСЂРµРЅСЊ РїСЂРѕРµРєС‚Р°). РЈР±РµРґРёСЃСЊ EXIT 0.
+4. Р—Р°РїСѓСЃС‚Рё С‚РµСЃС‚С‹: dotnet test Core.Tests/Core.Tests.csproj --nologo -v q. РЈР±РµРґРёСЃСЊ, С‡С‚Рѕ РЅРµ С…СѓР¶Рµ Р±Р°Р·РѕРІРѕРіРѕ СЃРѕСЃС‚РѕСЏРЅРёСЏ
+   (baseline РІ pipeline.yaml РїСЂРѕРµРєС‚Р°; РґРѕ РїСЂР°РІРѕРє РѕР±С‹С‡РЅРѕ 8/15 вЂ” СѓРєР°Р¶Рё С„Р°РєС‚РёС‡РµСЃРєРѕРµ РІ РѕС‚С‡С‘С‚Рµ).
+5. РЎРѕР·РґР°Р№ РѕС‚С‡С‘С‚ РџРћ-Р РЈРЎРЎРљР РІ {report}: СЃРµРєС†РёРё В«Р§С‚Рѕ Р±С‹Р»Рѕ РЅРµ С‚Р°РєВ», В«Р§С‚Рѕ СЃРґРµР»Р°РЅРѕВ» (РїСѓС‚Рё С„Р°Р№Р»РѕРІ),
+   В«Р”РѕРєР°Р·Р°С‚РµР»СЊСЃС‚РІР°В» (РІС‹РІРѕРґС‹ СЃР±РѕСЂРєРё/С‚РµСЃС‚РѕРІ), В«Р§РёСЃР»Р° РґРѕ/РїРѕСЃР»РµВ», В«РћС‚РєСЂС‹С‚С‹Рµ РІРѕРїСЂРѕСЃС‹В», В«РљР°Рє РїРµСЂРµСЃРѕР±СЂР°С‚СЊ/РїСЂРѕРІРµСЂРёС‚СЊВ».
+6. Р’ С€Р°РїРєРµ Р·Р°РґР°С‡Рё {task_file} Р·Р°РјРµРЅРё 'СЃС‚Р°С‚СѓСЃ: in_progress' РЅР° 'СЃС‚Р°С‚СѓСЃ: done_report'.
+7. РљРѕРјРјРёС‚: git add -A; git commit -m "agent/{task_id}: РѕС‚С‡С‘С‚ РёСЃРїРѕР»РЅРёС‚РµР»СЏ".
 
-Правила:
-- Временные файлы (логи тестов и т.п.) пиши В ПРОЕКТ (папка Tasks\\Конвейер\\logs\\), НЕ в %TEMP% —
-  доступ к Temp может быть ограничен. Если запускаешь команду с редиректом в файл — используй
-  путь внутри проекта.
-- Не выдумывай выводы (сборка/тесты — реальные); не трогай файлы вне задачи.
-- Не создавай субагентов; не закрывай задачу.
-- ОТЧЁТНЫЙ ФАЙЛ {report} — ПОСЛЕДНИЙ ШАГ И ОБЯЗАТЕЛЕН. Не завершай сессию, пока файл {report}
-  не создан и не содержит все секции. Проверь в конце, что файл существует (Test-Path).
-- Если что-то не получается — пиши честно blocked/NEED_DATA в отчёте, но сначала сделай максимум изменений.
+РџСЂР°РІРёР»Р°:
+- Р’СЂРµРјРµРЅРЅС‹Рµ С„Р°Р№Р»С‹ (Р»РѕРіРё С‚РµСЃС‚РѕРІ Рё С‚.Рї.) РїРёС€Рё Р’ РџР РћР•РљРў (РїР°РїРєР° Tasks\\РљРѕРЅРІРµР№РµСЂ\\logs\\), РќР• РІ %TEMP% вЂ”
+  РґРѕСЃС‚СѓРї Рє Temp РјРѕР¶РµС‚ Р±С‹С‚СЊ РѕРіСЂР°РЅРёС‡РµРЅ. Р•СЃР»Рё Р·Р°РїСѓСЃРєР°РµС€СЊ РєРѕРјР°РЅРґСѓ СЃ СЂРµРґРёСЂРµРєС‚РѕРј РІ С„Р°Р№Р» вЂ” РёСЃРїРѕР»СЊР·СѓР№
+  РїСѓС‚СЊ РІРЅСѓС‚СЂРё РїСЂРѕРµРєС‚Р°.
+- РќРµ РІС‹РґСѓРјС‹РІР°Р№ РІС‹РІРѕРґС‹ (СЃР±РѕСЂРєР°/С‚РµСЃС‚С‹ вЂ” СЂРµР°Р»СЊРЅС‹Рµ); РЅРµ С‚СЂРѕРіР°Р№ С„Р°Р№Р»С‹ РІРЅРµ Р·Р°РґР°С‡Рё.
+- РќРµ СЃРѕР·РґР°РІР°Р№ СЃСѓР±Р°РіРµРЅС‚РѕРІ; РЅРµ Р·Р°РєСЂС‹РІР°Р№ Р·Р°РґР°С‡Сѓ.
+- РћРўР§РЃРўРќР«Р™ Р¤РђР™Р› {report} вЂ” РџРћРЎР›Р•Р”РќРР™ РЁРђР“ Р РћР‘РЇР—РђРўР•Р›Р•Рќ. РќРµ Р·Р°РІРµСЂС€Р°Р№ СЃРµСЃСЃРёСЋ, РїРѕРєР° С„Р°Р№Р» {report}
+  РЅРµ СЃРѕР·РґР°РЅ Рё РЅРµ СЃРѕРґРµСЂР¶РёС‚ РІСЃРµ СЃРµРєС†РёРё. РџСЂРѕРІРµСЂСЊ РІ РєРѕРЅС†Рµ, С‡С‚Рѕ С„Р°Р№Р» СЃСѓС‰РµСЃС‚РІСѓРµС‚ (Test-Path).
+- Р•СЃР»Рё С‡С‚Рѕ-С‚Рѕ РЅРµ РїРѕР»СѓС‡Р°РµС‚СЃСЏ вЂ” РїРёС€Рё С‡РµСЃС‚РЅРѕ blocked/NEED_DATA РІ РѕС‚С‡С‘С‚Рµ, РЅРѕ СЃРЅР°С‡Р°Р»Р° СЃРґРµР»Р°Р№ РјР°РєСЃРёРјСѓРј РёР·РјРµРЅРµРЅРёР№.
 """
 
 
 def slug(title: str) -> str:
-    s = re.sub(r"[^\wа-яА-ЯёЁ\- ]", "", title).strip().replace(" ", "_")
-    return s[:60] or "задача"
+    s = re.sub(r"[^\wР°-СЏРђ-РЇС‘РЃ\- ]", "", title).strip().replace(" ", "_")
+    return s[:60] or "Р·Р°РґР°С‡Р°"
 
 
 def next_task_id(cfg) -> str:
@@ -169,16 +169,16 @@ def next_task_id(cfg) -> str:
 
 
 def split_mission(text: str, n: int) -> list[str]:
-    """Разбить текст ТЗ на n подзадач по заголовкам '## ' (или по абзацам)."""
+    """Р Р°Р·Р±РёС‚СЊ С‚РµРєСЃС‚ РўР— РЅР° n РїРѕРґР·Р°РґР°С‡ РїРѕ Р·Р°РіРѕР»РѕРІРєР°Рј '## ' (РёР»Рё РїРѕ Р°Р±Р·Р°С†Р°Рј)."""
     parts = re.split(r"(?m)^(?=##\s)", text)
     parts = [p.strip() for p in parts if p.strip()]
     if len(parts) < n:
-        # мало секций — режем по абзацам
+        # РјР°Р»Рѕ СЃРµРєС†РёР№ вЂ” СЂРµР¶РµРј РїРѕ Р°Р±Р·Р°С†Р°Рј
         paras = [p.strip() for p in text.split("\n\n") if p.strip()]
         parts = paras
     if len(parts) <= n:
         return parts
-    # равномерно сливаем в n кусков
+    # СЂР°РІРЅРѕРјРµСЂРЅРѕ СЃР»РёРІР°РµРј РІ n РєСѓСЃРєРѕРІ
     base = len(parts) // n
     rem = len(parts) % n
     chunks = []
@@ -191,74 +191,74 @@ def split_mission(text: str, n: int) -> list[str]:
 
 
 def dispatch_chunk(cfg, chunk: str, idx: int, total: int, title: str) -> str:
-    """Создать задачу A-NN в Активные из куска миссии. Возвращает id."""
+    """РЎРѕР·РґР°С‚СЊ Р·Р°РґР°С‡Сѓ A-NN РІ РђРєС‚РёРІРЅС‹Рµ РёР· РєСѓСЃРєР° РјРёСЃСЃРёРё. Р’РѕР·РІСЂР°С‰Р°РµС‚ id."""
     tid = next_task_id(cfg)
     task_file = f"{tid}_{slug(title)}.md"
     dst = cfg.abs_tasks_dir("active") / task_file
     body = chunk.strip()[:4000]
     content = f"""---
 id: {tid}
-приоритет: высокий
-статус: open
-постановщик: агент-менеджер
-исполнитель: subagent
-дата: {now()}
-источник_запроса: миссия (часть {idx}/{total})
-замечание: миссия {title}
+РїСЂРёРѕСЂРёС‚РµС‚: РІС‹СЃРѕРєРёР№
+СЃС‚Р°С‚СѓСЃ: open
+РїРѕСЃС‚Р°РЅРѕРІС‰РёРє: Р°РіРµРЅС‚-РјРµРЅРµРґР¶РµСЂ
+РёСЃРїРѕР»РЅРёС‚РµР»СЊ: subagent
+РґР°С‚Р°: {now()}
+РёСЃС‚РѕС‡РЅРёРє_Р·Р°РїСЂРѕСЃР°: РјРёСЃСЃРёСЏ (С‡Р°СЃС‚СЊ {idx}/{total})
+Р·Р°РјРµС‡Р°РЅРёРµ: РјРёСЃСЃРёСЏ {title}
 ---
 
-# ЗАДАЧА: {title} (часть {idx} из {total})
+# Р—РђР”РђР§Рђ: {title} (С‡Р°СЃС‚СЊ {idx} РёР· {total})
 
-## Контекст (зачем, что уже известно)
+## РљРѕРЅС‚РµРєСЃС‚ (Р·Р°С‡РµРј, С‡С‚Рѕ СѓР¶Рµ РёР·РІРµСЃС‚РЅРѕ)
 {body}
 
-## Требования (критерии приёмки)
-Выполнить часть миссии из контекста. Каждое «сделано» — с доказательством
-(лог сборки/тестов/grep, пути файлов, коммиты agent/{tid}).
+## РўСЂРµР±РѕРІР°РЅРёСЏ (РєСЂРёС‚РµСЂРёРё РїСЂРёС‘РјРєРё)
+Р’С‹РїРѕР»РЅРёС‚СЊ С‡Р°СЃС‚СЊ РјРёСЃСЃРёРё РёР· РєРѕРЅС‚РµРєСЃС‚Р°. РљР°Р¶РґРѕРµ В«СЃРґРµР»Р°РЅРѕВ» вЂ” СЃ РґРѕРєР°Р·Р°С‚РµР»СЊСЃС‚РІРѕРј
+(Р»РѕРі СЃР±РѕСЂРєРё/С‚РµСЃС‚РѕРІ/grep, РїСѓС‚Рё С„Р°Р№Р»РѕРІ, РєРѕРјРјРёС‚С‹ agent/{tid}).
 
-## Границы (что НЕ делать)
-- Не менять архитектуру сверх задачи; не трогать файлы вне своей части.
-- Не коммитить: .idea\\, .opencode\\, bin\\obj, TestResults\\.
-- Не создавать субагентов; задачу самому не закрывать (Архив — только контролёр).
+## Р“СЂР°РЅРёС†С‹ (С‡С‚Рѕ РќР• РґРµР»Р°С‚СЊ)
+- РќРµ РјРµРЅСЏС‚СЊ Р°СЂС…РёС‚РµРєС‚СѓСЂСѓ СЃРІРµСЂС… Р·Р°РґР°С‡Рё; РЅРµ С‚СЂРѕРіР°С‚СЊ С„Р°Р№Р»С‹ РІРЅРµ СЃРІРѕРµР№ С‡Р°СЃС‚Рё.
+- РќРµ РєРѕРјРјРёС‚РёС‚СЊ: .idea\\, .opencode\\, bin\\obj, TestResults\\.
+- РќРµ СЃРѕР·РґР°РІР°С‚СЊ СЃСѓР±Р°РіРµРЅС‚РѕРІ; Р·Р°РґР°С‡Сѓ СЃР°РјРѕРјСѓ РЅРµ Р·Р°РєСЂС‹РІР°С‚СЊ (РђСЂС…РёРІ вЂ” С‚РѕР»СЊРєРѕ РєРѕРЅС‚СЂРѕР»С‘СЂ).
 
-## Результат (куда положить артефакты)
-Отчёт — Tasks\\Отчёты\\{tid}_Отчёт_<дата>.md по шаблону протокола;
-коммит agent/{tid}.
+## Р РµР·СѓР»СЊС‚Р°С‚ (РєСѓРґР° РїРѕР»РѕР¶РёС‚СЊ Р°СЂС‚РµС„Р°РєС‚С‹)
+РћС‚С‡С‘С‚ вЂ” Tasks\\РћС‚С‡С‘С‚С‹\\{tid}_РћС‚С‡С‘С‚_<РґР°С‚Р°>.md РїРѕ С€Р°Р±Р»РѕРЅСѓ РїСЂРѕС‚РѕРєРѕР»Р°;
+РєРѕРјРјРёС‚ agent/{tid}.
 
-## Ход работы (заполняет исполнитель)
-- (задача выдана {now()})
+## РҐРѕРґ СЂР°Р±РѕС‚С‹ (Р·Р°РїРѕР»РЅСЏРµС‚ РёСЃРїРѕР»РЅРёС‚РµР»СЊ)
+- (Р·Р°РґР°С‡Р° РІС‹РґР°РЅР° {now()})
 """
     dst.write_text(content, encoding="utf-8")
-    print(f"  [manager] задача {tid}: {task_file}")
+    print(f"  [manager] Р·Р°РґР°С‡Р° {tid}: {task_file}")
     return tid
 
 
 def subagent_env(cfg):
-    """Строки окружения, которые субагент обязан прочитать."""
+    """РЎС‚СЂРѕРєРё РѕРєСЂСѓР¶РµРЅРёСЏ, РєРѕС‚РѕСЂС‹Рµ СЃСѓР±Р°РіРµРЅС‚ РѕР±СЏР·Р°РЅ РїСЂРѕС‡РёС‚Р°С‚СЊ."""
     return (
         f"task_file={cfg.abs_tasks_dir('active')}",
         f"protocol={cfg.resolve(cfg.protocol)}",
-        f"controller_prompt={cfg.root / 'Tasks' / '00_Контролёр_промпт' / 'ControlerPromptv1.txt'}",
-        f"executor_instr={cfg.root / 'Tasks' / 'Конвейер' / 'ИНСТРУКЦИЯ_исполнителю.md'}",
+        f"controller_prompt={cfg.root / 'Tasks' / '00_РљРѕРЅС‚СЂРѕР»С‘СЂ_РїСЂРѕРјРїС‚' / 'ControlerPromptv1.txt'}",
+        f"executor_instr={cfg.root / 'Tasks' / 'РљРѕРЅРІРµР№РµСЂ' / 'РРќРЎРўР РЈРљР¦РРЇ_РёСЃРїРѕР»РЅРёС‚РµР»СЋ.md'}",
     )
 
 
 def _build_subprompt(cfg, task_id: str, task_file: Path, report_path: Path,
                      skill: str = "", worker: str = "",
                      prompt_override: str = "") -> str:
-    """Собрать промпт субагента (общий для legacy и сессионного режима).
+    """РЎРѕР±СЂР°С‚СЊ РїСЂРѕРјРїС‚ СЃСѓР±Р°РіРµРЅС‚Р° (РѕР±С‰РёР№ РґР»СЏ legacy Рё СЃРµСЃСЃРёРѕРЅРЅРѕРіРѕ СЂРµР¶РёРјР°).
 
-    prompt_override — полная замена базового SUBPROMPT (используется план-раннером)."""
-    skill_line = (f"Загрузи скилл '{skill}' ({DEV_PIPELINE_DIR / 'skills' / skill / 'SKILL.md'}) "
-                  f"для ролевых правил.\n"
-                  f"ВАЖНО: твоя задача УЖЕ ВЫДАНА и прикреплена вложением: {task_file}. "
-                  f"НЕ жди указаний, НЕ спрашивай 'какую задачу выполнять' и НЕ открывай "
-                  f"Tasks\\Активные в поисках других задач — сразу приступай к шагам из промпта.\n"
+    prompt_override вЂ” РїРѕР»РЅР°СЏ Р·Р°РјРµРЅР° Р±Р°Р·РѕРІРѕРіРѕ SUBPROMPT (РёСЃРїРѕР»СЊР·СѓРµС‚СЃСЏ РїР»Р°РЅ-СЂР°РЅРЅРµСЂРѕРј)."""
+    skill_line = (f"Р—Р°РіСЂСѓР·Рё СЃРєРёР»Р» '{skill}' ({DEV_PIPELINE_DIR / 'skills' / skill / 'SKILL.md'}) "
+                  f"РґР»СЏ СЂРѕР»РµРІС‹С… РїСЂР°РІРёР».\n"
+                  f"Р’РђР–РќРћ: С‚РІРѕСЏ Р·Р°РґР°С‡Р° РЈР–Р• Р’Р«Р”РђРќРђ Рё РїСЂРёРєСЂРµРїР»РµРЅР° РІР»РѕР¶РµРЅРёРµРј: {task_file}. "
+                  f"РќР• Р¶РґРё СѓРєР°Р·Р°РЅРёР№, РќР• СЃРїСЂР°С€РёРІР°Р№ 'РєР°РєСѓСЋ Р·Р°РґР°С‡Сѓ РІС‹РїРѕР»РЅСЏС‚СЊ' Рё РќР• РѕС‚РєСЂС‹РІР°Р№ "
+                  f"Tasks\\РђРєС‚РёРІРЅС‹Рµ РІ РїРѕРёСЃРєР°С… РґСЂСѓРіРёС… Р·Р°РґР°С‡ вЂ” СЃСЂР°Р·Сѓ РїСЂРёСЃС‚СѓРїР°Р№ Рє С€Р°РіР°Рј РёР· РїСЂРѕРјРїС‚Р°.\n"
                   if skill else "") + ""
 
     if prompt_override:
-        # Безопасное форматирование: неизвестные/лишние {placeholder} в тексте
-        # карточки (например, /buildings/{id}) не должны ронять раннер KeyError'ом.
+        # Р‘РµР·РѕРїР°СЃРЅРѕРµ С„РѕСЂРјР°С‚РёСЂРѕРІР°РЅРёРµ: РЅРµРёР·РІРµСЃС‚РЅС‹Рµ/Р»РёС€РЅРёРµ {placeholder} РІ С‚РµРєСЃС‚Рµ
+        # РєР°СЂС‚РѕС‡РєРё (РЅР°РїСЂРёРјРµСЂ, /buildings/{id}) РЅРµ РґРѕР»Р¶РЅС‹ СЂРѕРЅСЏС‚СЊ СЂР°РЅРЅРµСЂ KeyError'РѕРј.
         class _SafeDict(dict):
             def __missing__(self, key):
                 return "{" + key + "}"
@@ -271,19 +271,19 @@ def _build_subprompt(cfg, task_id: str, task_file: Path, report_path: Path,
                           project=cfg.name)
             )
         except Exception:
-            # Хвосты ошибок субагента содержат произвольные '{ ... }'
-            # (PowerShell-однострочники и т.п.) — атрибутный доступ вида
-            # {$_ .Path} роняет format_map AttributeError'ом и убивает
-            # раннер между попытками (инцидент U1.3 2026-08-23). Все
-            # рабочие плейсхолдеры к этому моменту уже подставлены
-            # план-раннером через str.replace — используем текст как есть.
+            # РҐРІРѕСЃС‚С‹ РѕС€РёР±РѕРє СЃСѓР±Р°РіРµРЅС‚Р° СЃРѕРґРµСЂР¶Р°С‚ РїСЂРѕРёР·РІРѕР»СЊРЅС‹Рµ '{ ... }'
+            # (PowerShell-РѕРґРЅРѕСЃС‚СЂРѕС‡РЅРёРєРё Рё С‚.Рї.) вЂ” Р°С‚СЂРёР±СѓС‚РЅС‹Р№ РґРѕСЃС‚СѓРї РІРёРґР°
+            # {$_ .Path} СЂРѕРЅСЏРµС‚ format_map AttributeError'РѕРј Рё СѓР±РёРІР°РµС‚
+            # СЂР°РЅРЅРµСЂ РјРµР¶РґСѓ РїРѕРїС‹С‚РєР°РјРё (РёРЅС†РёРґРµРЅС‚ U1.3 2026-08-23). Р’СЃРµ
+            # СЂР°Р±РѕС‡РёРµ РїР»РµР№СЃС…РѕР»РґРµСЂС‹ Рє СЌС‚РѕРјСѓ РјРѕРјРµРЅС‚Сѓ СѓР¶Рµ РїРѕРґСЃС‚Р°РІР»РµРЅС‹
+            # РїР»Р°РЅ-СЂР°РЅРЅРµСЂРѕРј С‡РµСЂРµР· str.replace вЂ” РёСЃРїРѕР»СЊР·СѓРµРј С‚РµРєСЃС‚ РєР°Рє РµСЃС‚СЊ.
             prompt = prompt_override
     else:
         prompt = SUBPROMPT.format(
             task_file=task_file,
             protocol=cfg.resolve(cfg.protocol),
-            controller_prompt=str(cfg.root / "Tasks" / "00_Контролёр_промпт" / "ControlerPromptv1.txt"),
-            executor_instr=str(cfg.root / "Tasks" / "Конвейер" / "ИНСТРУКЦИЯ_исполнителю.md"),
+            controller_prompt=str(cfg.root / "Tasks" / "00_РљРѕРЅС‚СЂРѕР»С‘СЂ_РїСЂРѕРјРїС‚" / "ControlerPromptv1.txt"),
+            executor_instr=str(cfg.root / "Tasks" / "РљРѕРЅРІРµР№РµСЂ" / "РРќРЎРўР РЈРљР¦РРЇ_РёСЃРїРѕР»РЅРёС‚РµР»СЋ.md"),
             report=report_path,
             task_id=task_id,
             project=cfg.name,
@@ -292,27 +292,27 @@ def _build_subprompt(cfg, task_id: str, task_file: Path, report_path: Path,
         qwen_skill = "pipeline-qwen-worker"
         qwen_bridge = DEV_PIPELINE_DIR / "agents" / "qwen_bridge.py"
         qwen_block = (
-            "ЗАПРЕТ: НЕ загружай и НЕ используй скиллы cloud-ai-bridge, revit-api, revit-3d-export, "
-            "threejs-viewer и любые ДРУГИЕ скиллы, кроме pipeline-qwen-worker. Работай строго по шагам ниже.\n"
-            "ДОПОЛНИТЕЛЬНО (режим бесплатного рабочего): тяжёлую генерацию файлов делает "
-            "облачный Qwen через мост. ТВОЯ ЗАДАЧА УЖЕ ВЫДАНА — файл:\n"
+            "Р—РђРџР Р•Рў: РќР• Р·Р°РіСЂСѓР¶Р°Р№ Рё РќР• РёСЃРїРѕР»СЊР·СѓР№ СЃРєРёР»Р»С‹ cloud-ai-bridge, revit-api, revit-3d-export, "
+            "threejs-viewer Рё Р»СЋР±С‹Рµ Р”Р РЈР“РР• СЃРєРёР»Р»С‹, РєСЂРѕРјРµ pipeline-qwen-worker. Р Р°Р±РѕС‚Р°Р№ СЃС‚СЂРѕРіРѕ РїРѕ С€Р°РіР°Рј РЅРёР¶Рµ.\n"
+            "Р”РћРџРћР›РќРРўР•Р›Р¬РќРћ (СЂРµР¶РёРј Р±РµСЃРїР»Р°С‚РЅРѕРіРѕ СЂР°Р±РѕС‡РµРіРѕ): С‚СЏР¶С‘Р»СѓСЋ РіРµРЅРµСЂР°С†РёСЋ С„Р°Р№Р»РѕРІ РґРµР»Р°РµС‚ "
+            "РѕР±Р»Р°С‡РЅС‹Р№ Qwen С‡РµСЂРµР· РјРѕСЃС‚. РўР’РћРЇ Р—РђР”РђР§Рђ РЈР–Р• Р’Р«Р”РђРќРђ вЂ” С„Р°Р№Р»:\n"
             f"  {task_file}\n"
-            "НЕ ищи задачи со статусом open в Tasks\\Активные, НЕ открывай общую беседу. "
-            "Работай ТОЛЬКО с этим файлом задачи. Порядок (строго, каждый шаг реальной командой):\n"
-            f"  ШАГ 1. Прочитай файл задачи {task_file} — это постановка.\n"
-            "  ШАГ 2. Собери контекст: прочитай нужные файлы проекта (read/grep/glob), "
-            "определи файлы, которые надо исправить.\n"
-            f"  ШАГ 3. Вызови мост (один вызов, question в одну строку):\n"
+            "РќР• РёС‰Рё Р·Р°РґР°С‡Рё СЃРѕ СЃС‚Р°С‚СѓСЃРѕРј open РІ Tasks\\РђРєС‚РёРІРЅС‹Рµ, РќР• РѕС‚РєСЂС‹РІР°Р№ РѕР±С‰СѓСЋ Р±РµСЃРµРґСѓ. "
+            "Р Р°Р±РѕС‚Р°Р№ РўРћР›Р¬РљРћ СЃ СЌС‚РёРј С„Р°Р№Р»РѕРј Р·Р°РґР°С‡Рё. РџРѕСЂСЏРґРѕРє (СЃС‚СЂРѕРіРѕ, РєР°Р¶РґС‹Р№ С€Р°Рі СЂРµР°Р»СЊРЅРѕР№ РєРѕРјР°РЅРґРѕР№):\n"
+            f"  РЁРђР“ 1. РџСЂРѕС‡РёС‚Р°Р№ С„Р°Р№Р» Р·Р°РґР°С‡Рё {task_file} вЂ” СЌС‚Рѕ РїРѕСЃС‚Р°РЅРѕРІРєР°.\n"
+            "  РЁРђР“ 2. РЎРѕР±РµСЂРё РєРѕРЅС‚РµРєСЃС‚: РїСЂРѕС‡РёС‚Р°Р№ РЅСѓР¶РЅС‹Рµ С„Р°Р№Р»С‹ РїСЂРѕРµРєС‚Р° (read/grep/glob), "
+            "РѕРїСЂРµРґРµР»Рё С„Р°Р№Р»С‹, РєРѕС‚РѕСЂС‹Рµ РЅР°РґРѕ РёСЃРїСЂР°РІРёС‚СЊ.\n"
+            f"  РЁРђР“ 3. Р’С‹Р·РѕРІРё РјРѕСЃС‚ (РѕРґРёРЅ РІС‹Р·РѕРІ, question РІ РѕРґРЅСѓ СЃС‚СЂРѕРєСѓ):\n"
             f"    python -X utf8 \"{qwen_bridge}\" --task \"{task_file}\" "
-            "--context <пути через запятую> --out Tasks\\00_Референсы\\Qwen_<тема>.md\n"
-            f"  ШАГ 4. Примени файлы, которые Qwen «написал»:\n"
+            "--context <РїСѓС‚Рё С‡РµСЂРµР· Р·Р°РїСЏС‚СѓСЋ> --out Tasks\\00_Р РµС„РµСЂРµРЅСЃС‹\\Qwen_<С‚РµРјР°>.md\n"
+            f"  РЁРђР“ 4. РџСЂРёРјРµРЅРё С„Р°Р№Р»С‹, РєРѕС‚РѕСЂС‹Рµ Qwen В«РЅР°РїРёСЃР°Р»В»:\n"
             f"    python -X utf8 \"{qwen_bridge}\" --task \"{task_file}\" "
-            "--out Tasks\\00_Референсы\\Qwen_<тема>.md --apply --dir \"<корень проекта>\"\n"
-            "  ШАГ 5. Проверь сборку и тесты (см. команды в задаче/конфиге). При ошибках — "
-            "отправь лог Qwen на исправление (повторный вызов моста с логом в --context).\n"
-            "  ШАГ 6. Создай отчёт (см. SUBPROMPT ниже).\n"
-            "Прочитай скилл pipeline-qwen-worker (D:\\Projects\\revit-skills\\.opencode\\skills\\pipeline-qwen-worker\\SKILL.md) — "
-            "там схема работы и команды моста.\n"
+            "--out Tasks\\00_Р РµС„РµСЂРµРЅСЃС‹\\Qwen_<С‚РµРјР°>.md --apply --dir \"<РєРѕСЂРµРЅСЊ РїСЂРѕРµРєС‚Р°>\"\n"
+            "  РЁРђР“ 5. РџСЂРѕРІРµСЂСЊ СЃР±РѕСЂРєСѓ Рё С‚РµСЃС‚С‹ (СЃРј. РєРѕРјР°РЅРґС‹ РІ Р·Р°РґР°С‡Рµ/РєРѕРЅС„РёРіРµ). РџСЂРё РѕС€РёР±РєР°С… вЂ” "
+            "РѕС‚РїСЂР°РІСЊ Р»РѕРі Qwen РЅР° РёСЃРїСЂР°РІР»РµРЅРёРµ (РїРѕРІС‚РѕСЂРЅС‹Р№ РІС‹Р·РѕРІ РјРѕСЃС‚Р° СЃ Р»РѕРіРѕРј РІ --context).\n"
+            "  РЁРђР“ 6. РЎРѕР·РґР°Р№ РѕС‚С‡С‘С‚ (СЃРј. SUBPROMPT РЅРёР¶Рµ).\n"
+            "РџСЂРѕС‡РёС‚Р°Р№ СЃРєРёР»Р» pipeline-qwen-worker (D:\\Projects\\revit-skills\\.opencode\\skills\\pipeline-qwen-worker\\SKILL.md) вЂ” "
+            "С‚Р°Рј СЃС…РµРјР° СЂР°Р±РѕС‚С‹ Рё РєРѕРјР°РЅРґС‹ РјРѕСЃС‚Р°.\n"
         )
         prompt = qwen_block + prompt
         if not skill:
@@ -323,7 +323,7 @@ def _build_subprompt(cfg, task_id: str, task_file: Path, report_path: Path,
 
 
 def _find_task_file(cfg, task_id: str) -> Path | None:
-    """MD-файл задачи в Активные."""
+    """MD-С„Р°Р№Р» Р·Р°РґР°С‡Рё РІ РђРєС‚РёРІРЅС‹Рµ."""
     for f in glob.glob(str(cfg.abs_tasks_dir("active") / (task_id + "_*.md"))):
         return Path(f)
     return None
@@ -332,10 +332,10 @@ def _find_task_file(cfg, task_id: str) -> Path | None:
 def run_subagent_legacy(cfg, task_id: str, report_path: Path, log_path: Path,
                         model: str = "", agent: str = "", skill: str = "", client=None,
                         worker: str = "", prompt_override: str = "") -> int:
-    """Legacy-режим: opencode run напрямую из bash-процесса (фолбэк без сервера)."""
+    """Legacy-СЂРµР¶РёРј: opencode run РЅР°РїСЂСЏРјСѓСЋ РёР· bash-РїСЂРѕС†РµСЃСЃР° (С„РѕР»Р±СЌРє Р±РµР· СЃРµСЂРІРµСЂР°)."""
     task_file = _find_task_file(cfg, task_id)
     if not task_file:
-        print(f"  [manager] задача {task_id} не найдена в Активные (JSON задачи)")
+        print(f"  [manager] Р·Р°РґР°С‡Р° {task_id} РЅРµ РЅР°Р№РґРµРЅР° РІ РђРєС‚РёРІРЅС‹Рµ (JSON Р·Р°РґР°С‡Рё)")
         return 2
 
     # open -> in_progress
@@ -349,7 +349,7 @@ def run_subagent_legacy(cfg, task_id: str, report_path: Path, log_path: Path,
     prompt = _build_subprompt(cfg, task_id, task_file, report_path, worker=worker,
                               prompt_override=prompt_override)
     log_path.parent.mkdir(parents=True, exist_ok=True)
-    print(f"  [manager] субагент {task_id}: opencode run (legacy)"
+    print(f"  [manager] СЃСѓР±Р°РіРµРЅС‚ {task_id}: opencode run (legacy)"
           + (f" (model={model})" if model else "")
           + (f" (agent={agent})" if agent else "")
           + (f" (skill={skill})" if skill else "")
@@ -359,29 +359,29 @@ def run_subagent_legacy(cfg, task_id: str, report_path: Path, log_path: Path,
         cmd += ["-m", model]
     if agent:
         cmd += ["--agent", agent]
-    # Прикрепить файл задачи как вложение: субагент гарантированно видит постановку
-    # (иначе при загрузке скилла путается «какой файл?»).
+    # РџСЂРёРєСЂРµРїРёС‚СЊ С„Р°Р№Р» Р·Р°РґР°С‡Рё РєР°Рє РІР»РѕР¶РµРЅРёРµ: СЃСѓР±Р°РіРµРЅС‚ РіР°СЂР°РЅС‚РёСЂРѕРІР°РЅРЅРѕ РІРёРґРёС‚ РїРѕСЃС‚Р°РЅРѕРІРєСѓ
+    # (РёРЅР°С‡Рµ РїСЂРё Р·Р°РіСЂСѓР·РєРµ СЃРєРёР»Р»Р° РїСѓС‚Р°РµС‚СЃСЏ В«РєР°РєРѕР№ С„Р°Р№Р»?В»).
     if task_file and task_file.exists():
         cmd += ["-f", str(task_file)]
-    # --auto: авто-подтверждение разрешений (иначе неинтерактивный субагент
-    # останавливается на запросе записи файла и не завершает задачу)
+    # --auto: Р°РІС‚Рѕ-РїРѕРґС‚РІРµСЂР¶РґРµРЅРёРµ СЂР°Р·СЂРµС€РµРЅРёР№ (РёРЅР°С‡Рµ РЅРµРёРЅС‚РµСЂР°РєС‚РёРІРЅС‹Р№ СЃСѓР±Р°РіРµРЅС‚
+    # РѕСЃС‚Р°РЅР°РІР»РёРІР°РµС‚СЃСЏ РЅР° Р·Р°РїСЂРѕСЃРµ Р·Р°РїРёСЃРё С„Р°Р№Р»Р° Рё РЅРµ Р·Р°РІРµСЂС€Р°РµС‚ Р·Р°РґР°С‡Сѓ)
     cmd += ["--auto"]
-    # PID-файл субагента: сторож может обнаружить и убить зависший процесс
+    # PID-С„Р°Р№Р» СЃСѓР±Р°РіРµРЅС‚Р°: СЃС‚РѕСЂРѕР¶ РјРѕР¶РµС‚ РѕР±РЅР°СЂСѓР¶РёС‚СЊ Рё СѓР±РёС‚СЊ Р·Р°РІРёСЃС€РёР№ РїСЂРѕС†РµСЃСЃ
     pid_file = log_path.parent / f"{task_id}.pid"
     pid_file.parent.mkdir(parents=True, exist_ok=True)
     try:
         proc = subprocess.Popen(cmd, cwd=str(cfg.root),
                                 stdout=subprocess.PIPE, stderr=subprocess.PIPE,
                                 creationflags=no_window_flags())
-        # PID-файл: строка 1 — PID, строка 2 — время старта (unix).
-        # Сторож (agent_watch) по нему находит сирот: менеджер убит/завис,
-        # а субагент продолжает висеть.
+        # PID-С„Р°Р№Р»: СЃС‚СЂРѕРєР° 1 вЂ” PID, СЃС‚СЂРѕРєР° 2 вЂ” РІСЂРµРјСЏ СЃС‚Р°СЂС‚Р° (unix).
+        # РЎС‚РѕСЂРѕР¶ (agent_watch) РїРѕ РЅРµРјСѓ РЅР°С…РѕРґРёС‚ СЃРёСЂРѕС‚: РјРµРЅРµРґР¶РµСЂ СѓР±РёС‚/Р·Р°РІРёСЃ,
+        # Р° СЃСѓР±Р°РіРµРЅС‚ РїСЂРѕРґРѕР»Р¶Р°РµС‚ РІРёСЃРµС‚СЊ.
         pid_file.write_text(f"{proc.pid}\n{int(time.time())}", encoding="utf-8")
         try:
             out_raw, err_raw = proc.communicate(timeout=SUBAGENT_TIMEOUT)
             rc = proc.returncode
         except subprocess.TimeoutExpired:
-            # зависший субагент: убить всё дерево (без /T остаётся node-сирота)
+            # Р·Р°РІРёСЃС€РёР№ СЃСѓР±Р°РіРµРЅС‚: СѓР±РёС‚СЊ РІСЃС‘ РґРµСЂРµРІРѕ (Р±РµР· /T РѕСЃС‚Р°С‘С‚СЃСЏ node-СЃРёСЂРѕС‚Р°)
             _kill_tree(proc.pid)
             try:
                 out_raw, err_raw = proc.communicate(timeout=10)
@@ -393,7 +393,7 @@ def run_subagent_legacy(cfg, task_id: str, report_path: Path, log_path: Path,
         log_path.write_text((out or "") + (err or ""), encoding="utf-8")
         return rc
     except Exception as e:
-        log_path.write_text(f"ОШИБКА ЗАПУСКА: {e}", encoding="utf-8")
+        log_path.write_text(f"РћРЁРР‘РљРђ Р—РђРџРЈРЎРљРђ: {e}", encoding="utf-8")
         return 3
     finally:
         try:
@@ -405,15 +405,15 @@ def run_subagent_legacy(cfg, task_id: str, report_path: Path, log_path: Path,
 def run_subagent_session(cfg, task_id: str, report_path: Path, log_path: Path,
                          model: str = "", agent: str = "", skill: str = "", client=None,
                          worker: str = "", poll_sec: int = 20, prompt_override: str = "") -> int:
-    """Явная сессия: инструкция/статус — через сервер (общение, не bash).
+    """РЇРІРЅР°СЏ СЃРµСЃСЃРёСЏ: РёРЅСЃС‚СЂСѓРєС†РёСЏ/СЃС‚Р°С‚СѓСЃ вЂ” С‡РµСЂРµР· СЃРµСЂРІРµСЂ (РѕР±С‰РµРЅРёРµ, РЅРµ bash).
 
-    Создаёт сессию на сервере (POST /api/sessions) с полной инструкцией,
-    запускает тонкого session_worker.py (он читает инструкцию с сервера и
-    отчитывается через сервер), мониторит статус сессии по API. Возвращает rc:
-    0 — done+отчёт; 1 — failed; 124 — killed/stalled/таймаут; 2 — нет задачи."""
+    РЎРѕР·РґР°С‘С‚ СЃРµСЃСЃРёСЋ РЅР° СЃРµСЂРІРµСЂРµ (POST /api/sessions) СЃ РїРѕР»РЅРѕР№ РёРЅСЃС‚СЂСѓРєС†РёРµР№,
+    Р·Р°РїСѓСЃРєР°РµС‚ С‚РѕРЅРєРѕРіРѕ session_worker.py (РѕРЅ С‡РёС‚Р°РµС‚ РёРЅСЃС‚СЂСѓРєС†РёСЋ СЃ СЃРµСЂРІРµСЂР° Рё
+    РѕС‚С‡РёС‚С‹РІР°РµС‚СЃСЏ С‡РµСЂРµР· СЃРµСЂРІРµСЂ), РјРѕРЅРёС‚РѕСЂРёС‚ СЃС‚Р°С‚СѓСЃ СЃРµСЃСЃРёРё РїРѕ API. Р’РѕР·РІСЂР°С‰Р°РµС‚ rc:
+    0 вЂ” done+РѕС‚С‡С‘С‚; 1 вЂ” failed; 124 вЂ” killed/stalled/С‚Р°Р№РјР°СѓС‚; 2 вЂ” РЅРµС‚ Р·Р°РґР°С‡Рё."""
     task_file = _find_task_file(cfg, task_id)
     if not task_file:
-        print(f"  [manager] задача {task_id} не найдена в Активные (JSON задачи)")
+        print(f"  [manager] Р·Р°РґР°С‡Р° {task_id} РЅРµ РЅР°Р№РґРµРЅР° РІ РђРєС‚РёРІРЅС‹Рµ (JSON Р·Р°РґР°С‡Рё)")
         return 2
 
     from pipeline.models import Task
@@ -436,13 +436,13 @@ def run_subagent_session(cfg, task_id: str, report_path: Path, log_path: Path,
             "task_id": task_id,
         })
     if not session:
-        print(f"  [manager] сессия {task_id} НЕ создана (сервер недоступен?) — legacy")
+        print(f"  [manager] СЃРµСЃСЃРёСЏ {task_id} РќР• СЃРѕР·РґР°РЅР° (СЃРµСЂРІРµСЂ РЅРµРґРѕСЃС‚СѓРїРµРЅ?) вЂ” legacy")
         return run_subagent_legacy(cfg, task_id, report_path, log_path,
                                    model=model, agent=agent, skill=skill,
                                    client=client, worker=worker,
                                    prompt_override=prompt_override)
     sid = session["id"]
-    print(f"  [manager] субагент {task_id}: сессия {sid}"
+    print(f"  [manager] СЃСѓР±Р°РіРµРЅС‚ {task_id}: СЃРµСЃСЃРёСЏ {sid}"
           + (f" (model={session.get('model')})" if session.get("model") else "")
           + (f" (skill={skill})" if skill else "")
           + (f" (worker={worker})" if worker else ""))
@@ -459,21 +459,21 @@ def run_subagent_session(cfg, task_id: str, report_path: Path, log_path: Path,
                                 stdout=subprocess.DEVNULL, stderr=subprocess.DEVNULL,
                                 creationflags=no_window_flags())
         pid_file.write_text(f"{proc.pid}\n{int(time.time())}", encoding="utf-8")
-        # мониторинг через сервер (не через stdout процесса)
+        # РјРѕРЅРёС‚РѕСЂРёРЅРі С‡РµСЂРµР· СЃРµСЂРІРµСЂ (РЅРµ С‡РµСЂРµР· stdout РїСЂРѕС†РµСЃСЃР°)
         deadline = time.time() + SUBAGENT_TIMEOUT
         terminal = ("done", "failed", "killed", "stalled")
         status = "created"
         while time.time() < deadline:
             cur = client.get_session(sid)
             if not cur:
-                print(f"  [manager] {task_id}: сессия {sid} исчезла с сервера")
+                print(f"  [manager] {task_id}: СЃРµСЃСЃРёСЏ {sid} РёСЃС‡РµР·Р»Р° СЃ СЃРµСЂРІРµСЂР°")
                 break
             status = cur.get("status", "created")
             if status in terminal:
                 break
             time.sleep(poll_sec)
         else:
-            print(f"  [manager] {task_id}: таймаут {SUBAGENT_TIMEOUT} с — убиваю сессию {sid}")
+            print(f"  [manager] {task_id}: С‚Р°Р№РјР°СѓС‚ {SUBAGENT_TIMEOUT} СЃ вЂ” СѓР±РёРІР°СЋ СЃРµСЃСЃРёСЋ {sid}")
             client.session_kill(sid)
             _kill_tree(proc.pid)
             status = "killed"
@@ -486,9 +486,9 @@ def run_subagent_session(cfg, task_id: str, report_path: Path, log_path: Path,
             return 0
         if final in ("failed", "killed", "stalled"):
             err = (cur.get("error") or "")[:400]
-            print(f"  [manager] {task_id}: сессия {final}" + (f" ({err})" if err else ""))
+            print(f"  [manager] {task_id}: СЃРµСЃСЃРёСЏ {final}" + (f" ({err})" if err else ""))
             return 124 if final in ("killed", "stalled") else 1
-        print(f"  [manager] {task_id}: сессия завершилась со статусом {final}")
+        print(f"  [manager] {task_id}: СЃРµСЃСЃРёСЏ Р·Р°РІРµСЂС€РёР»Р°СЃСЊ СЃРѕ СЃС‚Р°С‚СѓСЃРѕРј {final}")
         return 124
     finally:
         if proc is not None:
@@ -505,14 +505,14 @@ def run_subagent_session(cfg, task_id: str, report_path: Path, log_path: Path,
 def run_subagent(cfg, task_id: str, report_path: Path, log_path: Path,
                  model: str = "", agent: str = "", skill: str = "", client=None,
                  worker: str = "", prompt_override: str = "") -> int:
-    """Запустить субагента. Если сервер доступен — через ЯВНУЮ СЕССИЮ
-    (инструкция и статусы через сервер), иначе legacy opencode run напрямую."""
+    """Р—Р°РїСѓСЃС‚РёС‚СЊ СЃСѓР±Р°РіРµРЅС‚Р°. Р•СЃР»Рё СЃРµСЂРІРµСЂ РґРѕСЃС‚СѓРїРµРЅ вЂ” С‡РµСЂРµР· РЇР’РќРЈР® РЎР•РЎРЎРР®
+    (РёРЅСЃС‚СЂСѓРєС†РёСЏ Рё СЃС‚Р°С‚СѓСЃС‹ С‡РµСЂРµР· СЃРµСЂРІРµСЂ), РёРЅР°С‡Рµ legacy opencode run РЅР°РїСЂСЏРјСѓСЋ."""
     if client is not None and client.server_alive(timeout=3.0):
         return run_subagent_session(cfg, task_id, report_path, log_path,
                                     model=model, agent=agent, skill=skill,
                                     client=client, worker=worker,
                                     prompt_override=prompt_override)
-    print(f"  [manager] сервер недоступен — legacy opencode run ({task_id})")
+    print(f"  [manager] СЃРµСЂРІРµСЂ РЅРµРґРѕСЃС‚СѓРїРµРЅ вЂ” legacy opencode run ({task_id})")
     return run_subagent_legacy(cfg, task_id, report_path, log_path,
                                model=model, agent=agent, skill=skill,
                                client=client, worker=worker,
@@ -520,7 +520,7 @@ def run_subagent(cfg, task_id: str, report_path: Path, log_path: Path,
 
 
 def run_subagent_demo(cfg, task_id: str, report_path: Path):
-    """Заглушка для проверки цикла без реального opencode."""
+    """Р—Р°РіР»СѓС€РєР° РґР»СЏ РїСЂРѕРІРµСЂРєРё С†РёРєР»Р° Р±РµР· СЂРµР°Р»СЊРЅРѕРіРѕ opencode."""
     from pipeline.models import Task
     task_file = None
     for f in glob.glob(str(cfg.abs_tasks_dir("active") / (task_id + "_*.md"))):
@@ -533,16 +533,16 @@ def run_subagent_demo(cfg, task_id: str, report_path: Path):
         t.set_status("in_progress")
     report_path.parent.mkdir(parents=True, exist_ok=True)
     report_path.write_text(
-        f"# ОТЧЁТ: {task_id} — демо-субагент (проверка цикла)\n\n"
-        f"**Дата:** {now()} | **Статус:** done (демо)\n\n"
-        "## Что было не так\nДемо-режим: реальное выполнение не запускалось.\n\n"
-        "## Что сделано\nПроверен цикл менеджера (задача → субагент → отчёт).\n\n"
-        "## Доказательства\nДемо: файл отчёта создан; команды сборки не запускались.\n\n"
-        "## Открытые вопросы\nРеальное выполнение — через реального субагента.\n\n"
-        "## Как пересобрать/проверить\npython -m agents.agent_manager --project ... --mission ...",
+        f"# РћРўР§РЃРў: {task_id} вЂ” РґРµРјРѕ-СЃСѓР±Р°РіРµРЅС‚ (РїСЂРѕРІРµСЂРєР° С†РёРєР»Р°)\n\n"
+        f"**Р”Р°С‚Р°:** {now()} | **РЎС‚Р°С‚СѓСЃ:** done (РґРµРјРѕ)\n\n"
+        "## Р§С‚Рѕ Р±С‹Р»Рѕ РЅРµ С‚Р°Рє\nР”РµРјРѕ-СЂРµР¶РёРј: СЂРµР°Р»СЊРЅРѕРµ РІС‹РїРѕР»РЅРµРЅРёРµ РЅРµ Р·Р°РїСѓСЃРєР°Р»РѕСЃСЊ.\n\n"
+        "## Р§С‚Рѕ СЃРґРµР»Р°РЅРѕ\nРџСЂРѕРІРµСЂРµРЅ С†РёРєР» РјРµРЅРµРґР¶РµСЂР° (Р·Р°РґР°С‡Р° в†’ СЃСѓР±Р°РіРµРЅС‚ в†’ РѕС‚С‡С‘С‚).\n\n"
+        "## Р”РѕРєР°Р·Р°С‚РµР»СЊСЃС‚РІР°\nР”РµРјРѕ: С„Р°Р№Р» РѕС‚С‡С‘С‚Р° СЃРѕР·РґР°РЅ; РєРѕРјР°РЅРґС‹ СЃР±РѕСЂРєРё РЅРµ Р·Р°РїСѓСЃРєР°Р»РёСЃСЊ.\n\n"
+        "## РћС‚РєСЂС‹С‚С‹Рµ РІРѕРїСЂРѕСЃС‹\nР РµР°Р»СЊРЅРѕРµ РІС‹РїРѕР»РЅРµРЅРёРµ вЂ” С‡РµСЂРµР· СЂРµР°Р»СЊРЅРѕРіРѕ СЃСѓР±Р°РіРµРЅС‚Р°.\n\n"
+        "## РљР°Рє РїРµСЂРµСЃРѕР±СЂР°С‚СЊ/РїСЂРѕРІРµСЂРёС‚СЊ\npython -m agents.agent_manager --project ... --mission ...",
         encoding="utf-8")
     t.set_status("done_report")
-    print(f"  [manager] демо-отчёт {task_id}: {report_path}")
+    print(f"  [manager] РґРµРјРѕ-РѕС‚С‡С‘С‚ {task_id}: {report_path}")
     return 0
 
 
@@ -550,7 +550,7 @@ def cmd_mission(args):
     cfg = load_config(args.project)
     mission = Path(args.mission)
     if not mission.exists():
-        print("МИССИЯ НЕ НАЙДЕНА:", mission)
+        print("РњРРЎРЎРРЇ РќР• РќРђР™Р”Р•РќРђ:", mission)
         return 1
     for d in ("active", "reports"):
         cfg.abs_tasks_dir(d).mkdir(parents=True, exist_ok=True)
@@ -559,7 +559,7 @@ def cmd_mission(args):
     text = mission.read_text(encoding="utf-8")
     chunks = split_mission(text, args.split)
     total = len(chunks)
-    print(f"[manager] миссия '{title}': {total} подзадач")
+    print(f"[manager] РјРёСЃСЃРёСЏ '{title}': {total} РїРѕРґР·Р°РґР°С‡")
 
     ids = []
     for i, chunk in enumerate(chunks, start=1):
@@ -579,20 +579,20 @@ def cmd_task(args):
 
 
 def _run_batch(cfg, ids, args):
-    """Запустить субагентов по задачам (parallel/sequential/demo).
+    """Р—Р°РїСѓСЃС‚РёС‚СЊ СЃСѓР±Р°РіРµРЅС‚РѕРІ РїРѕ Р·Р°РґР°С‡Р°Рј (parallel/sequential/demo).
 
-    По умолчанию — ЯВНЫЕ СЕССИИ через сервер (инструкция и статусы через
-    API; session_worker.py — тонкий клиент). --legacy или недоступный сервер —
-    фолбэк на bash opencode run напрямую."""
+    РџРѕ СѓРјРѕР»С‡Р°РЅРёСЋ вЂ” РЇР’РќР«Р• РЎР•РЎРЎРР С‡РµСЂРµР· СЃРµСЂРІРµСЂ (РёРЅСЃС‚СЂСѓРєС†РёСЏ Рё СЃС‚Р°С‚СѓСЃС‹ С‡РµСЂРµР·
+    API; session_worker.py вЂ” С‚РѕРЅРєРёР№ РєР»РёРµРЅС‚). --legacy РёР»Рё РЅРµРґРѕСЃС‚СѓРїРЅС‹Р№ СЃРµСЂРІРµСЂ вЂ”
+    С„РѕР»Р±СЌРє РЅР° bash opencode run РЅР°РїСЂСЏРјСѓСЋ."""
     reports_dir = cfg.abs_tasks_dir("reports")
-    logs_dir = cfg.root / "Tasks" / "Конвейер" / "logs"
+    logs_dir = cfg.root / "Tasks" / "РљРѕРЅРІРµР№РµСЂ" / "logs"
     results = {}
     model = getattr(args, "model", "") or DEFAULT_MODEL
     agent = getattr(args, "agent", "")
     skill = getattr(args, "skill", "")
     worker = getattr(args, "worker", "")
     legacy = bool(getattr(args, "legacy", False))
-    # Публикация событий в сервер (опционально): позволяет панели показывать ход задач.
+    # РџСѓР±Р»РёРєР°С†РёСЏ СЃРѕР±С‹С‚РёР№ РІ СЃРµСЂРІРµСЂ (РѕРїС†РёРѕРЅР°Р»СЊРЅРѕ): РїРѕР·РІРѕР»СЏРµС‚ РїР°РЅРµР»Рё РїРѕРєР°Р·С‹РІР°С‚СЊ С…РѕРґ Р·Р°РґР°С‡.
     client = None
     try:
         from pipeline.client import Client
@@ -603,14 +603,14 @@ def _run_batch(cfg, ids, args):
 
     if args.demo:
         for tid in ids:
-            report = reports_dir / f"{tid}_Отчёт_{now()}.md"
+            report = reports_dir / f"{tid}_РћС‚С‡С‘С‚_{now()}.md"
             rc = run_subagent_demo(cfg, tid, report)
             results[tid] = rc
         _print_summary(cfg, ids, results)
         return
 
     def _one_subagent(tid):
-        report = reports_dir / f"{tid}_Отчёт_{now()}.md"
+        report = reports_dir / f"{tid}_РћС‚С‡С‘С‚_{now()}.md"
         log = logs_dir / f"{tid}_run.log"
         if legacy:
             rc = run_subagent_legacy(cfg, tid, report, log, model=model, agent=agent,
@@ -625,63 +625,63 @@ def _run_batch(cfg, ids, args):
     if args.sequential:
         for tid, rc, ok in (_one_subagent(tid) for tid in ids):
             results[tid] = rc
-            print(f"  [manager] {tid}: rc={rc}, отчёт={'есть' if ok else 'НЕТ'}")
+            print(f"  [manager] {tid}: rc={rc}, РѕС‚С‡С‘С‚={'РµСЃС‚СЊ' if ok else 'РќР•Рў'}")
     else:
-        # parallel: запускаем все разом, ждём по очереди
+        # parallel: Р·Р°РїСѓСЃРєР°РµРј РІСЃРµ СЂР°Р·РѕРј, Р¶РґС‘Рј РїРѕ РѕС‡РµСЂРµРґРё
         from concurrent.futures import ThreadPoolExecutor
         with ThreadPoolExecutor(max_workers=max(1, args.parallel)) as ex:
             for tid, rc, ok in ex.map(_one_subagent, ids):
                 results[tid] = rc
-                print(f"  [manager] {tid}: rc={rc}, отчёт={'есть' if ok else 'НЕТ'}")
+                print(f"  [manager] {tid}: rc={rc}, РѕС‚С‡С‘С‚={'РµСЃС‚СЊ' if ok else 'РќР•Рў'}")
 
     _print_summary(cfg, ids, results)
 
 
 def _print_summary(cfg, ids, results):
-    print("\n=== СВОДКА МЕНЕДЖЕРА ===")
+    print("\n=== РЎР’РћР”РљРђ РњР•РќР•Р”Р–Р•Р Рђ ===")
     reports_dir = cfg.abs_tasks_dir("reports")
     for tid in ids:
         rc = results.get(tid)
-        report = sorted(glob.glob(str(reports_dir / (tid + "_Отчёт_*"))))
-        status = "ОК" if (rc == 0 and report) else (f"rc={rc}" if rc else "нет отчёта")
+        report = sorted(glob.glob(str(reports_dir / (tid + "_РћС‚С‡С‘С‚_*"))))
+        status = "РћРљ" if (rc == 0 and report) else (f"rc={rc}" if rc else "РЅРµС‚ РѕС‚С‡С‘С‚Р°")
         print(f"  {tid}: {status}" + (f" -> {os.path.basename(report[-1])}" if report else ""))
-    print("Дальше: контролёр запускает verify по каждой задаче.")
+    print("Р”Р°Р»СЊС€Рµ: РєРѕРЅС‚СЂРѕР»С‘СЂ Р·Р°РїСѓСЃРєР°РµС‚ verify РїРѕ РєР°Р¶РґРѕР№ Р·Р°РґР°С‡Рµ.")
 
 
 def _ensure_report(cfg, tid: str, rc: int) -> bool:
-    """Проверяет наличие отчёта исполнителя. Фейковый отчёт НЕ создаёт —
-    он маскирует обрывы/зависания субагента. При rc != 0 или отсутствии
-    отчёта — помечает задачу stalled в history и возвращает False."""
+    """РџСЂРѕРІРµСЂСЏРµС‚ РЅР°Р»РёС‡РёРµ РѕС‚С‡С‘С‚Р° РёСЃРїРѕР»РЅРёС‚РµР»СЏ. Р¤РµР№РєРѕРІС‹Р№ РѕС‚С‡С‘С‚ РќР• СЃРѕР·РґР°С‘С‚ вЂ”
+    РѕРЅ РјР°СЃРєРёСЂСѓРµС‚ РѕР±СЂС‹РІС‹/Р·Р°РІРёСЃР°РЅРёСЏ СЃСѓР±Р°РіРµРЅС‚Р°. РџСЂРё rc != 0 РёР»Рё РѕС‚СЃСѓС‚СЃС‚РІРёРё
+    РѕС‚С‡С‘С‚Р° вЂ” РїРѕРјРµС‡Р°РµС‚ Р·Р°РґР°С‡Сѓ stalled РІ history Рё РІРѕР·РІСЂР°С‰Р°РµС‚ False."""
     reports_dir = cfg.abs_tasks_dir("reports")
-    if glob.glob(str(reports_dir / (tid + "_Отчёт_*"))):
+    if glob.glob(str(reports_dir / (tid + "_РћС‚С‡С‘С‚_*"))):
         return True
     _mark_stalled(cfg, tid,
-                  f"субагент rc={rc} без отчёта — обрыв/зависание сессии, нужен редиспатч "
-                  f"(лог: Tasks\\Конвейер\\logs\\{tid}_run.log)")
+                  f"СЃСѓР±Р°РіРµРЅС‚ rc={rc} Р±РµР· РѕС‚С‡С‘С‚Р° вЂ” РѕР±СЂС‹РІ/Р·Р°РІРёСЃР°РЅРёРµ СЃРµСЃСЃРёРё, РЅСѓР¶РµРЅ СЂРµРґРёСЃРїР°С‚С‡ "
+                  f"(Р»РѕРі: Tasks\\РљРѕРЅРІРµР№РµСЂ\\logs\\{tid}_run.log)")
     return False
 
 
 def _mark_stalled(cfg, tid: str, reason: str):
-    """Пометка зависания: файл-маркер Tasks\\Конвейер\\stalled\\<tid>.txt (файлы = источник правды)."""
+    """РџРѕРјРµС‚РєР° Р·Р°РІРёСЃР°РЅРёСЏ: С„Р°Р№Р»-РјР°СЂРєРµСЂ Tasks\\РљРѕРЅРІРµР№РµСЂ\\stalled\\<tid>.txt (С„Р°Р№Р»С‹ = РёСЃС‚РѕС‡РЅРёРє РїСЂР°РІРґС‹)."""
     try:
-        d = cfg.root / "Tasks" / "Конвейер" / "stalled"
+        d = cfg.root / "Tasks" / "РљРѕРЅРІРµР№РµСЂ" / "stalled"
         d.mkdir(parents=True, exist_ok=True)
         marker = d / f"{tid}.txt"
         if not marker.exists():
             marker.write_text(f"{now()}\n{reason}\n", encoding="utf-8")
-        print(f"  [manager] {tid}: пометка task_stalled — {reason}")
+        print(f"  [manager] {tid}: РїРѕРјРµС‚РєР° task_stalled вЂ” {reason}")
     except Exception as e:
-        print(f"  [manager] stalled-пометка {tid} не сохранена: {e}")
+        print(f"  [manager] stalled-РїРѕРјРµС‚РєР° {tid} РЅРµ СЃРѕС…СЂР°РЅРµРЅР°: {e}")
 
 
 def cmd_report(args):
-    """Отчёт менеджера: сводка по целям проекта (задачи по статусам, вердикты,
-    рекомендации). Используется для контроля целей проекта по отчёту менеджера."""
+    """РћС‚С‡С‘С‚ РјРµРЅРµРґР¶РµСЂР°: СЃРІРѕРґРєР° РїРѕ С†РµР»СЏРј РїСЂРѕРµРєС‚Р° (Р·Р°РґР°С‡Рё РїРѕ СЃС‚Р°С‚СѓСЃР°Рј, РІРµСЂРґРёРєС‚С‹,
+    СЂРµРєРѕРјРµРЅРґР°С†РёРё). РСЃРїРѕР»СЊР·СѓРµС‚СЃСЏ РґР»СЏ РєРѕРЅС‚СЂРѕР»СЏ С†РµР»РµР№ РїСЂРѕРµРєС‚Р° РїРѕ РѕС‚С‡С‘С‚Сѓ РјРµРЅРµРґР¶РµСЂР°."""
     from pipeline.models import Task
     cfg = load_config(args.project)
-    lines = [f"# ОТЧЁТ МЕНЕДЖЕРА: {cfg.name} — {now()}", ""]
-    for key, label in [("inbox", "Входящие"), ("active", "Активные"),
-                       ("archive", "Архив"), ("reports", "Отчёты")]:
+    lines = [f"# РћРўР§РЃРў РњР•РќР•Р”Р–Р•Р Рђ: {cfg.name} вЂ” {now()}", ""]
+    for key, label in [("inbox", "Р’С…РѕРґСЏС‰РёРµ"), ("active", "РђРєС‚РёРІРЅС‹Рµ"),
+                       ("archive", "РђСЂС…РёРІ"), ("reports", "РћС‚С‡С‘С‚С‹")]:
         d = cfg.abs_tasks_dir(key)
         files = sorted(os.listdir(d)) if d.is_dir() else []
         a = [f for f in files if f.startswith("A-")]
@@ -692,29 +692,29 @@ def cmd_report(args):
                 continue
             try:
                 meta = Task.parse_frontmatter((d / f).read_text(encoding="utf-8"))
-                lines.append(f"- {f} [статус: {meta.get('статус', '?')}]")
+                lines.append(f"- {f} [СЃС‚Р°С‚СѓСЃ: {meta.get('СЃС‚Р°С‚СѓСЃ', '?')}]")
             except Exception:
                 lines.append(f"- {f}")
         lines.append("")
-    # Вердикты и статусы
+    # Р’РµСЂРґРёРєС‚С‹ Рё СЃС‚Р°С‚СѓСЃС‹
     reports_dir = cfg.abs_tasks_dir("reports")
-    verdicts = sorted(glob.glob(str(reports_dir / "*_Вердикт_*")), reverse=True)
-    lines.append(f"## Вердикты: {len(verdicts)}")
+    verdicts = sorted(glob.glob(str(reports_dir / "*_Р’РµСЂРґРёРєС‚_*")), reverse=True)
+    lines.append(f"## Р’РµСЂРґРёРєС‚С‹: {len(verdicts)}")
     for f in verdicts[:10]:
         lines.append(f"- {os.path.basename(f)}")
     lines.append("")
-    # Рекомендации
+    # Р РµРєРѕРјРµРЅРґР°С†РёРё
     active = cfg.abs_tasks_dir("active")
     open_tasks = [f for f in os.listdir(active) if f.startswith("A-")] if active.is_dir() else []
-    lines.append("## Рекомендации")
+    lines.append("## Р РµРєРѕРјРµРЅРґР°С†РёРё")
     if not open_tasks:
-        lines.append("- Нет активных задач. Можно запустить новую миссию.")
+        lines.append("- РќРµС‚ Р°РєС‚РёРІРЅС‹С… Р·Р°РґР°С‡. РњРѕР¶РЅРѕ Р·Р°РїСѓСЃС‚РёС‚СЊ РЅРѕРІСѓСЋ РјРёСЃСЃРёСЋ.")
     else:
-        lines.append(f"- Активных задач: {len(open_tasks)}. Запусти субагентов: "
+        lines.append(f"- РђРєС‚РёРІРЅС‹С… Р·Р°РґР°С‡: {len(open_tasks)}. Р—Р°РїСѓСЃС‚Рё СЃСѓР±Р°РіРµРЅС‚РѕРІ: "
                      f"python -m agents.agent_manager task --project {cfg.name} --task A-XX --sequential")
     text = "\n".join(lines)
-    out = cfg.resolve(cfg.status).with_name("Отчёт_менеджера.md") \
-        if Path(cfg.status).name == "Статус_конвейера.md" else cfg.resolve(cfg.status)
+    out = cfg.resolve(cfg.status).with_name("РћС‚С‡С‘С‚_РјРµРЅРµРґР¶РµСЂР°.md") \
+        if Path(cfg.status).name == "РЎС‚Р°С‚СѓСЃ_РєРѕРЅРІРµР№РµСЂР°.md" else cfg.resolve(cfg.status)
     Path(out).write_text(text, encoding="utf-8")
     print(text)
     return 0
@@ -732,13 +732,13 @@ def main(argv=None):
     p.add_argument("--demo", action="store_true")
     p.add_argument("--sequential", action="store_true")
     p.add_argument("--parallel", type=int, default=2)
-    p.add_argument("--model", default="", help="opencode-модель (напр. opencode/deepseek-v4-flash-free)")
-    p.add_argument("--agent", default="", help="роль opencode (--agent)")
-    p.add_argument("--skill", default="", help="скилл, который субагент обязан загрузить")
+    p.add_argument("--model", default="", help="opencode-РјРѕРґРµР»СЊ (РЅР°РїСЂ. opencode/big-pickle-free)")
+    p.add_argument("--agent", default="", help="СЂРѕР»СЊ opencode (--agent)")
+    p.add_argument("--skill", default="", help="СЃРєРёР»Р», РєРѕС‚РѕСЂС‹Р№ СЃСѓР±Р°РіРµРЅС‚ РѕР±СЏР·Р°РЅ Р·Р°РіСЂСѓР·РёС‚СЊ")
     p.add_argument("--worker", default="", choices=["", "qwen"],
-                   help="qwen — бесплатный рабочий: генерацию файлов делает облачный Qwen")
+                   help="qwen вЂ” Р±РµСЃРїР»Р°С‚РЅС‹Р№ СЂР°Р±РѕС‡РёР№: РіРµРЅРµСЂР°С†РёСЋ С„Р°Р№Р»РѕРІ РґРµР»Р°РµС‚ РѕР±Р»Р°С‡РЅС‹Р№ Qwen")
     p.add_argument("--legacy", action="store_true",
-                   help="без явной сессии: opencode run напрямую из bash (фолбэк)")
+                   help="Р±РµР· СЏРІРЅРѕР№ СЃРµСЃСЃРёРё: opencode run РЅР°РїСЂСЏРјСѓСЋ РёР· bash (С„РѕР»Р±СЌРє)")
     p.set_defaults(handler=cmd_mission)
 
     p = sub.add_parser("task")
@@ -751,9 +751,9 @@ def main(argv=None):
     p.add_argument("--agent", default="")
     p.add_argument("--skill", default="")
     p.add_argument("--worker", default="", choices=["", "qwen"],
-                   help="qwen — бесплатный рабочий: генерацию файлов делает облачный Qwen")
+                   help="qwen вЂ” Р±РµСЃРїР»Р°С‚РЅС‹Р№ СЂР°Р±РѕС‡РёР№: РіРµРЅРµСЂР°С†РёСЋ С„Р°Р№Р»РѕРІ РґРµР»Р°РµС‚ РѕР±Р»Р°С‡РЅС‹Р№ Qwen")
     p.add_argument("--legacy", action="store_true",
-                   help="без явной сессии: opencode run напрямую из bash (фолбэк)")
+                   help="Р±РµР· СЏРІРЅРѕР№ СЃРµСЃСЃРёРё: opencode run РЅР°РїСЂСЏРјСѓСЋ РёР· bash (С„РѕР»Р±СЌРє)")
     p.set_defaults(handler=cmd_task)
 
     p = sub.add_parser("report")
@@ -769,9 +769,10 @@ def main(argv=None):
     except Exception as e:
         import traceback
         traceback.print_exc()
-        print(f"ОШИБКА: {e}")
+        print(f"РћРЁРР‘РљРђ: {e}")
         return 1
 
 
 if __name__ == "__main__":
     sys.exit(main())
+

@@ -1,35 +1,35 @@
-# Конфигурация конвейера для проекта AHUCalculator (WPF, C# .NET 8, slnx).
-# Агент-исполнитель работает отдельной сессией и складывает PLAN/REPORT
-# в dev-pipeline\pipeline_output\AHUCalculator\.
-# Регистрация здесь нужна, чтобы проект отображался в панели конвейера.
+﻿# РљРѕРЅС„РёРіСѓСЂР°С†РёСЏ РєРѕРЅРІРµР№РµСЂР° РґР»СЏ РїСЂРѕРµРєС‚Р° AHUCalculator (WPF, C# .NET 8, slnx).
+# РђРіРµРЅС‚-РёСЃРїРѕР»РЅРёС‚РµР»СЊ СЂР°Р±РѕС‚Р°РµС‚ РѕС‚РґРµР»СЊРЅРѕР№ СЃРµСЃСЃРёРµР№ Рё СЃРєР»Р°РґС‹РІР°РµС‚ PLAN/REPORT
+# РІ dev-pipeline\pipeline_output\AHUCalculator\.
+# Р РµРіРёСЃС‚СЂР°С†РёСЏ Р·РґРµСЃСЊ РЅСѓР¶РЅР°, С‡С‚РѕР±С‹ РїСЂРѕРµРєС‚ РѕС‚РѕР±СЂР°Р¶Р°Р»СЃСЏ РІ РїР°РЅРµР»Рё РєРѕРЅРІРµР№РµСЂР°.
 
 project:
   name: AHUCalculator
-  root: [D:\Projects\AHUCalculator, E:\ПлагиныРевит\AHUCalculator]
+  root: [D:\Projects\AHUCalculator, E:\РџР»Р°РіРёРЅС‹Р РµРІРёС‚\AHUCalculator]
   branch: master
 
-# План проекта в ProjectsPalns (папка AHUCalculator/_current; пока пусто — план появится)
+# РџР»Р°РЅ РїСЂРѕРµРєС‚Р° РІ ProjectsPalns (РїР°РїРєР° AHUCalculator/_current; РїРѕРєР° РїСѓСЃС‚Рѕ вЂ” РїР»Р°РЅ РїРѕСЏРІРёС‚СЃСЏ)
 plan:
-  repo: [D:\Projects\ProjectsPalns, E:\ПлагиныРевит\ProjectsPalns]
+  repo: [D:\Projects\ProjectsPalns, E:\РџР»Р°РіРёРЅС‹Р РµРІРёС‚\ProjectsPalns]
   subdir: AHUCalculator
   file: ""
 
-# Параметры план-раннера
+# РџР°СЂР°РјРµС‚СЂС‹ РїР»Р°РЅ-СЂР°РЅРЅРµСЂР°
 runner:
-  model: opencode-go/deepseek-v4-flash
+  model: opencode/big-pickle
   retries: 2
   question_timeout_sec: 1200
   checkpoint_stages: true
 
 tasks:
-  inbox: Tasks\Входящие
-  active: Tasks\Активные
-  reports: Tasks\Отчёты
-  archive: Tasks\Архив
-  protocol: Tasks\00_Протокол_агентов.md
-  status: Tasks\Статус_конвейера.md
-  conveyor: Tasks\Конвейер
-  notif: Tasks\Конвейер\Уведомления
+  inbox: Tasks\Р’С…РѕРґСЏС‰РёРµ
+  active: Tasks\РђРєС‚РёРІРЅС‹Рµ
+  reports: Tasks\РћС‚С‡С‘С‚С‹
+  archive: Tasks\РђСЂС…РёРІ
+  protocol: Tasks\00_РџСЂРѕС‚РѕРєРѕР»_Р°РіРµРЅС‚РѕРІ.md
+  status: Tasks\РЎС‚Р°С‚СѓСЃ_РєРѕРЅРІРµР№РµСЂР°.md
+  conveyor: Tasks\РљРѕРЅРІРµР№РµСЂ
+  notif: Tasks\РљРѕРЅРІРµР№РµСЂ\РЈРІРµРґРѕРјР»РµРЅРёСЏ
 
 build:
   msbuild: dotnet
@@ -48,24 +48,25 @@ tests:
   baseline_passed: 90
   baseline_total: 90
 
-# Проверки архитектуры/качества (verify-порты, применяются по задачам)
+# РџСЂРѕРІРµСЂРєРё Р°СЂС…РёС‚РµРєС‚СѓСЂС‹/РєР°С‡РµСЃС‚РІР° (verify-РїРѕСЂС‚С‹, РїСЂРёРјРµРЅСЏСЋС‚СЃСЏ РїРѕ Р·Р°РґР°С‡Р°Рј)
 checks:
   - id: A-01
-    label: 'Модели не ссылаются на UI (Models чисто)'
+    label: 'РњРѕРґРµР»Рё РЅРµ СЃСЃС‹Р»Р°СЋС‚СЃСЏ РЅР° UI (Models С‡РёСЃС‚Рѕ)'
     kind: grep_dir
     dir: AHUCalculator/Models
     pattern: using\s+System\.Windows|using\s+System\.Windows\.Controls
     expect: 0
 
   - id: A-02
-    label: 'Тесты не содержат test-фильтров только Windows (Integration есть)'
+    label: 'РўРµСЃС‚С‹ РЅРµ СЃРѕРґРµСЂР¶Р°С‚ test-С„РёР»СЊС‚СЂРѕРІ С‚РѕР»СЊРєРѕ Windows (Integration РµСЃС‚СЊ)'
     kind: dir_exists
     dir: AHUCalculator.Tests/Integration
 
 layer_rules:
-  - label: Модули не ссылаются на Views (MVVM-граница)
+  - label: РњРѕРґСѓР»Рё РЅРµ СЃСЃС‹Р»Р°СЋС‚СЃСЏ РЅР° Views (MVVM-РіСЂР°РЅРёС†Р°)
     pattern: using\s+AHUCalculator\.Views
     expect: 0
     dirs: [AHUCalculator/Modules]
 
 audit_dirs: [AHUCalculator.Tests]
+
