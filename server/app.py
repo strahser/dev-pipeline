@@ -1330,6 +1330,27 @@ async def project_plan(project: str):
         # экранировать
         import html as _html
         stage_html = f'<div class="card" style="border-left:3px solid #6ea8ff"><div style="display:flex;align-items:center;gap:8px"><b>📦 Этап {epic.id}</b> <span class="badge {"ok" if epic.status=="done" else "warn"}">{epic.status}</span> <span class="muted" style="font-size:12px">{_html.escape(epic.title[:80])}</span><span style="margin-left:auto" class="muted" style="font-size:11px">{pf.name}</span></div><div class="muted" style="font-size:12px;margin-top:6px;white-space:pre-wrap">{_html.escape(epic_desc[:1200])}</div><div class="muted" style="font-size:11px;margin-top:6px">ветка: { _html.escape((epic.body.split("Ветка:")[1].split(chr(10))[0][:80] if "Ветка:" in epic.body else "")) } · <a href="/api/plan?project={project}">API</a></div></div>'
+    # длительность работы агента — чтобы понять не завис (из /api/plan/running)
+    running_html = ""
+    try:
+        import datetime as _dt
+        from server.plan_api import _working_cards as _wc
+        # _working_cards через Store, но в explicit рендере берём из plan_api plan_running логику
+        # упрощённо: читаем runner_state.json + recent_events
+        import json as _json
+        sf = cfg.conveyor_dir() / "runner_state.json"
+        if sf.exists():
+            st = _json.loads(sf.read_text(encoding="utf-8"))
+            if st.get("phase") == "executing" and st.get("card"):
+                # считаем минуты от updated
+                upd = st.get("updated","")
+                try:
+                    dt = _dt.datetime.fromisoformat(upd.replace("Z","+00:00"))
+                    if dt.tzinfo: dt = dt.astimezone().replace(tzinfo=None)
+                    mins = max(0, int((_dt.datetime.now() - dt).total_seconds()//60))
+                    running_html = f'<div class="card" style="border-left:3px solid #facc15"><b>⏱ В работе {st["card"]}</b> <span class="badge warn">{mins} мин</span> <span class="muted" style="font-size:12px">попытка {st.get("attempt",1)} · { _html.escape(st.get("title","")[:60])}</span> <span style="margin-left:auto" class="muted" style="font-size:11px">{upd[11:16] if len(upd)>16 else upd}</span><div class="muted" style="font-size:11px;margin-top:4px">если >30 мин без отчёта — проверь Tasks\\Конвейер\\logs\\{st["card"]}_run.log · /api/plan/running</div></div>'
+                except: pass
+    except: pass
     # таблица: теперь с колонкой Описание (из goal/description, git-правила парсинга)
     trs = ""
     for r in rows:
@@ -1347,8 +1368,33 @@ async def project_plan(project: str):
                 desc = (card.goal or card.description)[:120]
         import html as _html2
         desc_html = f'<span class="muted" style="font-size:11px" title="{_html2.escape(desc[:200])}">{_html2.escape(desc[:90]) if desc else "—"}</span>' if desc else '<span class="muted">—</span>'
-        trs += f'<tr><td>{r["wbs_code"]}</td><td>{r["task_id"]}</td><td>{r["name"][:70]}<br>{desc_html}</td><td>{badge}</td><td>{wf_b}</td><td>{rep}</td><td>{ver}</td><td>{r["evidence_count"]}</td></tr>'
-    body = f'<div style="display:flex;align-items:center;gap:10px;margin-bottom:8px"><h2 style="margin:0">{project} · План</h2><span class="muted" style="font-size:12px">{pf.name} · {len(rows)} строк · done {sum(1 for r in rows if r["status"]=="done")}/{len(rows)}</span><span style="margin-left:auto"></span><a href="/project/{project}" style="background:#1d2130;color:#e6e8ef;border:1px solid #2a2f42;border-radius:8px;padding:6px 12px;text-decoration:none">👁 Пульс</a> <a href="/" style="background:#1d2130;color:#e6e8ef;border:1px solid #2a2f42;border-radius:8px;padding:6px 12px;text-decoration:none">🏠 Обзор</a> <a href="/static/dashboard.html" style="background:#1d2130;color:#e6e8ef;border:1px solid #2a2f42;border-radius:8px;padding:6px 12px;text-decoration:none">🖥 SPA</a></div>{stage_html}<div class="card" style="padding:0;overflow:auto"><table><thead><tr><th>WBS</th><th>ID</th><th>Задача</th><th>Статус</th><th>Workflow</th><th>Отчёт</th><th>Вердикт</th><th>Док-ва</th></tr></thead><tbody>{trs or "<tr><td colspan=8>нет строк</td></tr>"}</tbody></table></div><p class="muted" style="font-size:12px">explicit · общий header · этап с описанием (EPIC) + карточки · <a href="/api/plan?project={project}">API JSON</a> · <a href="/api/plan/tasks?project={project}">tasks</a> · git-правила: id EPIC-* → этап, ARCH-* → карточки, статусы done/open в заголовках карточек</p>'
+        # длительность для этой строки если она в работе
+        dur = ""
+        if running_html and r["task_id"] == (st and r["task_id"] == st and False):
+            dur = ""
+        # пометка длительности в отдельной колонке
+        # подсчитаем для каждой строки если она running
+        try:
+            # если эта карточка сейчас executing — покажем минуты
+            import json as _js
+            sf2 = cfg.conveyor_dir() / "runner_state.json"
+            if sf2.exists():
+                st2 = _js.loads(sf2.read_text(encoding="utf-8"))
+                if st2.get("card") == r["task_id"] and st2.get("phase")=="executing":
+                    import datetime as _d2
+                    upd2 = st2.get("updated","")
+                    dt2 = _d2.datetime.fromisoformat(upd2.replace("Z","+00:00"))
+                    if dt2.tzinfo: dt2 = dt2.astimezone().replace(tzinfo=None)
+                    mins2 = max(0, int((_d2.datetime.now() - dt2).total_seconds()//60))
+                    dur = f'<span class="badge warn">{mins2} мин</span>'
+                else:
+                    dur = "—"
+            else:
+                dur = "—"
+        except:
+            dur = "—"
+        trs += f'<tr><td>{r["wbs_code"]}</td><td>{r["task_id"]}</td><td>{r["name"][:70]}<br>{desc_html}</td><td>{badge}</td><td>{wf_b}</td><td>{dur}</td><td>{rep}</td><td>{ver}</td><td>{r["evidence_count"]}</td></tr>'
+    body = f'<div style="display:flex;align-items:center;gap:10px;margin-bottom:8px"><h2 style="margin:0">{project} · План</h2><span class="muted" style="font-size:12px">{pf.name} · {len(rows)} строк · done {sum(1 for r in rows if r["status"]=="done")}/{len(rows)}</span><span style="margin-left:auto"></span><a href="/project/{project}" style="background:#1d2130;color:#e6e8ef;border:1px solid #2a2f42;border-radius:8px;padding:6px 12px;text-decoration:none">👁 Пульс</a> <a href="/" style="background:#1d2130;color:#e6e8ef;border:1px solid #2a2f42;border-radius:8px;padding:6px 12px;text-decoration:none">🏠 Обзор</a> <a href="/static/dashboard.html" style="background:#1d2130;color:#e6e8ef;border:1px solid #2a2f42;border-radius:8px;padding:6px 12px;text-decoration:none">🖥 SPA</a></div>{stage_html}{running_html}<div class="card" style="padding:0;overflow:auto"><table><thead><tr><th>WBS</th><th>ID</th><th>Задача</th><th>Статус</th><th>Workflow</th><th>⏱</th><th>Отчёт</th><th>Вердикт</th><th>Док-ва</th></tr></thead><tbody>{trs or "<tr><td colspan=9>нет строк</td></tr>"}</tbody></table></div><p class="muted" style="font-size:12px">explicit · общий header · этап с описанием (EPIC) + карточки · колонка ⏱ — минуты с updated runner_state.json (если >30 мин — проверь лог) · <a href="/api/plan?project={project}">API JSON</a> · <a href="/api/plan/tasks?project={project}">tasks</a> · <a href="/api/plan/running?project={project}">running</a> · git-правила: id EPIC-* → этап, ARCH-* → карточки, статусы done/open в заголовках карточек + ⏱ длительность</p>'
     return HTMLResponse(_page_shell(f"{project} · План", project, body))
 
 
