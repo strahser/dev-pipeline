@@ -50,7 +50,8 @@ from pipeline.plans import load as load_plan
 from server.db import Store, now_iso as _now_iso
 from server.heartbeat import start_watchdog
 from server.sse import SSEHub
-from server.plan_api import router as plan_router, init as plan_api_init, _plan_rows
+from server.plan_api import router as plan_router, init as plan_api_init
+from server.plan_api import _plan_rows as _api_plan_rows
 
 DB_PATH = os.environ.get("PIPELINE_DB", "conveyor.db")
 DASHBOARD = Path(__file__).parent / "static" / "dashboard.html"
@@ -1308,7 +1309,7 @@ async def project_plan(project: str):
         body = f'<div class="card" style="border-color:#eab308">⚠ У проекта <b>{project}</b> нет файла плана (_current пуст) <br><span class="muted">plan.repo/subdir в pipeline.yaml: {cfg.find_plan_file()}</span></div><p><a href="/">← Обзор</a></p>'
         return HTMLResponse(_page_shell(f"{project} · нет плана", project, body), status_code=200)
     plan = load_plan(pf)
-    rows = _plan_rows(cfg)
+    rows = _api_plan_rows(cfg)
     # таблица
     trs = ""
     for r in rows:
