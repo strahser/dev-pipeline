@@ -1,0 +1,97 @@
+# Конфигурация конвейера для проекта HeatLoss3 (Revit-плагин, C# net48, EPIC-ADAPTER-EVIL-5).
+# Схема: см. pipeline/config.py.
+
+project:
+  name: HeatLoss3
+  root: [D:\Projects\HeatLoss3, E:\ПлагиныРевит\HeatLoss3]
+  branch: refactor/revitservices-adapter-evil-5
+
+plan:
+  repo: [D:\Projects\ProjectsPalns, E:\ПлагиныРевит\ProjectsPalns]
+  subdir: HeatLoss3
+  file: ""
+
+runner:
+  model: opencode-go/deepseek-v4-flash
+  retries: 2
+  question_timeout_sec: 1200
+  checkpoint_stages: true
+  semantic_review: false
+
+tasks:
+  inbox: Tasks\Входящие
+  active: Tasks\Активные
+  reports: Tasks\Отчёты
+  archive: Tasks\Архив
+  protocol: Tasks\00_Протокол_агентов.md
+  status: Tasks\Статус_конвейера.md
+  conveyor: Tasks\Конвейер
+  notif: Tasks\Конвейер\Уведомления
+
+build:
+  msbuild: C:\Program Files\Microsoft Visual Studio\18\Community\MSBuild\Current\Bin\MSBuild.exe
+  sln: HeatLossRevit.sln
+  configuration: Debug
+  platform: Any CPU
+  extra_args:
+    - /p:DeployAddin=false
+
+tests:
+  runner: vstest
+  vstest: C:\Program Files\Microsoft Visual Studio\18\Community\Common7\IDE\CommonExtensions\Microsoft\TestWindow\vstest.console.exe
+  dll: Core.Tests\bin\Debug\net48\Core.Tests.dll
+  baseline_passed: 398
+  baseline_total: 398
+
+checks:
+  - id: ARCH-C01
+    label: Core/Base не используют Autodesk
+    kind: grep_dir
+    dir: Core
+    pattern: using\s+Autodesk
+    expect: 0
+  - id: ARCH-C02
+    label: Base не использует Autodesk
+    kind: grep_dir
+    dir: Base
+    pattern: using\s+Autodesk
+    expect: 0
+  - id: ARCH-R01
+    label: RevitServices не ссылается на MainAppHeatLoss
+    kind: grep_dir
+    dir: RevitServices
+    pattern: using\s+MainAppHeatLoss
+    expect: 0
+  - id: ARCH-HOTFIX
+    label: Full.sln собирается без ошибок
+    kind: build_grep
+    pattern: error CS
+    expect: 0
+
+layer_rules:
+  - label: Core/HeatLossExport не используют Autodesk
+    pattern: using\s+Autodesk
+    expect: 0
+    dirs: [Core, HeatLossExport]
+  - label: RevitServices не ссылается на MainAppHeatLoss
+    pattern: using\s+MainAppHeatLoss
+    expect: 0
+    dirs: [RevitServices]
+  - label: MainAppHeatLoss.Projects не ссылается на MainAppHeatLoss (цикл)
+    kind: csproj_no_ref
+    dir: MainAppHeatLoss.Projects
+    forbidden: MainAppHeatLoss.csproj
+  - label: MainAppHeatLoss.ProjectSettings не ссылается на MainAppHeatLoss (цикл)
+    kind: csproj_no_ref
+    dir: MainAppHeatLoss.ProjectSettings
+    forbidden: MainAppHeatLoss.csproj
+  - label: ProjectSettings не ссылается на Projects (цикл)
+    kind: csproj_no_ref
+    dir: MainAppHeatLoss.ProjectSettings
+    forbidden: MainAppHeatLoss.Projects.csproj
+  - label: Core/HeatLossExport не используют RevitServices
+    pattern: using\s+RevitServices
+    expect: 0
+    dirs: [Core, HeatLossExport]
+
+audit_dirs: [Core.Tests, Test]
