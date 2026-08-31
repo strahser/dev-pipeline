@@ -242,6 +242,7 @@ pre.json { background:var(--code); border:1px solid var(--border); border-radius
   </select>
   <button onclick="goHome()" title="Обзор всех проектов (карточки пульса)" style="background:var(--panel);color:var(--text);border:1px solid var(--border);border-radius:8px;padding:6px 12px;font-size:13px;cursor:pointer;">🏠 Обзор</button>
   <button onclick="openPlan()" title="Полный план с фильтрами и таблицей" style="background:var(--panel);color:var(--text);border:1px solid var(--border);border-radius:8px;padding:6px 12px;font-size:13px;cursor:pointer;">📋 План</button>
+  <button id="closePlanBtn" onclick="goHome()" title="Закрыть план — выход в основное меню" style="display:none;background:var(--panel);color:var(--text);border:1px solid var(--border);border-radius:8px;padding:6px 12px;font-size:13px;cursor:pointer;">✕ Закрыть план</button>
   <button onclick="openChat()" title="Чат агентов (полноэкранная панель)" style="background:var(--panel);color:var(--text);border:1px solid var(--border);border-radius:8px;padding:6px 12px;font-size:13px;cursor:pointer;">💬 Чат</button>
   <button onclick="openRequests()" title="Сырые задания пользователя (Входящие)" style="background:var(--panel);color:var(--text);border:1px solid var(--border);border-radius:8px;padding:6px 12px;font-size:13px;cursor:pointer;">📥 Входящие</button>
   <button onclick="openSessions()" title="Явные сессии субагентов" style="background:var(--panel);color:var(--text);border:1px solid var(--border);border-radius:8px;padding:6px 12px;font-size:13px;cursor:pointer;">🗂 Сессии</button>
@@ -1645,9 +1646,14 @@ function buildShell(){
 
 /* Режимы просмотра: 'home' (все проекты) или проект с планом/таблицей */
 let viewMode = 'home';
+function updateClosePlanBtn(){
+  const b = $('closePlanBtn');
+  if(b) b.style.display = (viewMode === 'plan') ? '' : 'none';
+}
 function goHome(){
   console.log('[nav] goHome called', new Error().stack.slice(0,800));
   viewMode = 'home';
+  updateClosePlanBtn();
   try{ localStorage.removeItem('dev-pipeline.viewMode'); localStorage.removeItem('dev-pipeline.project'); }catch(_){}
   activeProject = '';
   if ($('projectSelect')) $('projectSelect').value = '';
@@ -1658,6 +1664,7 @@ function openPlan(){
   console.log('[nav] openPlan', {activeProject, viewMode});
   if (!activeProject){ alert('Сначала выберите проект в шапке'); return; }
   viewMode = 'plan';
+  updateClosePlanBtn();
   try{ localStorage.setItem('dev-pipeline.viewMode', viewMode); localStorage.setItem('dev-pipeline.project', activeProject); }catch(_){}
   buildShell();
   loadFilters();
@@ -1671,6 +1678,7 @@ async function setProject(name){
     activeProject = name;
     if ($('projectSelect')) $('projectSelect').value = name;
     viewMode = 'plan';
+    updateClosePlanBtn();
     try{ localStorage.setItem('dev-pipeline.viewMode', viewMode); localStorage.setItem('dev-pipeline.project', activeProject); }catch(_){}
     buildShell();
     await loadFilters();
@@ -1810,10 +1818,12 @@ async function boot(){
     const savedProj = localStorage.getItem('dev-pipeline.project');
     if(savedMode === 'plan' && savedProj){ activeProject = savedProj; viewMode = 'plan'; }
   }catch(_){}
+  updateClosePlanBtn();
   buildShellLite();
   // если восстановили план — сразу перейти
   if(viewMode === 'plan' && activeProject){
     buildShell(); loadFilters(); refreshData(true);
+    updateClosePlanBtn();
   }
   checkServerFreshness();                 // баннер «перезапустите сервер»
   await loadProjects();                   // список проектов в шапку
