@@ -1,13 +1,13 @@
-﻿# РљРѕРЅС„РёРіСѓСЂР°С†РёСЏ РєРѕРЅРІРµР№РµСЂР° РґР»СЏ РїСЂРѕРµРєС‚Р° HeatLoss3 (Revit-РїР»Р°РіРёРЅ, C# net48, EPIC-ADAPTER-EVIL-5).
-# РЎС…РµРјР°: СЃРј. pipeline/config.py.
+# Конфигурация конвейера для проекта HeatLoss3 (Revit-плагин, C# net48, EPIC-ADAPTER-EVIL-5).
+# Схема: см. pipeline/config.py.
 
 project:
   name: HeatLoss3
-  root: [D:\Projects\HeatLoss3, E:\РџР»Р°РіРёРЅС‹Р РµРІРёС‚\HeatLoss3]
+  root: [D:\Projects\HeatLoss3, E:\ПлагиныРевит\HeatLoss3]
   branch: refactor/revitservices-adapter-evil-5
 
 plan:
-  repo: [D:\Projects\ProjectsPalns, E:\РџР»Р°РіРёРЅС‹Р РµРІРёС‚\ProjectsPalns]
+  repo: [D:\Projects\ProjectsPalns, E:\ПлагиныРевит\ProjectsPalns]
   subdir: HeatLoss3
   file: ""
 
@@ -19,14 +19,14 @@ runner:
   semantic_review: false
 
 tasks:
-  inbox: Tasks\Р’С…РѕРґСЏС‰РёРµ
-  active: Tasks\РђРєС‚РёРІРЅС‹Рµ
-  reports: Tasks\РћС‚С‡С‘С‚С‹
-  archive: Tasks\РђСЂС…РёРІ
-  protocol: Tasks\00_РџСЂРѕС‚РѕРєРѕР»_Р°РіРµРЅС‚РѕРІ.md
-  status: Tasks\РЎС‚Р°С‚СѓСЃ_РєРѕРЅРІРµР№РµСЂР°.md
-  conveyor: Tasks\РљРѕРЅРІРµР№РµСЂ
-  notif: Tasks\РљРѕРЅРІРµР№РµСЂ\РЈРІРµРґРѕРјР»РµРЅРёСЏ
+  inbox: Tasks\Входящие
+  active: Tasks\Активные
+  reports: Tasks\Отчёты
+  archive: Tasks\Архив
+  protocol: Tasks\00_Протокол_агентов.md
+  status: Tasks\Статус_конвейера.md
+  conveyor: Tasks\Конвейер
+  notif: Tasks\Конвейер\Уведомления
 
 build:
   msbuild: C:\Program Files\Microsoft Visual Studio\18\Community\MSBuild\Current\Bin\MSBuild.exe
@@ -45,55 +45,53 @@ tests:
 
 checks:
   - id: ARCH-C01
-    label: Core/Base РЅРµ РёСЃРїРѕР»СЊР·СѓСЋС‚ Autodesk
+    label: Core/Base не используют Autodesk
     kind: grep_dir
     dir: Core
     pattern: using\s+Autodesk
     expect: 0
   - id: ARCH-C02
-    label: Base РЅРµ РёСЃРїРѕР»СЊР·СѓРµС‚ Autodesk
+    label: Base не использует Autodesk
     kind: grep_dir
     dir: Base
     pattern: using\s+Autodesk
     expect: 0
   - id: ARCH-R01
-    label: RevitServices РЅРµ СЃСЃС‹Р»Р°РµС‚СЃСЏ РЅР° MainAppHeatLoss
+    label: RevitServices не ссылается на MainAppHeatLoss
     kind: grep_dir
     dir: RevitServices
     pattern: using\s+MainAppHeatLoss
     expect: 0
   - id: ARCH-HOTFIX
-    label: Full.sln СЃРѕР±РёСЂР°РµС‚СЃСЏ Р±РµР· РѕС€РёР±РѕРє
+    label: Full.sln собирается без ошибок
     kind: build_grep
     pattern: error CS
     expect: 0
 
 layer_rules:
-  - label: Core/HeatLossExport РЅРµ РёСЃРїРѕР»СЊР·СѓСЋС‚ Autodesk
+  - label: Core/HeatLossExport не используют Autodesk
     pattern: using\s+Autodesk
     expect: 0
     dirs: [Core, HeatLossExport]
-  - label: RevitServices РЅРµ СЃСЃС‹Р»Р°РµС‚СЃСЏ РЅР° MainAppHeatLoss
+  - label: RevitServices не ссылается на MainAppHeatLoss
     pattern: using\s+MainAppHeatLoss
     expect: 0
     dirs: [RevitServices]
-  - label: MainAppHeatLoss.Projects РЅРµ СЃСЃС‹Р»Р°РµС‚СЃСЏ РЅР° MainAppHeatLoss (С†РёРєР»)
+  - label: MainAppHeatLoss.Projects не ссылается на MainAppHeatLoss (цикл)
     kind: csproj_no_ref
     dir: MainAppHeatLoss.Projects
     forbidden: MainAppHeatLoss.csproj
-  - label: MainAppHeatLoss.ProjectSettings РЅРµ СЃСЃС‹Р»Р°РµС‚СЃСЏ РЅР° MainAppHeatLoss (С†РёРєР»)
+  - label: MainAppHeatLoss.ProjectSettings не ссылается на MainAppHeatLoss (цикл)
     kind: csproj_no_ref
     dir: MainAppHeatLoss.ProjectSettings
     forbidden: MainAppHeatLoss.csproj
-  - label: ProjectSettings РЅРµ СЃСЃС‹Р»Р°РµС‚СЃСЏ РЅР° Projects (С†РёРєР»)
+  - label: ProjectSettings не ссылается на Projects (цикл)
     kind: csproj_no_ref
     dir: MainAppHeatLoss.ProjectSettings
     forbidden: MainAppHeatLoss.Projects.csproj
-  - label: Core/HeatLossExport РЅРµ РёСЃРїРѕР»СЊР·СѓСЋС‚ RevitServices
+  - label: Core/HeatLossExport не используют RevitServices
     pattern: using\s+RevitServices
     expect: 0
     dirs: [Core, HeatLossExport]
 
 audit_dirs: [Core.Tests, Test]
-
-
