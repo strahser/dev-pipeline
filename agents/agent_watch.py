@@ -30,11 +30,11 @@ from pipeline.cli import cmd_dispatch, cmd_verify   # noqa: E402
 from agents.agent_manager import _kill_tree, _pid_alive  # noqa: E402
 import argparse as _ap                              # noqa: E402
 
-_STALL_TIMEOUT = int(os.environ.get("TASK_STALL_TIMEOUT_SEC", "10800"))
+_STALL_TIMEOUT = int(os.environ.get("TASK_STALL_TIMEOUT_SEC", "600"))
 # Сирота-субагент: PID-файл старше этого возраста при живом процессе.
-# Менеджер сам убивает субагента через SUBAGENT_TIMEOUT (1800 с), но если
+# Менеджер сам убивает субагента через SUBAGENT_TIMEOUT (600 с), но если
 # менеджер убит/завис — PID-файл остаётся, а процесс-сирота висит.
-_SUBAGENT_MAX_AGE = int(os.environ.get("SUBAGENT_MAX_AGE_SEC", "3600"))
+_SUBAGENT_MAX_AGE = int(os.environ.get("SUBAGENT_MAX_AGE_SEC", "900"))
 
 
 def _verify_task(cfg, tid: str):
@@ -71,7 +71,7 @@ def _stalled_marker(cfg, tid: str, details: str):
         print(f"[watch] stalled-пометка {tid} не сохранена: {e}")
 
 
-def check_stalled(cfg, client, timeout_sec: int = 10800) -> int:
+def check_stalled(cfg, client, timeout_sec: int = 600) -> int:
     """Найти зависшие задачи: in_progress дольше timeout_sec без отчёта.
 
     Каждая задача помечается однократно маркером
@@ -122,7 +122,7 @@ def clear_stalled(cfg, tid: str):
         pass
 
 
-def check_subagent_zombies(cfg, client, max_age_sec: int = 3600) -> int:
+def check_subagent_zombies(cfg, client, max_age_sec: int = 900) -> int:
     """Найти и убить зависшие процессы субагентов (PID-файлы менеджера).
 
     Менеджер пишет Tasks\\Конвейер\\logs\\{task_id}.pid (строка 1 — PID,

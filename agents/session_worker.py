@@ -35,7 +35,7 @@ from pipeline.crew import HANDOFF_MARK  # noqa: E402
 from pipeline.proc import no_window_flags  # noqa: E402
 
 HEARTBEAT_SEC = 30
-SUBAGENT_TIMEOUT = int(os.environ.get("SUBAGENT_TIMEOUT_SEC", "1800"))
+SUBAGENT_TIMEOUT = int(os.environ.get("SUBAGENT_TIMEOUT_SEC", "600"))
 
 
 def write_handoff(cwd: str, sid: str, *, task_id: str, report: str,

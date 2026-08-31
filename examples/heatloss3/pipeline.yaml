@@ -14,7 +14,7 @@ plan:
 runner:
   model: opencode/big-pickle
   retries: 2
-  question_timeout_sec: 1200
+  question_timeout_sec: 600
   checkpoint_stages: true
   semantic_review: false
 

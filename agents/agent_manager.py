@@ -67,8 +67,8 @@ def _opencode_cmd() -> str:
 OPENCODE = _opencode_cmd()
 DEFAULT_MODEL = "opencode/big-pickle"  # стабильная модель (2x usage); flash-free глючит на длинных промптах
 # Анти-зависание: субагент без результата > N с убивается. Настраивается env
-# SUBAGENT_TIMEOUT_SEC (раннер тяжёлых карточек поднимает до 3600 — U2.1 2026-08-23).
-SUBAGENT_TIMEOUT = int(os.environ.get("SUBAGENT_TIMEOUT_SEC", "1800"))
+# SUBAGENT_TIMEOUT_SEC (default 600 = 10 мин, U2.1 2026-08-23 1800→600 по требованию 2026-08-31).
+SUBAGENT_TIMEOUT = int(os.environ.get("SUBAGENT_TIMEOUT_SEC", "600"))
 SERVER_URL = "http://127.0.0.1:8787"
 DEV_PIPELINE_DIR = Path(__file__).resolve().parent.parent  # корень dev-pipeline (не хардкод E:\)
 
