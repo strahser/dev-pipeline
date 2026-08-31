@@ -149,4 +149,3 @@ layer_rules:
     dirs: [Core, HeatLossExport]
 
 audit_dirs: [Test, Core.Tests]
-

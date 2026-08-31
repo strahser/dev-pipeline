@@ -1,19 +1,19 @@
-﻿# РљРѕРЅС„РёРіСѓСЂР°С†РёСЏ РєРѕРЅРІРµР№РµСЂР° РґР»СЏ РїСЂРѕРµРєС‚Р° SunRadiation (СЂР°РґРёР°С†РёРѕРЅРЅС‹Р№ РјРѕРґСѓР»СЊ, net8.0)
-# РџР»Р°РЅ СЌРІРѕР»СЋС†РёРё РІ ProjectsPalns/SunRadiation/_current/2026-08-29_sunradiation-plan.md (7 РґРЅРµР№, 15 РєР°СЂС‚РѕС‡РµРє)
-# РЎРІСЏР·Р°РЅ СЃ HeatGainCalculator (РїРѕС‚СЂРµР±РёС‚РµР»СЊ ISolarGainService)
+# Конфигурация конвейера для проекта SunRadiation (радиационный модуль, net8.0)
+# План эволюции в ProjectsPalns/SunRadiation/_current/2026-08-29_sunradiation-plan.md (7 дней, 15 карточек)
+# Связан с HeatGainCalculator (потребитель ISolarGainService)
 
 project:
   name: SunRadiation
   root: [D:\Projects\SunRadiation]
   branch: master
 
-# РџР»Р°РЅ РїСЂРѕРµРєС‚Р° РІ ProjectsPalns
+# План проекта в ProjectsPalns
 plan:
   repo: [D:\Projects\ProjectsPalns]
   subdir: SunRadiation
   file: 2026-08-29_sunradiation-plan.md
 
-# РџР°СЂР°РјРµС‚СЂС‹ РїР»Р°РЅ-СЂР°РЅРЅРµСЂР°
+# Параметры план-раннера
 runner:
   model: opencode/big-pickle
   retries: 2
@@ -22,14 +22,14 @@ runner:
   semantic_review: false
 
 tasks:
-  inbox: Tasks\Р’С…РѕРґСЏС‰РёРµ
-  active: Tasks\РђРєС‚РёРІРЅС‹Рµ
-  reports: Tasks\РћС‚С‡С‘С‚С‹
-  archive: Tasks\РђСЂС…РёРІ
-  protocol: Tasks\00_РџСЂРѕС‚РѕРєРѕР»_Р°РіРµРЅС‚РѕРІ.md
-  status: Tasks\РЎС‚Р°С‚СѓСЃ_РєРѕРЅРІРµР№РµСЂР°.md
-  conveyor: Tasks\РљРѕРЅРІРµР№РµСЂ
-  notif: Tasks\РљРѕРЅРІРµР№РµСЂ\РЈРІРµРґРѕРјР»РµРЅРёСЏ
+  inbox: Tasks\Входящие
+  active: Tasks\Активные
+  reports: Tasks\Отчёты
+  archive: Tasks\Архив
+  protocol: Tasks\00_Протокол_агентов.md
+  status: Tasks\Статус_конвейера.md
+  conveyor: Tasks\Конвейер
+  notif: Tasks\Конвейер\Уведомления
 
 build:
   msbuild: dotnet
@@ -50,17 +50,16 @@ tests:
 
 checks:
   - id: SR-01
-    label: 'Core Р±РµР· Autodesk'
+    label: 'Core без Autodesk'
     kind: grep_dir
     dir: Core
     pattern: Autodesk
     expect: 0
 
 layer_rules:
-  - label: Core Р±РµР· Autodesk
+  - label: Core без Autodesk
     pattern: using\s+Autodesk
     expect: 0
     dirs: [Core]
 
 audit_dirs: [Tests, Core]
-

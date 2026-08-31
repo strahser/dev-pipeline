@@ -1,9 +1,9 @@
-﻿# РљРѕРЅС„РёРіСѓСЂР°С†РёСЏ РєРѕРЅРІРµР№РµСЂР°: HeatLossRevit2 UI-РјРёРіСЂР°С†РёСЏ (worktree РІРµС‚РєРё exp/ui-threejs).
-# Р¤РёР·РёС‡РµСЃРєРё РѕС‚РґРµР»СЊРЅР°СЏ РІРµС‚РєР°, С‡С‚РѕР±С‹ РЅРµ РјРµС€Р°С‚СЊ РїР°СЂР°Р»Р»РµР»СЊРЅРѕР№ СЂР°Р±РѕС‚Рµ RCB-5..7 РЅР° v18.
-# РЎС…РµРјР°: СЃРј. pipeline/config.py.
-# Р’РђР–РќРћ: С„Р°Р№Р» UTF-8 Р‘Р•Р— BOM; РЅРµ РїСЂР°РІРёС‚СЊ С‡РµСЂРµР· PowerShell Set-Content Р±РµР· -Encoding
-# (РёРЅС†РёРґРµРЅС‚ 2026-08-25: ANSI-С‡С‚РµРЅРёРµ РґРІРѕР№РЅРѕ Р·Р°РєРѕРґРёСЂРѕРІР°Р»Рѕ РєРёСЂРёР»Р»РёС†Сѓ РїСѓС‚РµР№ вЂ” СЂР°РЅРЅРµСЂ
-# РїРёСЃР°Р» РїРѕСЃС‚Р°РЅРѕРІРєРё/РІРµСЂРґРёРєС‚С‹ РІ РєР°С‚Р°Р»РѕРіРё СЃ Р±РёС‚С‹РјРё РёРјРµРЅР°РјРё, РІРµСЂРёС„РёРєР°С†РёСЏ РєР»Р°Р»Р° FAIL).
+# Конфигурация конвейера: HeatLossRevit2 UI-миграция (worktree ветки exp/ui-threejs).
+# Физически отдельная ветка, чтобы не мешать параллельной работе RCB-5..7 на v18.
+# Схема: см. pipeline/config.py.
+# ВАЖНО: файл UTF-8 БЕЗ BOM; не править через PowerShell Set-Content без -Encoding
+# (инцидент 2026-08-25: ANSI-чтение двойно закодировало кириллицу путей — раннер
+# писал постановки/вердикты в каталоги с битыми именами, верификация клала FAIL).
 
 project:
   name: heatlossrevit2ui
@@ -23,14 +23,14 @@ runner:
   stage_approver: reviewer
 
 tasks:
-  inbox: Tasks\Р’С…РѕРґСЏС‰РёРµ
-  active: Tasks\РђРєС‚РёРІРЅС‹Рµ
-  reports: Tasks\РћС‚С‡С‘С‚С‹
-  archive: Tasks\РђСЂС…РёРІ
-  protocol: Tasks\00_РџСЂРѕС‚РѕРєРѕР»_Р°РіРµРЅС‚РѕРІ.md
-  status: Tasks\РЎС‚Р°С‚СѓСЃ_РєРѕРЅРІРµР№РµСЂР°.md
-  conveyor: Tasks\РљРѕРЅРІРµР№РµСЂ
-  notif: Tasks\РљРѕРЅРІРµР№РµСЂ\РЈРІРµРґРѕРјР»РµРЅРёСЏ
+  inbox: Tasks\Входящие
+  active: Tasks\Активные
+  reports: Tasks\Отчёты
+  archive: Tasks\Архив
+  protocol: Tasks\00_Протокол_агентов.md
+  status: Tasks\Статус_конвейера.md
+  conveyor: Tasks\Конвейер
+  notif: Tasks\Конвейер\Уведомления
 
 build:
   msbuild: C:\Program Files\Microsoft Visual Studio\18\Community\MSBuild\Current\Bin\MSBuild.exe
@@ -50,14 +50,13 @@ tests:
 checks: []
 
 layer_rules:
-  - label: Core/HeatLossExport РЅРµ РёСЃРїРѕР»СЊР·СѓСЋС‚ Autodesk
+  - label: Core/HeatLossExport не используют Autodesk
     pattern: using\s+Autodesk
     expect: 0
     dirs: [Core, HeatLossExport]
-  - label: RevitServices РЅРµ СЃСЃС‹Р»Р°РµС‚СЃСЏ РЅР° MainAppHeatLoss
+  - label: RevitServices не ссылается на MainAppHeatLoss
     pattern: using\s+MainAppHeatLoss
     expect: 0
     dirs: [RevitServices]
 
 audit_dirs: [Core.Tests]
-

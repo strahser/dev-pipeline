@@ -1,19 +1,19 @@
-﻿# РљРѕРЅС„РёРіСѓСЂР°С†РёСЏ РєРѕРЅРІРµР№РµСЂР° РґР»СЏ РїСЂРѕРµРєС‚Р° MepBimServer (Р»СЌРЅРґРёРЅРі: Django + HTML/Three.js).
-# РџР»Р°РЅ РІРµРґС‘С‚СЃСЏ РІ ProjectsPalns\MepBimServer\_current\.
-# РЎР±РѕСЂРєРё РЅРµС‚ (СЃС‚Р°С‚РёС‡РµСЃРєРёР№ С„СЂРѕРЅС‚РµРЅРґ), С‚РµСЃС‚РѕРІРѕР№ РёРЅС„СЂР°СЃС‚СЂСѓРєС‚СѓСЂС‹ РїРѕРєР° РЅРµС‚ (runner: none).
+# Конфигурация конвейера для проекта MepBimServer (лэндинг: Django + HTML/Three.js).
+# План ведётся в ProjectsPalns\MepBimServer\_current\.
+# Сборки нет (статический фронтенд), тестовой инфраструктуры пока нет (runner: none).
 
 project:
   name: mepbimserver
   root: [D:\Projects\MepBimServer]
   branch: dev
 
-# РџР»Р°РЅ РїСЂРѕРµРєС‚Р° РІ ProjectsPalns
+# План проекта в ProjectsPalns
 plan:
-  repo: [D:\Projects\ProjectsPalns, E:\РџР»Р°РіРёРЅС‹Р РµРІРёС‚\ProjectsPalns]
+  repo: [D:\Projects\ProjectsPalns, E:\ПлагиныРевит\ProjectsPalns]
   subdir: MepBimServer
   file: 2026-08-21_landing-production-prep.md
 
-# РџР°СЂР°РјРµС‚СЂС‹ РїР»Р°РЅ-СЂР°РЅРЅРµСЂР°
+# Параметры план-раннера
 runner:
   model: opencode/big-pickle
   retries: 2
@@ -21,14 +21,14 @@ runner:
   checkpoint_stages: true
 
 tasks:
-  inbox: Tasks\Р’С…РѕРґСЏС‰РёРµ
-  active: Tasks\РђРєС‚РёРІРЅС‹Рµ
-  reports: Tasks\РћС‚С‡С‘С‚С‹
-  archive: Tasks\РђСЂС…РёРІ
-  protocol: Tasks\00_РџСЂРѕС‚РѕРєРѕР»_Р°РіРµРЅС‚РѕРІ.md
-  status: Tasks\РЎС‚Р°С‚СѓСЃ_РєРѕРЅРІРµР№РµСЂР°.md
-  conveyor: Tasks\РљРѕРЅРІРµР№РµСЂ
-  notif: Tasks\РљРѕРЅРІРµР№РµСЂ\РЈРІРµРґРѕРјР»РµРЅРёСЏ
+  inbox: Tasks\Входящие
+  active: Tasks\Активные
+  reports: Tasks\Отчёты
+  archive: Tasks\Архив
+  protocol: Tasks\00_Протокол_агентов.md
+  status: Tasks\Статус_конвейера.md
+  conveyor: Tasks\Конвейер
+  notif: Tasks\Конвейер\Уведомления
 
 build:
   msbuild: none
@@ -46,11 +46,10 @@ tests:
 
 checks:
   - id: C-01
-    label: 'РЎРЅРёРјРѕРє РґР°РЅРЅС‹С… РІ РµРґРёРЅСЃС‚РІРµРЅРЅРѕРј СЌРєР·РµРјРїР»СЏСЂРµ (raw_snapshot.json РєР°РЅРѕРЅРёС‡РµСЃРєРёР№)'
+    label: 'Снимок данных в единственном экземпляре (raw_snapshot.json канонический)'
     kind: grep_dir
     dir: ui
     pattern: "^PLACEHOLDER_NEVER_MATCHES$"
     expect: 0
 
 audit_dirs: []
-

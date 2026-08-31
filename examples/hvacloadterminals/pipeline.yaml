@@ -1,41 +1,41 @@
-﻿# РљРѕРЅС„РёРіСѓСЂР°С†РёСЏ РєРѕРЅРІРµР№РµСЂР° РґР»СЏ РїСЂРѕРµРєС‚Р° HVACLoadTerminals
-# (СЂР°СЃСЃС‚Р°РЅРѕРІРєР° Р’Р РЈ/С„Р°РЅРєРѕР№Р»РѕРІ/РѕС‚РѕРїРёС‚РµР»СЊРЅС‹С… РїСЂРёР±РѕСЂРѕРІ; C# net48: Core + Infrastructure + WPF App + Revit 2024).
-# Р‘С‹СЃС‚СЂС‹Рµ РїСЂРѕРІРµСЂРєРё вЂ” С‡РµСЂРµР· Core.Tests (net48, xUnit, Р±РµР· Revit SDK Рё Р±РµР· WPF-СЃС‚РµРЅРґР°).
-# Р‘Р°Р·РѕРІРѕРµ СЃРѕСЃС‚РѕСЏРЅРёРµ РЅР° 2026-08-26 (wall-specific+undo): РІРµС‚РєР° refactoring/solid-clean-architecture,
-# Core.Tests 190/190 (+7 UiSettingsStoreTests +5 WallSpecificPlacementTests +2 PresenterCaptureRestore), sln EXITCODE=0 (Р·Р°РєСЂС‹РІР°С‚СЊ App/Revit РїРµСЂРµРґ sln, РёРЅР°С‡Рµ MSB3027).
-# РђСѓРґРёС‚ 2026-08-25: РїСЂРµРґС‹РґСѓС‰Р°СЏ Р±Р°Р·Р° 74/74 (ba7a274) СѓСЃС‚Р°СЂРµР»Р° вЂ” СЃРј. PLAN.md СЂР°Р·РґРµР» РђСѓРґРёС‚.
+# Конфигурация конвейера для проекта HVACLoadTerminals
+# (расстановка ВРУ/фанкойлов/отопительных приборов; C# net48: Core + Infrastructure + WPF App + Revit 2024).
+# Быстрые проверки — через Core.Tests (net48, xUnit, без Revit SDK и без WPF-стенда).
+# Базовое состояние на 2026-08-26 (wall-specific+undo): ветка refactoring/solid-clean-architecture,
+# Core.Tests 190/190 (+7 UiSettingsStoreTests +5 WallSpecificPlacementTests +2 PresenterCaptureRestore), sln EXITCODE=0 (закрывать App/Revit перед sln, иначе MSB3027).
+# Аудит 2026-08-25: предыдущая база 74/74 (ba7a274) устарела — см. PLAN.md раздел Аудит.
 
 project:
   name: HVACLoadTerminals
   root: [D:\Projects\HVACLoadTerminals]
   branch: refactoring/solid-clean-architecture
 
-# РџР»Р°РЅ РїСЂРѕРµРєС‚Р° РІ СЂРµРїРѕР·РёС‚РѕСЂРёРё ProjectsPalns (РёСЃС‚РѕС‡РЅРёРє РєР°СЂС‚РѕС‡РµРє РїР»Р°РЅ-СЂР°РЅРЅРµСЂР°)
+# План проекта в репозитории ProjectsPalns (источник карточек план-раннера)
 plan:
   repo: [D:\Projects\ProjectsPalns]
   subdir: HVACLoadTerminals
-  # 2026-08-23 С„Р°Р№Р» СѓР¶Рµ РІ _done; Р°РєС‚СѓР°Р»СЊРЅС‹Р№ РїР»Р°РЅ СЃРµСЂРёРё вЂ” multimodal-ui-crm
+  # 2026-08-23 файл уже в _done; актуальный план серии — multimodal-ui-crm
   file: 2026-08-24_multimodal-ui-crm.md
 
-# РџР°СЂР°РјРµС‚СЂС‹ РїР»Р°РЅ-СЂР°РЅРЅРµСЂР° (python -m agents.plan_runner --project hvacloadterminals)
+# Параметры план-раннера (python -m agents.plan_runner --project hvacloadterminals)
 runner:
   model: opencode/big-pickle
   retries: 2
-  question_timeout_sec: 1200   # С‚РёС€РёРЅР° РїРѕ РІРѕРїСЂРѕСЃСѓ 20 РјРёРЅ -> СЂР°Р±РѕС‚Р° РїРѕ РґРѕРїСѓС‰РµРЅРёСЏРј
-  checkpoint_stages: true      # РїР°СѓР·Р° РїРѕСЃР»Рµ Р·Р°РєСЂС‹С‚РёСЏ РєР°СЂС‚РѕС‡РєРё РґРѕ РѕРґРѕР±СЂРµРЅРёСЏ РІ РїР°РЅРµР»Рё
+  question_timeout_sec: 1200   # тишина по вопросу 20 мин -> работа по допущениям
+  checkpoint_stages: true      # пауза после закрытия карточки до одобрения в панели
 
 tasks:
-  inbox: Tasks\Р’С…РѕРґСЏС‰РёРµ
-  active: Tasks\РђРєС‚РёРІРЅС‹Рµ
-  reports: Tasks\РћС‚С‡С‘С‚С‹
-  archive: Tasks\РђСЂС…РёРІ
-  protocol: Tasks\00_РџСЂРѕС‚РѕРєРѕР»_Р°РіРµРЅС‚РѕРІ.md
-  status: Tasks\РЎС‚Р°С‚СѓСЃ_РєРѕРЅРІРµР№РµСЂР°.md
-  conveyor: Tasks\РљРѕРЅРІРµР№РµСЂ
-  notif: Tasks\РљРѕРЅРІРµР№РµСЂ\РЈРІРµРґРѕРјР»РµРЅРёСЏ
+  inbox: Tasks\Входящие
+  active: Tasks\Активные
+  reports: Tasks\Отчёты
+  archive: Tasks\Архив
+  protocol: Tasks\00_Протокол_агентов.md
+  status: Tasks\Статус_конвейера.md
+  conveyor: Tasks\Конвейер
+  notif: Tasks\Конвейер\Уведомления
 
 build:
-  # Р‘С‹СЃС‚СЂР°СЏ СЃР±РѕСЂРєР° Р±РµР· Revit: СЏРґСЂРѕ + С‚РµСЃС‚С‹ (Revit-РїСЂРѕРµРєС‚ С‚СЂРµР±СѓРµС‚ RevitAPI.dll вЂ” РІРЅРµ РєРѕРЅРІРµР№РµСЂР°)
+  # Быстрая сборка без Revit: ядро + тесты (Revit-проект требует RevitAPI.dll — вне конвейера)
   msbuild: dotnet
   sln: src\Core.Tests\HVACLoadTerminals.Core.Tests.csproj
   configuration: Debug
@@ -49,35 +49,34 @@ tests:
   runner: dotnet
   vstest: ""
   dll: src\Core.Tests\HVACLoadTerminals.Core.Tests.csproj
-  # РџСЂР°РІРёР»Рѕ: passed >= Р±Р°Р·С‹ Р total >= Р±Р°Р·С‹ (РєР°СЂС‚РѕС‡РєРµ СЂР°Р·СЂРµС€РµРЅРѕ РґРѕР±Р°РІР»СЏС‚СЊ С‚РµСЃС‚С‹).
+  # Правило: passed >= базы И total >= базы (карточке разрешено добавлять тесты).
   baseline_passed: 190
   baseline_total: 190
 
-# Р”РµРєР»Р°СЂР°С‚РёРІРЅС‹Рµ РїСЂРѕРІРµСЂРєРё Р·Р°РґР°С‡
+# Декларативные проверки задач
 checks:
   - id: A-01
-    label: 'Core РЅРµ СЃСЃС‹Р»Р°РµС‚СЃСЏ РЅР° Revit/WPF (С‡РёСЃС‚Р°СЏ РґРѕРјРµРЅРЅР°СЏ Р»РѕРіРёРєР°)'
+    label: 'Core не ссылается на Revit/WPF (чистая доменная логика)'
     kind: grep_dir
     dir: src/Core
     pattern: using\s+(Autodesk\.Revit|System\.Windows)
     expect: 0
 
   - id: A-02
-    label: 'Р’ App РЅРµС‚ Р»РµРіР°СЃРё WebBrowser (РїРѕСЃР»Рµ U1.3 вЂ” С‚РѕР»СЊРєРѕ WebView2)'
+    label: 'В App нет легаси WebBrowser (после U1.3 — только WebView2)'
     kind: grep_dir
     dir: src/App
     pattern: <WebBrowser
     expect: 0
 
 layer_rules:
-  - label: Core Р±РµР· Autodesk.Revit (guard-СЃР»РѕР№)
+  - label: Core без Autodesk.Revit (guard-слой)
     pattern: using\s+Autodesk\.Revit
     expect: 0
     dirs: [src/Core]
-  - label: Core Р±РµР· WPF (guard-СЃР»РѕР№)
+  - label: Core без WPF (guard-слой)
     pattern: using\s+System\.Windows
     expect: 0
     dirs: [src/Core]
 
 audit_dirs: [src/Core.Tests]
-
