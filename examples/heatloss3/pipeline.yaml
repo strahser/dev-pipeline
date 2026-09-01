@@ -40,8 +40,8 @@ tests:
   runner: vstest
   vstest: C:\Program Files\Microsoft Visual Studio\18\Community\Common7\IDE\CommonExtensions\Microsoft\TestWindow\vstest.console.exe
   dll: Core.Tests\bin\Debug\net48\Core.Tests.dll
-  baseline_passed: 398
-  baseline_total: 398
+  baseline_passed: 402
+  baseline_total: 402
 
 checks:
   - id: ARCH-C01
