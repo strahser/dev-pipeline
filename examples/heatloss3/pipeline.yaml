@@ -4,12 +4,12 @@
 project:
   name: HeatLoss3
   root: [D:\Projects\HeatLoss3, E:\ПлагиныРевит\HeatLoss3]
-  branch: fix/om-from-ar-snapshot
+  branch: develop
 
 plan:
   repo: [D:\Projects\ProjectsPalns, E:\ПлагиныРевит\ProjectsPalns]
   subdir: HeatLoss3
-  file: 2026-09-02_om-from-ar-snapshot.md
+  file: 2026-09-07_revitservices-adapter-evil-5.md
 
 runner:
   model: opencode/big-pickle
