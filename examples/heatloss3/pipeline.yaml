@@ -9,7 +9,7 @@ project:
 plan:
   repo: [D:\Projects\ProjectsPalns, E:\ПлагиныРевит\ProjectsPalns]
   subdir: HeatLoss3
-  file: _current/2026-09-02_om-from-ar-snapshot.md
+  file: 2026-09-02_om-from-ar-snapshot.md
 
 runner:
   model: opencode/big-pickle
