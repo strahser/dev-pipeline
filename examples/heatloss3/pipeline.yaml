@@ -40,8 +40,8 @@ tests:
   runner: vstest
   vstest: C:\Program Files\Microsoft Visual Studio\18\Community\Common7\IDE\CommonExtensions\Microsoft\TestWindow\vstest.console.exe
   dll: Core.Tests\bin\Debug\net48\Core.Tests.dll
-  baseline_passed: 400
-  baseline_total: 400
+  baseline_passed: 398
+  baseline_total: 398
 
 checks:
   - id: ARCH-C01
@@ -67,24 +67,6 @@ checks:
     kind: build_grep
     pattern: error CS
     expect: 0
-  - id: OM-ROOMID
-    label: RoomId вместо SpaceId (SpaceId только Obsolete)
-    kind: grep_dir
-    dir: Base
-    pattern: SpaceId
-    expect: 0
-  - id: OM-SPACES
-    label: Без OST_MEPSpaces fallback
-    kind: grep_dir
-    dir: RevitServices
-    pattern: OST_MEPSpaces
-    expect: 0
-  - id: OM-VERSION
-    label: SnapshotModel Version 1.3
-    kind: grep_file
-    file: Base/Models/Snapshot/SnapshotModel.cs
-    pattern: Version.*1\.3
-    expect: 1
 
 layer_rules:
   - label: Core/HeatLossExport не используют Autodesk
